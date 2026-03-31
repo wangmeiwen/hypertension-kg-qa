@@ -3,6 +3,26 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
+
+def _normalize_loopback_host(host: str | None) -> str | None:
+    value = str(host or "").strip()
+    if not value:
+        return host
+    if value.lower() == "localhost":
+        return "127.0.0.1"
+    return value
+
+
+def _normalize_neo4j_uri(uri: str | None) -> str | None:
+    value = str(uri or "").strip()
+    if not value:
+        return uri
+    for scheme in ("bolt://", "neo4j://"):
+        prefix = f"{scheme}localhost"
+        if value.lower().startswith(prefix):
+            return f"{scheme}127.0.0.1{value[len(prefix):]}"
+    return value
+
 """
 配置模块：统一管理项目配置项
 - 从环境变量读取配置，支持 .env 文件覆盖
@@ -32,7 +52,7 @@ class Config:
         self.LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT")
 
         # neo4j相关
-        self.NEO4J_URI = os.getenv("NEO4J_URI")
+        self.NEO4J_URI = _normalize_neo4j_uri(os.getenv("NEO4J_URI"))
         self.NEO4J_USER = os.getenv("NEO4J_USER")
         self.NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
@@ -42,7 +62,7 @@ class Config:
 
 
         # Milvus相关
-        self.MILVUS_HOST = os.getenv("MILVUS_HOST", "localhost")
+        self.MILVUS_HOST = _normalize_loopback_host(os.getenv("MILVUS_HOST", "127.0.0.1"))
         self.MILVUS_PORT = os.getenv("MILVUS_PORT", "19530")
         self.MILVUS_DATABASE_NAME = os.getenv("MILVUS_DATABASE_NAME", "hypertension_kg")
         self.MILVUS_COLLECTION_NAME = os.getenv("MILVUS_COLLECTION_NAME", "hypertension_kg_collection")

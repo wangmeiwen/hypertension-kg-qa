@@ -10,7 +10,7 @@ a2a-sdk[http-server]==0.3.25
 # ========== Database ==========
 neo4j==6.1.0
 pymilvus==2.6.9
-pymysql==1.1.2
+asyncmy==0.2.10
 sqlalchemy==2.0.48
 
 # ========== LangChain / LangGraph ==========

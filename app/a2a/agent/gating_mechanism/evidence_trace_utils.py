@@ -1,3 +1,9 @@
+"""
+A2A agent/gating_mechanism/evidence_trace_utils.py 模块。
+
+本模块提供 evidence_trace_utils 相关实现。
+"""
+
 import json
 from typing import Any, Dict, List, Optional, Tuple
 

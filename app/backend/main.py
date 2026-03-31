@@ -2,16 +2,18 @@
 
 import asyncio
 from datetime import datetime
+import inspect
 import json
 import os
 import re
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 import logging
 from collections import defaultdict
 import threading
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # 首先加载环境变量，确保后续模块能读取到配置
 from dotenv import load_dotenv
@@ -25,7 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.a2a import A2AService, all_agent_cards
-from app.backend.repositories.database import SessionManager, MessageManager, SessionMemoryManager, get_db, initialize_database
+from app.backend.repositories.database import SessionManager, MessageManager, SessionMemoryManager, fetch_one, initialize_database
 from app.common.auth_simple import (
     get_current_admin_user,
     is_logged_in,
@@ -46,7 +48,6 @@ from app.common.perf_logger import log_duration
 from app.common.baseline_report import generate_api_baseline_report
 from app.common.feature_flags import get_feature_flag, get_runtime_flag_snapshot
 from app.common.langsmith_tracing import set_trace_metadata
-from app.common.storage_executors import run_storage_io
 from app.common.request_rate_limiter import InMemorySlidingWindowRateLimiter
 from app.common.session_logger import (
     create_request_id,
@@ -66,42 +67,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class ThreadAsyncRunner:
-    """在线程 worker 中复用事件循环，避免每次任务都调用 asyncio.run。"""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._loops: Dict[int, asyncio.AbstractEventLoop] = {}
-
-    def run(self, coro_factory: Callable[[], Awaitable[Any]]) -> Any:
-        thread_id = threading.get_ident()
-        loop: Optional[asyncio.AbstractEventLoop]
-        with self._lock:
-            loop = self._loops.get(thread_id)
-            if loop is None or loop.is_closed():
-                loop = asyncio.new_event_loop()
-                self._loops[thread_id] = loop
-        return loop.run_until_complete(coro_factory())
-
-    def close_all(self) -> None:
-        with self._lock:
-            loops = list(self._loops.values())
-            self._loops = {}
-
-        for loop in loops:
-            if not loop.is_closed():
-                loop.close()
-
-
-thread_async_runner = ThreadAsyncRunner()
-
-
 def _log_api_error(endpoint: str, stage: str, exc: Exception, **kwargs: Any) -> None:
     payload = {"endpoint": endpoint, "stage": stage, "error_type": type(exc).__name__, "error": str(exc)}
     payload.update(kwargs)
     logger.exception("[api_error] %s", json.dumps(payload, ensure_ascii=False))
 
-app = FastAPI()
+app: FastAPI
 
 # MCP 服务器实例（延迟初始化）
 _mcp_server = None
@@ -114,6 +85,85 @@ _rag_subagent: Optional[RagSubAgent] = None
 _mysql_initialized: Optional[bool] = None
 _CYPHER_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _rate_limiter: Optional[InMemorySlidingWindowRateLimiter] = None
+
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    """应用生命周期（替代 on_event）。"""
+    global _mysql_initialized, _a2a_service, _a2a_graph_service, _a2a_retrieval_service, _a2a_evaluator_service
+
+    print("\n" + "=" * 50)
+    print("正在初始化 MySQL 数据库...")
+    print("=" * 50)
+    _mysql_initialized = bool(await initialize_database())
+    if not _mysql_initialized:
+        print("⚠ MySQL 数据库初始化失败，部分功能可能不可用")
+
+    print("\n" + "=" * 50)
+    print("正在检查数据库连接...")
+    print("=" * 50)
+    status = await check_databases()
+    if bool(status.get("all_running")):
+        print("✓ Neo4j 运行正常")
+        print("✓ Milvus 运行正常")
+    else:
+        print("⚠ 检测到部分数据库未启动，请手动启动后再使用相关功能")
+    print("=" * 50 + "\n")
+
+    print("正在初始化 MCP 服务...")
+    try:
+        mcp = get_mcp()
+        tools = mcp.list_tools()
+        print(f"✓ MCP 服务初始化成功，已注册 {len(tools)} 个工具:")
+        for tool in tools:
+            print(f"  - {tool['name']}: {tool['description']}")
+    except Exception as exc:
+        _log_api_error("startup", "mcp_init", exc)
+        print(f"⚠ MCP 服务初始化失败: {exc}")
+
+    print("正在初始化 A2A 服务...")
+    try:
+        a2a_service = get_a2a()
+        card = a2a_service.get_agent_card()
+        print(
+            "✓ A2A 服务初始化成功: "
+            f"name={card.get('name', '')}, protocol={card.get('protocolVersion', '')}"
+        )
+        graph_card = get_a2a_graph().get_agent_card()
+        retrieval_card = get_a2a_retrieval().get_agent_card()
+        evaluator_card = get_a2a_evaluator().get_agent_card()
+        print(
+            "✓ A2A 子代理已初始化: "
+            f"{graph_card.get('name', '')}, {retrieval_card.get('name', '')}, {evaluator_card.get('name', '')}"
+        )
+    except Exception as exc:
+        _log_api_error("startup", "a2a_init", exc)
+        print(f"⚠ A2A 服务初始化失败: {exc}")
+
+    flags = get_runtime_flag_snapshot()
+    print("当前运行时开关:")
+    for flag_name, flag_value in flags.items():
+        print(f"  - {flag_name}={flag_value}")
+    print("=" * 50 + "\n")
+
+    try:
+        yield
+    finally:
+        if _a2a_service is not None:
+            await _a2a_service.ashutdown()
+            _a2a_service = None
+        if _a2a_graph_service is not None:
+            await _a2a_graph_service.ashutdown()
+            _a2a_graph_service = None
+        if _a2a_retrieval_service is not None:
+            await _a2a_retrieval_service.ashutdown()
+            _a2a_retrieval_service = None
+        if _a2a_evaluator_service is not None:
+            await _a2a_evaluator_service.ashutdown()
+            _a2a_evaluator_service = None
+
+
+app = FastAPI(lifespan=_app_lifespan)
 
 
 def _read_int_env(name: str, default: int, min_value: int, max_value: int) -> int:
@@ -182,7 +232,7 @@ def _extract_bearer_token(authorization: str) -> Optional[str]:
 
 
 async def _is_session_owner(session_id: str, user_id: str) -> bool:
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session:
         return False
     return str(session.get("user_id") or "") == user_id
@@ -277,7 +327,7 @@ def get_mcp():
     return _mcp_server
 
 
-def _run_a2a_query(
+async def _run_a2a_query(
     input_text: str,
     context_id: str = "",
     user_id: str = "",
@@ -297,16 +347,14 @@ def _run_a2a_query(
         else None
     )
 
-    return thread_async_runner.run(
-        lambda: process_query(
-            input_text=str(input_text or ""),
-            session_id=session_id,
-            user_id=safe_user_id,
-            strategy=strategy,
-            max_turns=max_turns,
-            cancel_check=cancel_check,
-            progress_callback=progress_callback,
-        )
+    return await process_query(
+        input_text=str(input_text or ""),
+        session_id=session_id,
+        user_id=safe_user_id,
+        strategy=strategy,
+        max_turns=max_turns,
+        cancel_check=cancel_check,
+        progress_callback=progress_callback,
     )
 
 
@@ -433,7 +481,7 @@ async def _run_agent_via_a2a(
         "contextId": str(session_id or ""),
         "userId": str(user_id or ""),
     }
-    task = await _run_blocking_io(service.send_message, message, trace_id)
+    task = await service.asend_message(message, trace_id)
     task_id = str((task or {}).get("id") or "").strip()
     if not task_id:
         raise RuntimeError("a2a_task_id_missing")
@@ -455,7 +503,7 @@ async def _run_agent_via_a2a(
     started = time.time()
 
     while True:
-        snapshot = await _run_blocking_io(service.get_task, task_id)
+        snapshot = await service.aget_task(task_id)
         if not snapshot:
             raise RuntimeError("a2a_task_not_found")
         status_obj = snapshot.get("status")
@@ -535,7 +583,7 @@ def _extract_task_final_text(task: Dict[str, Any], state: str) -> str:
 
     status_message = _extract_a2a_status_message(task)
     status_text = _extract_text_from_parts(status_message.get("parts"))
-    if status_text:
+    if status_text and status_text not in {"task_submitted", "task_running", "task_completed"}:
         return status_text
 
     metadata_obj = status_message.get("metadata")
@@ -544,7 +592,7 @@ def _extract_task_final_text(task: Dict[str, Any], state: str) -> str:
     return fallback or "任务结束"
 
 
-def _build_a2a_runtime_snapshot(limit_per_service: int = 200) -> Dict[str, Any]:
+async def _build_a2a_runtime_snapshot(limit_per_service: int = 200) -> Dict[str, Any]:
     services = {
         "orchestrator": get_a2a(),
         "graph": get_a2a_graph(),
@@ -554,7 +602,7 @@ def _build_a2a_runtime_snapshot(limit_per_service: int = 200) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     total = 0
     for name, service in services.items():
-        rows = service.list_tasks(limit=limit_per_service)
+        rows = await service.alist_tasks(limit=limit_per_service)
         counter: Dict[str, int] = {}
         for row in rows:
             status_obj = row.get("status")
@@ -599,7 +647,7 @@ async def _generate_a2a_stream_events(
         "contextId": str(session_id or ""),
         "userId": str(user_id or ""),
     }
-    task = await _run_blocking_io(service.send_message, message, req_id)
+    task = await service.asend_message(message, req_id)
     task_id = str((task or {}).get("id") or "").strip()
     if not task_id:
         raise RuntimeError("a2a_task_id_missing")
@@ -614,7 +662,7 @@ async def _generate_a2a_stream_events(
     cursor = 0
 
     while True:
-        snapshot = await _run_blocking_io(service.get_task_updates, task_id, cursor)
+        snapshot = await service.aget_task_updates(task_id, cursor)
         if snapshot is None:
             yield {
                 "type": "done",
@@ -714,7 +762,7 @@ def _build_subagent_requests(
     ]
 
 
-def _run_graph_a2a_query(
+async def _run_graph_a2a_query(
     input_text: str,
     context_id: str = "",
     user_id: str = "",
@@ -742,7 +790,7 @@ def _run_graph_a2a_query(
             }
         )
 
-    result, result_meta = get_graph_subagent().invoke_batch(
+    result, result_meta = await get_graph_subagent().invoke_batch(
         requests=requests,
         user_query=str(input_text or ""),
         session_id=session_id,
@@ -797,7 +845,7 @@ def _run_graph_a2a_query(
     }
 
 
-def _run_retrieval_a2a_query(
+async def _run_retrieval_a2a_query(
     input_text: str,
     context_id: str = "",
     user_id: str = "",
@@ -825,7 +873,7 @@ def _run_retrieval_a2a_query(
             }
         )
 
-    result, result_meta = get_rag_subagent().invoke_batch(
+    result, result_meta = await get_rag_subagent().invoke_batch(
         requests=requests,
         user_query=str(input_text or ""),
         session_id=session_id,
@@ -880,7 +928,7 @@ def _run_retrieval_a2a_query(
     }
 
 
-def _run_evaluator_a2a_query(
+async def _run_evaluator_a2a_query(
     input_text: str,
     context_id: str = "",
     user_id: str = "",
@@ -1046,20 +1094,16 @@ async def _measure_event_loop_lag(samples: int = 20, interval_ms: int = 20) -> D
     }
 
 
-async def _run_blocking_io(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """
-    按开关策略执行阻塞函数。
-
-    - ENABLE_ASYNC_DB_ADAPTER=true: 使用分类执行器卸载 MySQL/Neo4j/Milvus 阻塞调用
-    - ENABLE_ASYNC_DB_ADAPTER=false: 保持原同步调用路径（回滚）
-    """
-    if get_feature_flag("ENABLE_ASYNC_DB_ADAPTER", True):
-        return await run_storage_io(func, *args, **kwargs)
-    return func(*args, **kwargs)
+async def _await_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """统一等待可等待对象；仅保留异步主链路。"""
+    result = func(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
-def _build_readiness_report() -> Dict[str, Any]:
-    db_status = check_databases()
+async def _build_readiness_report() -> Dict[str, Any]:
+    db_status = await check_databases()
 
     neo4j_ready = bool((db_status.get("neo4j") or {}).get("is_running"))
     milvus_ready = bool((db_status.get("milvus") or {}).get("is_running"))
@@ -1100,7 +1144,7 @@ def _build_readiness_report() -> Dict[str, Any]:
     mcp_error = ""
 
     try:
-        mcp_detail = get_mcp_runtime_status(get_mcp())
+        mcp_detail = await get_mcp_runtime_status(get_mcp())
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         mcp_error = str(exc)
 
@@ -1152,7 +1196,7 @@ def _build_readiness_report() -> Dict[str, Any]:
 
 
 async def _ensure_core_ready(endpoint: str) -> Optional[JSONResponse]:
-    report = await _run_blocking_io(_build_readiness_report)
+    report = await _await_call(_build_readiness_report)
     if report["level"] != "unavailable":
         return None
 
@@ -1228,7 +1272,7 @@ async def request_timing_middleware(request: Request, call_next):
 @app.get("/db/status")
 async def db_status():
     """获取数据库连接状态"""
-    status = await _run_blocking_io(check_databases)
+    status = await _await_call(check_databases)
     return status
 
 # 从环境变量读取允许的跨域来源，默认开发环境前端地址
@@ -1247,96 +1291,6 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
-
-
-# 启动事件
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时初始化数据库和检查服务状态"""
-    print("\n" + "="*50)
-    print("正在初始化 MySQL 数据库...")
-    print("="*50)
-    
-    # 显式初始化数据库（不再在导入时自动执行）
-    global _mysql_initialized
-    db_initialized = initialize_database()
-    _mysql_initialized = bool(db_initialized)
-    if not db_initialized:
-        print("⚠ MySQL 数据库初始化失败，部分功能可能不可用")
-    
-    print("\n" + "="*50)
-    print("正在检查数据库连接...")
-    print("="*50)
-    
-    # 检查其他数据库状态
-    status = check_databases()
-    
-    if status["all_running"]:
-        print("✓ Neo4j 运行正常")
-        print("✓ Milvus 运行正常")
-    else:
-        print("⚠ 检测到部分数据库未启动，请手动启动后再使用相关功能")
-
-    print("="*50 + "\n")
-
-    # 初始化 MCP 服务器
-    print("正在初始化 MCP 服务...")
-    try:
-        mcp = get_mcp()
-        tools = mcp.list_tools()
-        print(f"✓ MCP 服务初始化成功，已注册 {len(tools)} 个工具:")
-        for tool in tools:
-            print(f"  - {tool['name']}: {tool['description']}")
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-        _log_api_error("startup", "mcp_init", e)
-        print(f"⚠ MCP 服务初始化失败: {e}")
-
-    # 初始化 A2A 服务（唯一执行架构）
-    print("正在初始化 A2A 服务...")
-    try:
-        a2a_service = get_a2a()
-        card = a2a_service.get_agent_card()
-        print(
-            "✓ A2A 服务初始化成功: "
-            f"name={card.get('name', '')}, protocol={card.get('protocolVersion', '')}"
-        )
-        graph_card = get_a2a_graph().get_agent_card()
-        retrieval_card = get_a2a_retrieval().get_agent_card()
-        evaluator_card = get_a2a_evaluator().get_agent_card()
-        print(
-            "✓ A2A 子代理已初始化: "
-            f"{graph_card.get('name', '')}, {retrieval_card.get('name', '')}, {evaluator_card.get('name', '')}"
-        )
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-        _log_api_error("startup", "a2a_init", e)
-        print(f"⚠ A2A 服务初始化失败: {e}")
-
-    flags = get_runtime_flag_snapshot()
-    print("当前运行时开关:")
-    for flag_name, flag_value in flags.items():
-        print(f"  - {flag_name}={flag_value}")
-
-    print("="*50 + "\n")
-
-    # 旧队列链路已下线，仅保留 A2A 架构。
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global _a2a_service, _a2a_graph_service, _a2a_retrieval_service, _a2a_evaluator_service
-    if _a2a_service is not None:
-        _a2a_service.shutdown()
-        _a2a_service = None
-    if _a2a_graph_service is not None:
-        _a2a_graph_service.shutdown()
-        _a2a_graph_service = None
-    if _a2a_retrieval_service is not None:
-        _a2a_retrieval_service.shutdown()
-        _a2a_retrieval_service = None
-    if _a2a_evaluator_service is not None:
-        _a2a_evaluator_service.shutdown()
-        _a2a_evaluator_service = None
-    thread_async_runner.close_all()
 
 
 @app.post("/process")
@@ -1459,7 +1413,7 @@ async def agent_run(data: dict, request: Request):
 @app.get("/health/readiness")
 async def health_readiness():
     """返回服务 readiness 分级状态。"""
-    report = await _run_blocking_io(_build_readiness_report)
+    report = await _await_call(_build_readiness_report)
     status_code = 200 if report["level"] != "unavailable" else 503
     return JSONResponse(status_code=status_code, content={"ok": report["ready"], "data": report})
 
@@ -1468,7 +1422,7 @@ async def health_readiness():
 async def agent_tools():
     """返回 Agent 策略与可用工具信息"""
     mcp = get_mcp()
-    mcp_tools = await _run_blocking_io(mcp.list_tools)
+    mcp_tools = await _await_call(mcp.list_tools)
     return {
         "default_strategy": "iterative",
         "supported_strategies": ["iterative", "graph"],
@@ -1485,7 +1439,7 @@ async def mcp_tools():
     """返回 MCP 服务中注册的工具列表"""
     try:
         mcp = get_mcp()
-        tools = await _run_blocking_io(mcp.list_tools)
+        tools = await _await_call(mcp.list_tools)
         return {
             "ok": True,
             "tools": tools
@@ -1553,8 +1507,7 @@ async def mcp_invoke(data: dict, request: Request):
                 "payload": payload,
             }
         ]
-        calls_json = json.dumps(single_call, ensure_ascii=False)
-        rows = await _run_blocking_io(mcp.invoke_batch_json, calls_json)
+        rows = await mcp.ainvoke_batch(single_call)
         row_obj = rows[0] if isinstance(rows, list) and rows else {}
         result = (
             row_obj
@@ -1639,7 +1592,7 @@ async def a2a_rpc(data: dict, request: Request):
     )
     try:
         service = get_a2a()
-        response = await _run_blocking_io(service.handle_rpc, data, trace_id)
+        response = await service.ahandle_rpc(data, trace_id)
         return JSONResponse(status_code=200, content=response)
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         _log_api_error("/a2a/rpc", "runtime", exc)
@@ -1665,7 +1618,7 @@ async def a2a_list_tasks(
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = get_a2a()
-        rows = await _run_blocking_io(service.list_tasks, context_id, limit)
+        rows = await service.alist_tasks(context_id, limit)
         return {"ok": True, "tasks": rows, "trace_id": trace_id}
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         _log_api_error("/a2a/tasks", "runtime", exc, context_id=context_id)
@@ -1678,7 +1631,7 @@ async def a2a_get_task(task_id: str, request: Request):
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = get_a2a()
-        task = await _run_blocking_io(service.get_task, task_id)
+        task = await service.aget_task(task_id)
         if not task:
             return JSONResponse(
                 status_code=404,
@@ -1735,7 +1688,7 @@ async def a2a_task_events(
         nonlocal safe_cursor
         started_at = time.time()
         while True:
-            snapshot = await _run_blocking_io(service.get_task_updates, task_id, safe_cursor)
+            snapshot = await service.aget_task_updates(task_id, safe_cursor)
             if snapshot is None:
                 payload = {"type": "error", "error": "task_not_found", "task_id": task_id}
                 yield f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -1815,7 +1768,7 @@ async def a2a_cancel_task(task_id: str, request: Request, data: Optional[Dict[st
     reason = str(payload.get("reason") or "manual_cancel")
     try:
         service = get_a2a()
-        result = await _run_blocking_io(service.cancel_task, task_id, reason)
+        result = await service.acancel_task(task_id, reason)
         if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
             return JSONResponse(
                 status_code=404,
@@ -1858,7 +1811,7 @@ async def _a2a_rpc_dispatch(
     )
     try:
         service = service_getter()
-        response = await _run_blocking_io(service.handle_rpc, data, trace_id)
+        response = await service.ahandle_rpc(data, trace_id)
         return JSONResponse(status_code=200, content=response)
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         _log_api_error(endpoint, "runtime", exc)
@@ -1876,7 +1829,7 @@ async def _a2a_list_tasks_dispatch(
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = service_getter()
-        rows = await _run_blocking_io(service.list_tasks, context_id, limit)
+        rows = await service.alist_tasks(context_id, limit)
         return {"ok": True, "tasks": rows, "trace_id": trace_id}
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         _log_api_error(endpoint, "runtime", exc, context_id=context_id)
@@ -1892,7 +1845,7 @@ async def _a2a_get_task_dispatch(
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = service_getter()
-        task = await _run_blocking_io(service.get_task, task_id)
+        task = await service.aget_task(task_id)
         if not task:
             return JSONResponse(
                 status_code=404,
@@ -1948,7 +1901,7 @@ async def _a2a_task_events_dispatch(
         nonlocal safe_cursor
         started_at = time.time()
         while True:
-            snapshot = await _run_blocking_io(service.get_task_updates, task_id, safe_cursor)
+            snapshot = await service.aget_task_updates(task_id, safe_cursor)
             if snapshot is None:
                 payload = {"type": "error", "error": "task_not_found", "task_id": task_id}
                 yield f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -2032,7 +1985,7 @@ async def _a2a_cancel_task_dispatch(
     reason = str(payload.get("reason") or "manual_cancel")
     try:
         service = service_getter()
-        result = await _run_blocking_io(service.cancel_task, task_id, reason)
+        result = await service.acancel_task(task_id, reason)
         if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
             return JSONResponse(
                 status_code=404,
@@ -2258,7 +2211,7 @@ async def graph_visualization(keyword: str = "", limit: int = 200):
     q = (keyword or "").strip()
     try:
         if q:
-            rows = await _run_blocking_io(
+            rows = await _await_call(
                 neo4j_client.run_cypher,
                 """
                 MATCH (a)-[r]->(b)
@@ -2272,7 +2225,7 @@ async def graph_visualization(keyword: str = "", limit: int = 200):
                 {"q": q, "limit": safe_limit},
             )
         else:
-            rows = await _run_blocking_io(
+            rows = await _await_call(
                 neo4j_client.run_cypher,
                 """
                 MATCH (a)-[r]->(b)
@@ -2320,7 +2273,7 @@ async def get_entity_detail(entity_id: str):
     """获取实体详细信息"""
     try:
         # 获取实体基本信息
-        entity_result = await _run_blocking_io(
+        entity_result = await _await_call(
             neo4j_client.run_cypher,
             """
             MATCH (n)
@@ -2346,7 +2299,7 @@ async def get_entity_detail(entity_id: str):
         }
 
         # 获取入边关系
-        incoming = await _run_blocking_io(
+        incoming = await _await_call(
             neo4j_client.run_cypher,
             """
             MATCH (a)-[r]->(b)
@@ -2359,7 +2312,7 @@ async def get_entity_detail(entity_id: str):
         )
 
         # 获取出边关系
-        outgoing = await _run_blocking_io(
+        outgoing = await _await_call(
             neo4j_client.run_cypher,
             """
             MATCH (a)-[r]->(b)
@@ -2427,7 +2380,7 @@ async def create_session(data: dict):
     """创建新会话"""
     user_id = data.get("user_id") or str(uuid.uuid4())
     title = data.get("title", "新会话")
-    session = await _run_blocking_io(SessionManager.create_session, user_id, title)
+    session = await _await_call(SessionManager.create_session, user_id, title)
     return {"ok": True, "data": session}
 
 
@@ -2436,7 +2389,7 @@ async def list_sessions(user_id: str = "", limit: int = 50):
     """获取用户的会话列表"""
     if not user_id:
         return {"ok": False, "error": "user_id_required", "data": []}
-    sessions = await _run_blocking_io(SessionManager.get_sessions, user_id, limit)
+    sessions = await _await_call(SessionManager.get_sessions, user_id, limit)
     return {"ok": True, "data": sessions}
 
 
@@ -2446,11 +2399,11 @@ async def get_session(session_id: str, user_id: str = ""):
     if not user_id:
         return {"ok": False, "error": "user_id_required"}
 
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session or str(session.get("user_id") or "") != user_id:
         return {"ok": False, "error": "session_not_found"}
 
-    messages = await _run_blocking_io(MessageManager.get_messages, session_id)
+    messages = await _await_call(MessageManager.get_messages, session_id)
     return {"ok": True, "data": {**session, "messages": messages}}
 
 
@@ -2467,7 +2420,7 @@ async def update_session(session_id: str, data: dict):
     if not await _is_session_owner(session_id, user_id):
         return {"ok": False, "error": "session_not_found"}
 
-    success = await _run_blocking_io(SessionManager.update_session_title, session_id, title)
+    success = await _await_call(SessionManager.update_session_title, session_id, title)
     if not success:
         return {"ok": False, "error": "session_not_found"}
     return {"ok": True}
@@ -2482,7 +2435,7 @@ async def delete_session(session_id: str, user_id: str = ""):
     if not await _is_session_owner(session_id, user_id):
         return {"ok": False, "error": "session_not_found"}
 
-    success = await _run_blocking_io(SessionManager.delete_session, session_id)
+    success = await _await_call(SessionManager.delete_session, session_id)
     if not success:
         return {"ok": False, "error": "session_not_found"}
     return {"ok": True}
@@ -2503,11 +2456,11 @@ async def add_message(session_id: str, data: dict):
         return {"ok": False, "error": "role_and_content_required"}
     
     # 检查会话是否存在
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session or str(session.get("user_id") or "") != user_id:
         return {"ok": False, "error": "session_not_found"}
     
-    message = await _run_blocking_io(MessageManager.add_message, session_id, role, content, think_content)
+    message = await _await_call(MessageManager.add_message, session_id, role, content, think_content)
     return {"ok": True, "data": message}
 
 
@@ -2517,11 +2470,11 @@ async def get_messages(session_id: str, user_id: str = ""):
     if not user_id:
         return {"ok": False, "error": "user_id_required"}
 
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session or str(session.get("user_id") or "") != user_id:
         return {"ok": False, "error": "session_not_found"}
 
-    messages = await _run_blocking_io(MessageManager.get_messages, session_id)
+    messages = await _await_call(MessageManager.get_messages, session_id)
     return {"ok": True, "data": messages}
 
 
@@ -2532,15 +2485,15 @@ async def rollback_last_question(session_id: str, data: dict):
     if not user_id:
         return {"ok": False, "error": "user_id_required"}
 
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session or str(session.get("user_id") or "") != user_id:
         return {"ok": False, "error": "session_not_found"}
 
-    rollback_result = await _run_blocking_io(MessageManager.rollback_last_question, session_id)
+    rollback_result = await _await_call(MessageManager.rollback_last_question, session_id)
     if not bool(rollback_result.get("ok")):
         return {"ok": False, "error": "no_question_to_rollback"}
 
-    await _run_blocking_io(SessionMemoryManager.clear_summary, session_id)
+    await _await_call(SessionMemoryManager.clear_summary, session_id)
     return {
         "ok": True,
         "data": {
@@ -2562,15 +2515,15 @@ async def rollback_to_question(session_id: str, data: dict):
     if not isinstance(raw_message_id, int) or raw_message_id <= 0:
         return {"ok": False, "error": "message_id_required"}
 
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session or str(session.get("user_id") or "") != user_id:
         return {"ok": False, "error": "session_not_found"}
 
-    rollback_result = await _run_blocking_io(MessageManager.rollback_to_question, session_id, raw_message_id)
+    rollback_result = await _await_call(MessageManager.rollback_to_question, session_id, raw_message_id)
     if not bool(rollback_result.get("ok")):
         return {"ok": False, "error": "question_not_found"}
 
-    await _run_blocking_io(SessionMemoryManager.clear_summary, session_id)
+    await _await_call(SessionMemoryManager.clear_summary, session_id)
     return {
         "ok": True,
         "data": {
@@ -2605,7 +2558,7 @@ async def upload_image(file: UploadFile = File(...)):
         file_id = str(uuid.uuid4())
         filename = f"{file_id}{file_ext}"
         file_path = UPLOAD_DIR / filename
-        await _run_blocking_io(file_path.write_bytes, content)
+        await _await_call(file_path.write_bytes, content)
         
         base64_data = ""
         mime_type = "application/octet-stream"
@@ -2668,14 +2621,14 @@ async def process_with_session(data: dict, request: Request):
     
     session: Optional[Dict[str, Any]] = None
     if not session_id:
-        session = await _run_blocking_io(
+        session = await _await_call(
             SessionManager.create_session,
             user_id,
             input_text[:30] + "..." if len(input_text) > 30 else input_text,
         )
         session_id = session["id"]
     else:
-        session = await _run_blocking_io(SessionManager.get_session, session_id)
+        session = await _await_call(SessionManager.get_session, session_id)
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found", "trace_id": trace_id}
     
@@ -2685,7 +2638,7 @@ async def process_with_session(data: dict, request: Request):
     elif file_name:
         message_content = f"[文件:{file_name}] {input_text}".strip()
     
-    user_message = await _run_blocking_io(MessageManager.add_message, session_id, "user", message_content)
+    user_message = await _await_call(MessageManager.add_message, session_id, "user", message_content)
     
     return StreamingResponse(
         generate_data_with_session(
@@ -2735,7 +2688,7 @@ async def generate_data_with_session(
 
         if msg.get("type") == "done":
             if done_status == "done" and full_reply:
-                await _run_blocking_io(
+                await _await_call(
                     MessageManager.add_message,
                     session_id,
                     "assistant",
@@ -2754,7 +2707,7 @@ async def cancel_qa_job(job_id: str, data: dict):
         return {"ok": False, "error": "user_id_and_session_id_required"}
 
     service = get_a2a()
-    task = await _run_blocking_io(service.get_task, job_id)
+    task = await service.aget_task(job_id)
     if not task:
         return {"ok": False, "error": "job_not_found"}
 
@@ -2765,7 +2718,7 @@ async def cancel_qa_job(job_id: str, data: dict):
     if payload_user_id != user_id or payload_session_id != session_id:
         return {"ok": False, "error": "job_not_found"}
 
-    result = await _run_blocking_io(service.cancel_task, job_id, "manual_cancel")
+    result = await service.acancel_task(job_id, "manual_cancel")
     if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
         return {"ok": False, "error": "job_not_found_or_finished"}
     current_status = str((((result.get("task") or {}).get("status") or {}).get("state")) or "")
@@ -2826,14 +2779,13 @@ async def admin_perf_baseline(days: int = 1):
         "/admin/graph/",
     ]
 
-    api_report = await asyncio.to_thread(
-        generate_api_baseline_report,
+    api_report = generate_api_baseline_report(
         safe_days,
         target_paths,
     )
     event_loop_lag = await _measure_event_loop_lag(samples=20, interval_ms=20)
 
-    queue_snapshot = _build_a2a_runtime_snapshot(limit_per_service=200)
+    queue_snapshot = await _build_a2a_runtime_snapshot(limit_per_service=200)
     runtime_snapshot = get_runtime_flag_snapshot()
 
     return {
@@ -2855,7 +2807,7 @@ async def admin_qa_queue_status():
     """获取 A2A 任务状态快照（需要登录）"""
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
-    return {"ok": True, "data": _build_a2a_runtime_snapshot(limit_per_service=200)}
+    return {"ok": True, "data": await _build_a2a_runtime_snapshot(limit_per_service=200)}
 
 
 @app.post("/admin/qa/jobs/{job_id}/cancel")
@@ -2865,7 +2817,7 @@ async def admin_cancel_qa_job(job_id: str):
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
 
     service = get_a2a()
-    result = await _run_blocking_io(service.cancel_task, job_id, "manual_cancel")
+    result = await service.acancel_task(job_id, "manual_cancel")
     if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
         return {"ok": False, "error": "job_not_found_or_finished"}
     state = str((((result.get("task") or {}).get("status") or {}).get("state")) or "")
@@ -2886,8 +2838,8 @@ async def admin_get_sessions(limit: int = 100, offset: int = 0):
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
-    sessions = await _run_blocking_io(SessionManager.get_all_sessions, limit, offset)
-    total = await _run_blocking_io(SessionManager.get_total_sessions_count)
+    sessions = await _await_call(SessionManager.get_all_sessions, limit, offset)
+    total = await _await_call(SessionManager.get_total_sessions_count)
     return {"ok": True, "data": sessions, "total": total}
 
 
@@ -2897,11 +2849,11 @@ async def admin_get_session_messages(session_id: str):
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session:
         return {"ok": False, "error": "会话不存在"}
     
-    messages = await _run_blocking_io(MessageManager.get_messages, session_id)
+    messages = await _await_call(MessageManager.get_messages, session_id)
     return {"ok": True, "session": session, "messages": messages}
 
 
@@ -2911,18 +2863,18 @@ async def admin_clear_session_messages(session_id: str):
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
 
-    session = await _run_blocking_io(SessionManager.get_session, session_id)
+    session = await _await_call(SessionManager.get_session, session_id)
     if not session:
         return {"ok": False, "error": "会话不存在"}
 
-    existing_messages = await _run_blocking_io(MessageManager.get_messages, session_id)
+    existing_messages = await _await_call(MessageManager.get_messages, session_id)
     removed_count = len(existing_messages)
 
     if removed_count > 0:
-        await _run_blocking_io(MessageManager.delete_messages, session_id)
+        await _await_call(MessageManager.delete_messages, session_id)
 
-    await _run_blocking_io(SessionMemoryManager.clear_summary, session_id)
-    await _run_blocking_io(SessionManager.update_session_time, session_id)
+    await _await_call(SessionMemoryManager.clear_summary, session_id)
+    await _await_call(SessionManager.update_session_time, session_id)
 
     return {
         "ok": True,
@@ -2937,7 +2889,7 @@ async def admin_delete_session(session_id: str):
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
-    success = await _run_blocking_io(SessionManager.delete_session, session_id)
+    success = await _await_call(SessionManager.delete_session, session_id)
     if success:
         return {"ok": True, "message": "会话已删除"}
     return {"ok": False, "error": "删除失败或会话不存在"}
@@ -2949,32 +2901,16 @@ async def admin_get_stats():
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
-    def _query_stats() -> Dict[str, int]:
-        with get_db() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) as count FROM sessions")
-                session_count = int(cursor.fetchone()["count"])
-
-                cursor.execute("SELECT COUNT(*) as count FROM messages")
-                message_count = int(cursor.fetchone()["count"])
-
-                cursor.execute(
-                    "SELECT COUNT(*) as count FROM sessions WHERE DATE(created_at) = CURDATE()"
-                )
-                today_sessions = int(cursor.fetchone()["count"])
-
-                cursor.execute(
-                    "SELECT COUNT(*) as count FROM messages WHERE DATE(created_at) = CURDATE()"
-                )
-                today_messages = int(cursor.fetchone()["count"])
-        return {
-            "session_count": session_count,
-            "message_count": message_count,
-            "today_sessions": today_sessions,
-            "today_messages": today_messages,
-        }
-
-    stats = await _run_blocking_io(_query_stats)
+    sessions_row = await fetch_one("SELECT COUNT(*) as count FROM sessions")
+    messages_row = await fetch_one("SELECT COUNT(*) as count FROM messages")
+    today_sessions_row = await fetch_one("SELECT COUNT(*) as count FROM sessions WHERE DATE(created_at) = CURDATE()")
+    today_messages_row = await fetch_one("SELECT COUNT(*) as count FROM messages WHERE DATE(created_at) = CURDATE()")
+    stats = {
+        "session_count": int((sessions_row or {}).get("count") or 0),
+        "message_count": int((messages_row or {}).get("count") or 0),
+        "today_sessions": int((today_sessions_row or {}).get("count") or 0),
+        "today_messages": int((today_messages_row or {}).get("count") or 0),
+    }
     
     return {
         "ok": True,
@@ -3301,10 +3237,10 @@ async def upload_document(file: UploadFile = File(...)):
         
         # 导入文档嵌入器
         from app.rag_core.document_embedding import embed_docx_bytes
-        vector_store = await _run_blocking_io(get_shared_vector_store)
+        vector_store = await _await_call(get_shared_vector_store)
 
         # 分块+嵌入联动
-        result = await _run_blocking_io(embed_docx_bytes, content, file.filename, vector_store)
+        result = await _await_call(embed_docx_bytes, content, file.filename, vector_store)
         
         return {"ok": True, "data": result}
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
@@ -3320,9 +3256,9 @@ async def get_document_stats():
     
     try:
         from app.rag_core.document_embedding import DocumentEmbedder
-        vector_store = await _run_blocking_io(get_shared_vector_store)
+        vector_store = await _await_call(get_shared_vector_store)
         embedder = DocumentEmbedder(vector_store=vector_store)
-        stats = await _run_blocking_io(embedder.get_collection_stats)
+        stats = await _await_call(embedder.get_collection_stats)
         
         return stats
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
@@ -3358,8 +3294,8 @@ async def docling_parse_document(file: UploadFile = File(...)):
         # 使用 Docling 解析
         from app.document_parser.docling_parser import DoclingParser
         
-        parser = await _run_blocking_io(DoclingParser)
-        result = await _run_blocking_io(parser.parse_bytes, content, file.filename)
+        parser = await _await_call(DoclingParser)
+        result = await _await_call(parser.parse_bytes, content, file.filename)
         
         return {
             "ok": True,
@@ -3410,8 +3346,8 @@ async def docling_parse_and_embed(file: UploadFile = File(...)):
         from app.common.config import Config
         
         # 1) 仅负责 Docling + OCR 文本抽取
-        parser = await _run_blocking_io(DoclingParser)
-        parsed = await _run_blocking_io(parser.parse_bytes, content, file.filename)
+        parser = await _await_call(DoclingParser)
+        parsed = await _await_call(parser.parse_bytes, content, file.filename)
 
         # 2) 分块模块负责切块
         conf = Config()
@@ -3427,22 +3363,22 @@ async def docling_parse_and_embed(file: UploadFile = File(...)):
         if not chunk_source_text:
             raise ValueError("Docling 解析结果为空，无法分块并嵌入")
 
-        hierarchical_chunks = await _run_blocking_io(
+        hierarchical_chunks = await _await_call(
             chunker.segment_text_with_page_count,
             chunk_source_text,
             file.filename,
             len(parsed.pages),
         )
-        sub_chunks = await _run_blocking_io(chunker.get_all_sub_chunks, hierarchical_chunks)
+        sub_chunks = await _await_call(chunker.get_all_sub_chunks, hierarchical_chunks)
         if not sub_chunks:
             raise ValueError("分块结果为空，未执行 Milvus 写入")
 
         # 3) 嵌入模块仅负责写向量
-        vector_store = await _run_blocking_io(get_shared_vector_store)
+        vector_store = await _await_call(get_shared_vector_store)
         embedder = DocumentEmbedder(vector_store=vector_store)
-        embed_result = await _run_blocking_io(embedder.embed_docling_sub_chunks, sub_chunks, file.filename, parsed)
+        embed_result = await _await_call(embedder.embed_docling_sub_chunks, sub_chunks, file.filename, parsed)
         embed_result["parent_chunks_count"] = len(hierarchical_chunks)
-        collection_stats = await _run_blocking_io(embedder.get_collection_stats)
+        collection_stats = await _await_call(embedder.get_collection_stats)
         
         return {
             "ok": True,
@@ -3478,7 +3414,7 @@ async def get_graph_labels():
         RETURN DISTINCT label
         ORDER BY label
         """
-        result = await _run_blocking_io(neo4j_client.run_cypher, query)
+        result = await _await_call(neo4j_client.run_cypher, query)
         labels = [record["label"] for record in result]
         return {"ok": True, "data": labels}
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
@@ -3498,7 +3434,7 @@ async def get_graph_relationship_types():
         RETURN DISTINCT type(r) AS rel_type
         ORDER BY rel_type
         """
-        result = await _run_blocking_io(neo4j_client.run_cypher, query)
+        result = await _await_call(neo4j_client.run_cypher, query)
         rel_types = [record["rel_type"] for record in result]
         return {"ok": True, "data": rel_types}
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
@@ -3565,9 +3501,9 @@ async def get_graph_nodes(label: str = "", keyword: str = "", limit: int = 100, 
                 """
         
         params = {"keyword": keyword, "offset": offset, "limit": limit}
-        result = await _run_blocking_io(neo4j_client.run_cypher, query, params)
+        result = await _await_call(neo4j_client.run_cypher, query, params)
         
-        count_result = await _run_blocking_io(neo4j_client.run_cypher, count_query, {"keyword": keyword} if keyword else {})
+        count_result = await _await_call(neo4j_client.run_cypher, count_query, {"keyword": keyword} if keyword else {})
         total = count_result[0]["total"] if count_result else 0
         
         return {"ok": True, "data": result, "total": total}
@@ -3589,7 +3525,7 @@ async def get_graph_node(node_id: int):
         WHERE id(n) = $node_id
         RETURN id(n) AS id, labels(n) AS labels, properties(n) AS properties
         """
-        node_result = await _run_blocking_io(neo4j_client.run_cypher, node_query, {"node_id": node_id})
+        node_result = await _await_call(neo4j_client.run_cypher, node_query, {"node_id": node_id})
         
         if not node_result:
             return {"ok": False, "error": "节点不存在"}
@@ -3601,7 +3537,7 @@ async def get_graph_node(node_id: int):
         RETURN id(r) AS rel_id, type(r) AS rel_type, properties(r) AS rel_props,
                id(m) AS source_id, labels(m) AS source_labels, m.name AS source_name
         """
-        incoming = await _run_blocking_io(neo4j_client.run_cypher, incoming_query, {"node_id": node_id})
+        incoming = await _await_call(neo4j_client.run_cypher, incoming_query, {"node_id": node_id})
         
         # 获取出边关系
         outgoing_query = """
@@ -3610,7 +3546,7 @@ async def get_graph_node(node_id: int):
         RETURN id(r) AS rel_id, type(r) AS rel_type, properties(r) AS rel_props,
                id(m) AS target_id, labels(m) AS target_labels, m.name AS target_name
         """
-        outgoing = await _run_blocking_io(neo4j_client.run_cypher, outgoing_query, {"node_id": node_id})
+        outgoing = await _await_call(neo4j_client.run_cypher, outgoing_query, {"node_id": node_id})
         
         return {
             "ok": True,
@@ -3650,7 +3586,7 @@ async def create_graph_node(data: dict):
         else:
             query = f"CREATE (n:`{label}`) RETURN id(n) AS id"
         
-        result = await _run_blocking_io(neo4j_client.run_cypher, query, properties)
+        result = await _await_call(neo4j_client.run_cypher, query, properties)
         
         if result:
             return {"ok": True, "data": {"id": result[0]["id"], "message": "节点创建成功"}}
@@ -3684,7 +3620,7 @@ async def update_graph_node(node_id: int, data: dict):
         """
         
         params = {"node_id": node_id, **properties}
-        result = await _run_blocking_io(neo4j_client.run_cypher, query, params)
+        result = await _await_call(neo4j_client.run_cypher, query, params)
         
         if result:
             return {"ok": True, "data": {"id": result[0]["id"], "message": "节点更新成功"}}
@@ -3707,7 +3643,7 @@ async def delete_graph_node(node_id: int):
         DETACH DELETE n
         RETURN count(n) AS deleted_count
         """
-        result = await _run_blocking_io(neo4j_client.run_cypher, query, {"node_id": node_id})
+        result = await _await_call(neo4j_client.run_cypher, query, {"node_id": node_id})
         
         if result and result[0]["deleted_count"] > 0:
             return {"ok": True, "message": "节点删除成功"}
@@ -3760,7 +3696,7 @@ async def create_graph_relationship(data: dict):
             """
             params = {"source_id": source_id_int, "target_id": target_id_int}
         
-        result = await _run_blocking_io(neo4j_client.run_cypher, query, params)
+        result = await _await_call(neo4j_client.run_cypher, query, params)
         
         if result:
             return {"ok": True, "data": {"rel_id": result[0]["rel_id"], "message": "关系创建成功"}}
@@ -3783,7 +3719,7 @@ async def delete_graph_relationship(rel_id: int):
         DELETE r
         RETURN count(r) AS deleted_count
         """
-        result = await _run_blocking_io(neo4j_client.run_cypher, query, {"rel_id": rel_id})
+        result = await _await_call(neo4j_client.run_cypher, query, {"rel_id": rel_id})
         
         if result and result[0]["deleted_count"] > 0:
             return {"ok": True, "message": "关系删除成功"}
@@ -3812,7 +3748,7 @@ async def execute_cypher(data: dict):
             if keyword in query_lower:
                 return {"ok": False, "error": f"出于安全考虑，不允许执行包含 '{keyword}' 的操作"}
         
-        result = await _run_blocking_io(neo4j_client.run_cypher, query)
+        result = await _await_call(neo4j_client.run_cypher, query)
         return {"ok": True, "data": result}
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
         _log_api_error("/admin/graph/execute-cypher", "execute_cypher", e)
@@ -3909,13 +3845,13 @@ async def extract_and_import_graph(
 
                 parser = DoclingParser(enable_image_ocr=True)
                 with log_duration("graph.extract_import.parse_docling", filename=filename):
-                    parsed = await _run_blocking_io(parser.parse_bytes, file_bytes, filename)
+                    parsed = await _await_call(parser.parse_bytes, file_bytes, filename)
                 text = parsed.text
                 parser_used = "docling"
             except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as docling_error:
                 _log_api_error("/admin/graph/extract-and-import", "docling_parse_fallback", docling_error, filename=filename)
                 with log_duration("graph.extract_import.parse_fallback", filename=filename, suffix=suffix):
-                    text = await _run_blocking_io(extract_text_fallback, file_bytes, filename, suffix)
+                    text = await _await_call(extract_text_fallback, file_bytes, filename, suffix)
                 parser_used = "fallback"
                 parse_warning = f"Docling 不可用，已自动回退解析: {docling_error}"
 
@@ -3933,17 +3869,17 @@ async def extract_and_import_graph(
 
         for idx, chunk in enumerate(chunks, start=1):
             with log_duration("graph.extract_import.extract_chunk", filename=filename, chunk_index=idx, chunk_len=len(chunk)):
-                graph_data = await _run_blocking_io(extract_text_to_graph_queries, chunk, len(chunk))
+                graph_data = await _await_call(extract_text_to_graph_queries, chunk, len(chunk))
 
             node_queries = graph_data["node_queries"]
             relation_queries = graph_data["relation_queries"]
 
             if node_queries:
                 with log_duration("graph.extract_import.write_nodes", filename=filename, chunk_index=idx, batches=len(node_queries)):
-                    await _run_blocking_io(neo4j_client.run_multiple_cypher, node_queries)
+                    await _await_call(neo4j_client.run_multiple_cypher, node_queries)
             if relation_queries:
                 with log_duration("graph.extract_import.write_relations", filename=filename, chunk_index=idx, batches=len(relation_queries)):
-                    await _run_blocking_io(neo4j_client.run_multiple_cypher, relation_queries)
+                    await _await_call(neo4j_client.run_multiple_cypher, relation_queries)
 
             stats = graph_data["stats"]
             total_entities += stats["entities"]
@@ -4005,8 +3941,8 @@ async def embed_graph_to_milvus(data: Optional[Dict[str, Any]] = None):
         labels = data.get("labels") if data else None
         batch_size = data.get("batch_size", 100) if data else 100
 
-        kg_store = await _run_blocking_io(get_shared_kg_milvus_store)
-        stats = await _run_blocking_io(
+        kg_store = await _await_call(get_shared_kg_milvus_store)
+        stats = await _await_call(
             kg_store.rebuild_from_neo4j,
             neo4j_client,
             labels,
@@ -4035,8 +3971,8 @@ async def get_graph_embed_status():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
     try:
-        kg_store = await _run_blocking_io(get_shared_kg_milvus_store)
-        stats = await _run_blocking_io(kg_store.get_stats)
+        kg_store = await _await_call(get_shared_kg_milvus_store)
+        stats = await _await_call(kg_store.get_stats)
         return {
             "ok": True,
             "data": stats,
@@ -4051,6 +3987,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-

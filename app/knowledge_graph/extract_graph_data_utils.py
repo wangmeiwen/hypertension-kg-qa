@@ -437,7 +437,11 @@ def extract_hypertension_knowledge(text: str, max_gleanings: int = 1) -> Dict[st
             normalized_delta = normalize_extraction_result(delta_result)
             merged_result = merge_extraction_results(merged_result, normalized_delta)
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-            logger.warning(f"补抽阶段失败，返回主抽取结果: {e}")
+            logger.exception(
+                "补抽阶段失败，返回主抽取结果。error_type=%s, error=%s",
+                type(e).__name__,
+                str(e),
+            )
             break
 
     return merged_result

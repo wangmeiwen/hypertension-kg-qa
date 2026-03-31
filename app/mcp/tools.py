@@ -165,7 +165,7 @@ class KnowledgeGraphTool:
                 seen.add(item)
         return terms
 
-    def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         """执行知识图谱查询。
 
         输入支持以下字段：
@@ -189,11 +189,11 @@ class KnowledgeGraphTool:
                     return {"records": [], "blocked": True, "reason": "unsafe_cypher"}
                 if not lower.startswith("match") and not lower.startswith("with"):
                     return {"records": [], "blocked": True, "reason": "read_only_required"}
-                records = self.client.run_cypher(cypher)[:limit]
+                records = (await self.client.run_cypher(cypher))[:limit]
                 return {"records": records, "blocked": False}
 
             if list_all_nodes:
-                records = self.client.run_cypher(
+                records = await self.client.run_cypher(
                     """
                     MATCH (n)
                     RETURN labels(n) AS labels, properties(n) AS properties
@@ -210,7 +210,7 @@ class KnowledgeGraphTool:
             if not tokens:
                 return {"records": [], "blocked": False}
 
-            records = self.client.run_cypher(
+            records = await self.client.run_cypher(
                 """
                 MATCH (n)
                 WITH n, $tokens AS tokens
@@ -235,7 +235,7 @@ class KnowledgeGraphTool:
             )
 
             if not records:
-                fallback_records = self.client.run_cypher(
+                fallback_records = await self.client.run_cypher(
                     """
                     MATCH (n)
                     RETURN labels(n) AS labels, properties(n) AS properties
@@ -274,7 +274,7 @@ class RagSearchTool:
         self.conf = conf
         self.vector_store = get_shared_vector_store(conf)
 
-    def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         """执行向量检索并返回片段命中结果。
 
         Args:
@@ -293,7 +293,7 @@ class RagSearchTool:
         if not query:
             return {"hits": []}
         try:
-            docs = self.vector_store.hybrid_search_with_rerank(
+            docs = await self.vector_store.hybrid_search_with_rerank(
                 query=query,
                 k=top_k,
                 source_filter=source_filter,
@@ -426,7 +426,7 @@ class KgEntityRelationSearchTool:
                 "token_usage": token_usage,
             }
 
-    def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         """执行实体关系检索。
 
         Args:
@@ -449,7 +449,7 @@ class KgEntityRelationSearchTool:
         if not query:
             return {"entities": [], "relationships": [], "collection_name": self.store.collection_name}
         try:
-            return self.store.search_entity_relations(
+            return await self.store.search_entity_relations(
                 query=query,
                 top_k=top_k,
                 lexical_weight=lexical_weight,
@@ -503,8 +503,8 @@ def build_mcp_server() -> MCPServer:
     server = MCPServer()
     kg_tool = KnowledgeGraphTool(conf)
 
-    def kg_handler(payload: dict[str, Any]) -> dict[str, Any]:
-        return kg_tool.query(payload)
+    async def kg_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        return await kg_tool.query(payload)
 
     # 先构建内置工具目录，再由 ToolManager 按 YAML 动态注册。
     builtin_registry: dict[str, dict[str, Any]] = {
@@ -526,13 +526,13 @@ def build_mcp_server() -> MCPServer:
     try:
         rag_tool = RagSearchTool(conf)
 
-        def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
-            return rag_tool.query(payload)
+        async def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
+            return await rag_tool.query(payload)
 
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         message = str(exc)
 
-        def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        async def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
             return {"hits": [], "unavailable": True, "reason": message}
 
     builtin_registry["rag_search"] = {
@@ -564,13 +564,13 @@ def build_mcp_server() -> MCPServer:
             ) as exc:
                 logger.warning("kg_entity_relation_search 预热失败，运行时将按需加载: %s", str(exc))
 
-        def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
-            return kg_er_tool.query(payload)
+        async def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
+            return await kg_er_tool.query(payload)
 
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         message = str(exc)
 
-        def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        async def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "entities": [],
                 "relationships": [],
@@ -625,7 +625,7 @@ def build_mcp_server() -> MCPServer:
     return server
 
 
-def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str, Any]:
+async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str, Any]:
     """检查 MCP 运行时状态，用于 readiness 判定。
 
     该函数同时校验：
@@ -670,7 +670,7 @@ def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str, Any]
         if tool_name not in tool_names:
             continue
         try:
-            result = target_server.invoke(tool_name, payload)
+            result = await target_server.ainvoke(tool_name, payload)
             unavailable = False
             if isinstance(result, dict):
                 if bool(result.get("unavailable")):

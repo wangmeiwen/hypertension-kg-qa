@@ -1,3 +1,9 @@
+"""
+A2A agent/tool/text_parser.py 模块。
+
+本模块提供 text_parser 相关实现。
+"""
+
 import json
 from typing import Any, Dict
 

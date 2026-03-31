@@ -1,3 +1,9 @@
+"""
+A2A agent/tool/__init__.py 模块。
+
+本模块提供 __init__ 相关实现。
+"""
+
 from .text_parser import _compact_summary, _extract_json_object, _strip_code_block, _to_compact_text
 from .token_config import _env_flag, _extract_token_usage, _normalize_token_usage
 

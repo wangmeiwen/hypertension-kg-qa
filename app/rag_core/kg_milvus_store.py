@@ -32,6 +32,7 @@ from threading import Lock
 from typing import Any, Callable, Dict, List, Optional
 
 import networkx as nx
+import numpy as np
 from pymilvus import DataType, MilvusClient
 from sentence_transformers import SentenceTransformer
 
@@ -367,22 +368,8 @@ class KgMilvusStore:
         return expected_metric or None
 
     def _search_with_params(self, search_kwargs: Dict[str, Any], search_params: Dict[str, Any]) -> List[List[dict]]:
-        """
-        兼容不同 pymilvus 版本的检索参数名称。
-
-        Args:
-            search_kwargs: search 基础参数
-            search_params: 度量/检索参数
-
-        Returns:
-            List[List[dict]]: 原始检索结果
-        """
-        try:
-            return self.client.search(**search_kwargs, search_params=search_params)
-        except TypeError as exc:
-            if "unexpected keyword argument 'search_params'" not in str(exc):
-                raise
-            return self.client.search(**search_kwargs, param=search_params)
+        """单版本检索参数：仅使用 search_params。"""
+        return self.client.search(**search_kwargs, search_params=search_params)
 
     def clear_collection(self) -> None:
         """
@@ -401,7 +388,7 @@ class KgMilvusStore:
                 self.client.drop_collection(self.collection_name)
             self._ensure_collection()
 
-    def _build_entity_rows(self, neo4j_client, labels: Optional[List[str]], timestamp: str) -> List[Dict[str, Any]]:
+    async def _build_entity_rows(self, neo4j_client, labels: Optional[List[str]], timestamp: str) -> List[Dict[str, Any]]:
         """
         从 Neo4j 节点生成实体入库行数据。
 
@@ -416,7 +403,7 @@ class KgMilvusStore:
         rows: List[Dict[str, Any]] = []
         target_labels = labels
         if not target_labels:
-            result = neo4j_client.run_cypher(
+            result = await neo4j_client.run_cypher(
                 """
                 MATCH (n)
                 UNWIND labels(n) AS label
@@ -426,7 +413,7 @@ class KgMilvusStore:
             target_labels = [record["label"] for record in result]
 
         for label in target_labels:
-            nodes = neo4j_client.run_cypher(
+            nodes = await neo4j_client.run_cypher(
                 f"""
                 MATCH (n:{label})
                 RETURN n, id(n) AS node_id
@@ -455,7 +442,7 @@ class KgMilvusStore:
                 )
         return rows
 
-    def _build_relationship_rows(self, neo4j_client, timestamp: str) -> List[Dict[str, Any]]:
+    async def _build_relationship_rows(self, neo4j_client, timestamp: str) -> List[Dict[str, Any]]:
         """
         从 Neo4j 边生成关系入库行数据。
 
@@ -467,7 +454,7 @@ class KgMilvusStore:
             List[Dict[str, Any]]: 关系行数据列表
         """
         rows: List[Dict[str, Any]] = []
-        rels = neo4j_client.run_cypher(
+        rels = await neo4j_client.run_cypher(
             """
             MATCH (a)-[r]->(b)
             RETURN id(a) AS from_id, labels(a) AS from_labels, a.name AS from_name,
@@ -549,7 +536,7 @@ class KgMilvusStore:
 
         return inserted
 
-    def rebuild_from_neo4j(self, neo4j_client, labels: Optional[List[str]] = None, batch_size: int = 100) -> Dict[str, Any]:
+    async def rebuild_from_neo4j(self, neo4j_client, labels: Optional[List[str]] = None, batch_size: int = 100) -> Dict[str, Any]:
         """
         从 Neo4j 重建图谱向量库。
 
@@ -568,9 +555,9 @@ class KgMilvusStore:
             timestamp = datetime.now().isoformat()
 
             with log_duration("kg_milvus.build_entities"):
-                entity_rows = self._build_entity_rows(neo4j_client, labels, timestamp)
+                entity_rows = await self._build_entity_rows(neo4j_client, labels, timestamp)
             with log_duration("kg_milvus.build_relationships"):
-                rel_rows = self._build_relationship_rows(neo4j_client, timestamp)
+                rel_rows = await self._build_relationship_rows(neo4j_client, timestamp)
 
             with log_duration("kg_milvus.insert_entities", count=len(entity_rows)):
                 entity_inserted = self._upsert_rows(entity_rows, batch_size=batch_size)
@@ -644,7 +631,7 @@ class KgMilvusStore:
         matched = sum(1 for term in terms if str(term).lower() in haystack)
         return matched / max(1, len(terms))
 
-    def _search_vector_rows(self, query_text: str, limit: int) -> List[Dict[str, Any]]:
+    async def _search_vector_rows(self, query_text: str, limit: int) -> List[Dict[str, Any]]:
         """
         执行向量检索并转为统一行结构。
 
@@ -659,7 +646,8 @@ class KgMilvusStore:
         if not query_value:
             return []
 
-        vec = self._get_embedder().encode([query_value], normalize_embeddings=True)[0].tolist()
+        vec_np = np.asarray(self._get_embedder().encode([query_value], normalize_embeddings=True)[0], dtype=np.float32)
+        vec = vec_np.reshape(-1).tolist()
         search_kwargs = {
             "collection_name": self.collection_name,
             "data": [vec],
@@ -747,7 +735,7 @@ class KgMilvusStore:
         """
         return str(value or "").replace("\\", "\\\\").replace("\"", "\\\"")
 
-    def _query_relation_neighbors(self, entity_names: List[str], limit: int) -> List[Dict[str, Any]]:
+    async def _query_relation_neighbors(self, entity_names: List[str], limit: int) -> List[Dict[str, Any]]:
         """
         按实体名扩展查询其相邻关系行。
 
@@ -829,7 +817,7 @@ class KgMilvusStore:
             return [item for item in parts if item]
         return []
 
-    def _fetch_alias_map_from_neo4j(self, names: List[str]) -> Dict[str, str]:
+    async def _fetch_alias_map_from_neo4j(self, names: List[str]) -> Dict[str, str]:
         """
         从 Neo4j 读取 name/canonical_name/alias 映射关系。
 
@@ -844,7 +832,7 @@ class KgMilvusStore:
             return {}
 
         # 仅依赖 Neo4j 属性(name/canonical_name/alias) 做实体消歧。
-        rows = neo4j_client.run_cypher(
+        rows = await neo4j_client.run_cypher(
             """
             MATCH (n)
             WHERE coalesce(n.name, '') IN $names OR coalesce(n.canonical_name, '') IN $names
@@ -878,7 +866,7 @@ class KgMilvusStore:
 
         return alias_map
 
-    def _disambiguate_entities(
+    async def _disambiguate_entities(
         self,
         query: str,
         entities: List[Dict[str, Any]],
@@ -908,7 +896,7 @@ class KgMilvusStore:
             all_names.append(str(rel.get("source_name") or "").strip())
             all_names.append(str(rel.get("target_name") or "").strip())
 
-        alias_map = self._fetch_alias_map_from_neo4j(all_names)
+        alias_map = await self._fetch_alias_map_from_neo4j(all_names)
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         canonical_mapping: Dict[str, str] = {}
         alias_groups: Dict[str, List[str]] = defaultdict(list)
@@ -1174,7 +1162,7 @@ class KgMilvusStore:
             "llm_calls": llm_calls,
         }
 
-    def search_entity_relations(
+    async def search_entity_relations(
         self,
         query: str,
         top_k: Optional[int] = None,
@@ -1218,7 +1206,7 @@ class KgMilvusStore:
         safe_lexical_weight = max(0.0, min(float(effective_lexical_weight), 1.0))
         terms = self._split_query_terms(query)
 
-        primary_rows = self._search_vector_rows(
+        primary_rows = await self._search_vector_rows(
             query,
             limit=max(int(self.primary_limit_min), safe_top_k * int(self.primary_limit_multiplier)),
         )
@@ -1226,7 +1214,7 @@ class KgMilvusStore:
         if terms:
             keyword_query = " ".join(terms[:6])
             if keyword_query and keyword_query != query:
-                keyword_rows = self._search_vector_rows(
+                keyword_rows = await self._search_vector_rows(
                     keyword_query,
                     limit=max(int(self.keyword_limit_min), safe_top_k * int(self.keyword_limit_multiplier)),
                 )
@@ -1253,7 +1241,7 @@ class KgMilvusStore:
         seed_entities = [name for name in seed_entities if name][: int(self.seed_entity_top_n)]
         neighbor_rows: List[Dict[str, Any]] = []
         if seed_entities:
-            neighbor_rows = self._query_relation_neighbors(
+            neighbor_rows = await self._query_relation_neighbors(
                 seed_entities,
                 limit=max(
                     int(self.neighbor_limit_min),
@@ -1331,7 +1319,7 @@ class KgMilvusStore:
             },
         }
         if enable_disambiguation:
-            disambiguation_result = self._disambiguate_entities(
+            disambiguation_result = await self._disambiguate_entities(
                 query=query,
                 entities=entities,
                 relationships=relationships,
@@ -1392,7 +1380,7 @@ class KgMilvusStore:
             },
         }
 
-    def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> Dict[str, Any]:
         """
         返回当前图谱向量库统计信息。
 

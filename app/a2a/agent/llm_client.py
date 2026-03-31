@@ -304,8 +304,6 @@ class LLMClient:
     ) -> LLMResponse:
         """异步调用大模型并返回内容和 token 使用量"""
 
-        if not get_feature_flag("ENABLE_LLM_ASYNC_CLIENT", True):
-            return await asyncio.to_thread(self.chat_with_tokens, messages, temperature, timeout)
 
         set_trace_metadata(
             {

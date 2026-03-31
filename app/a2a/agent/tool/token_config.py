@@ -1,3 +1,9 @@
+"""
+A2A agent/tool/token_config.py 模块。
+
+本模块提供 token_config 相关实现。
+"""
+
 import os
 from typing import Any, Dict
 

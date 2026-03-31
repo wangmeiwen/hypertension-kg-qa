@@ -135,6 +135,10 @@ class VectorStore:
                 cls._CLIENT_CACHE[key] = client
         return client
 
+    def _search_with_params(self, search_kwargs: dict, search_params: dict):
+        """单版本检索参数：仅使用 search_params。"""
+        return self.client.search(**search_kwargs, search_params=search_params)
+
     def __init__(self,
                  collection_name=conf.MILVUS_COLLECTION_NAME,
                  host=conf.MILVUS_HOST,
@@ -448,7 +452,7 @@ class VectorStore:
         # 返回排序后的文档对象列表
         return [doc_map[doc_id] for doc_id, _ in sorted_docs]
 
-    def hybrid_search_with_rerank(self, query, k=conf.RETRIEVAL_K, source_filter=None):
+    async def hybrid_search_with_rerank(self, query, k=conf.RETRIEVAL_K, source_filter=None):
         """
         执行混合检索并返回重排序后的父文档。
 
@@ -464,7 +468,7 @@ class VectorStore:
             with log_duration("milvus.embed_query"):
                 query_embeddings = self.embedding_function([query])
         # 获取查询的稠密向量
-        dense_query_vector = query_embeddings["dense"][0]
+        dense_query_vector = _to_float32_vector(query_embeddings["dense"][0], self.dense_dim)
         # 初始化查询的稀疏向量字典
         sparse_query_vector = {}
         # 获取查询稀疏向量的第 0 行数据
@@ -499,14 +503,16 @@ class VectorStore:
 
         if not sparse_enabled:
             with log_duration("milvus.search_dense_only", limit=k):
-                results = self.client.search(
-                    collection_name=self.collection_name,
-                    data=[dense_query_vector],
-                    anns_field=dense_field,
-                    param={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
-                    limit=k,
-                    output_fields=["text", "parent_id", "parent_content", "source", "timestamp"],
-                    filter=filter_expr
+                results = self._search_with_params(
+                    search_kwargs={
+                        "collection_name": self.collection_name,
+                        "data": [dense_query_vector],
+                        "anns_field": dense_field,
+                        "limit": k,
+                        "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
+                        "filter": filter_expr,
+                    },
+                    search_params={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
                 )[0]
             sub_chunks = [self._doc_from_hit(hit["entity"]) for hit in results]
             parent_docs = self._get_unique_parent_docs(sub_chunks)
@@ -521,24 +527,28 @@ class VectorStore:
         # 使用 RRF 算法：分别执行两次检索，然后融合结果
         logger.info("使用 RRF 算法融合检索结果")
 
-        dense_results = self.client.search(
-            collection_name=self.collection_name,
-            data=[dense_query_vector],
-            anns_field=dense_field,
-            param={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
-            limit=k * int(conf.RAG_DENSE_RECALL_MULTIPLIER),
-            output_fields=["text", "parent_id", "parent_content", "source", "timestamp"],
-            filter=filter_expr
+        dense_results = self._search_with_params(
+            search_kwargs={
+                "collection_name": self.collection_name,
+                "data": [dense_query_vector],
+                "anns_field": dense_field,
+                "limit": k * int(conf.RAG_DENSE_RECALL_MULTIPLIER),
+                "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
+                "filter": filter_expr,
+            },
+            search_params={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
         )[0]
 
-        sparse_results = self.client.search(
-            collection_name=self.collection_name,
-            data=[sparse_query_vector],
-            anns_field="sparse_vector",
-            param={"metric_type": "IP", "params": {}},
-            limit=k * int(conf.RAG_SPARSE_RECALL_MULTIPLIER),
-            output_fields=["text", "parent_id", "parent_content", "source", "timestamp"],
-            filter=filter_expr
+        sparse_results = self._search_with_params(
+            search_kwargs={
+                "collection_name": self.collection_name,
+                "data": [sparse_query_vector],
+                "anns_field": "sparse_vector",
+                "limit": k * int(conf.RAG_SPARSE_RECALL_MULTIPLIER),
+                "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
+                "filter": filter_expr,
+            },
+            search_params={"metric_type": "IP", "params": {}},
         )[0]
 
         # 使用 RRF 融合结果
