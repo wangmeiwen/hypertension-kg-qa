@@ -1,0 +1,53 @@
+default_server: local
+blacklist: []
+tools:
+  - server_name: local
+    tool_name: kg_query
+    alias: kg_query
+    description: |
+      查询高血压知识图谱（Neo4j），适合做定义、分级、治疗策略等结构化事实检索。
+      支持三种模式：keyword 检索、list_all_nodes 浏览、只读 cypher 查询。
+      约束：cypher 必须是只读语句（建议以 MATCH/WITH 开头），禁止 CREATE/MERGE/DELETE/SET 等写操作。
+      示例：
+      - 关键词检索：{"keyword":"高血压 分级 标准","limit":5}
+      - 浏览节点：{"list_all_nodes":true,"limit":10}
+      - 只读Cypher：{"cypher":"MATCH (n) WHERE toString(n.name) CONTAINS '高血压' RETURN labels(n) AS labels, properties(n) AS properties LIMIT 5"}
+    input_schema:
+      keyword: str?
+      list_all_nodes: bool?
+      cypher: str?
+      limit: int?
+
+  - server_name: local
+    tool_name: kg_entity_relation_search
+    alias: kg_entity_relation_search
+    description: |
+      基于知识图谱专用 Milvus 集合做语义检索，返回实体与关系结果，适合回答“某病与并发症/药物/指标关系”类问题。
+      支持词法+向量融合、候选实体消歧、社区检测扩展，适合复杂关系追踪。
+      示例：
+      - 基础检索：{"query":"高血压与慢性肾病的关系","top_k":8}
+      - 开启消歧与扩展：{"query":"ACEI 对高血压合并蛋白尿患者的作用","top_k":10,"enable_disambiguation":true,"enable_community_detection":true}
+      - 调整融合权重：{"query":"老年高血压一线用药","top_k":6,"lexical_weight":0.4,"disambiguation_margin":0.1}
+    input_schema:
+      query: str
+      top_k: int?
+      lexical_weight: float?
+      expansion_limit: int?
+      enable_disambiguation: bool?
+      enable_community_detection: bool?
+      community_top_k: int?
+      disambiguation_margin: float?
+
+  - server_name: local
+    tool_name: rag_search
+    alias: rag_search
+    description: |
+      基于 Milvus 的 RAG 向量检索，返回与问题最相关的文本片段（hits），适合补充指南原文证据与上下文。
+      适用场景：需要引用原始段落、时间戳或来源时优先使用。
+      示例：
+      - 基础检索：{"query":"高血压危象处理流程","top_k":5}
+      - 带来源过滤：{"query":"ARB 与 ACEI 联用是否推荐","top_k":6,"source_filter":"guideline"}
+      - 以问句检索：{"query":"老年患者血压控制目标值是多少","top_k":8}
+    input_schema:
+      query: str
+      top_k: int?

@@ -1,0 +1,281 @@
+{
+  "metadata": {
+    "source": "中国高血压防治指南2024",
+    "description": "基于《中国高血压防治指南2024》设计的测试问题集，覆盖诊断、分级、风险评估、治疗策略、特殊人群管理等方面",
+    "version": "1.0",
+    "created_at": "2026-03-21",
+    "total_questions": 30
+  },
+  "test_questions": [
+    {
+      "id": "htn_2024_001",
+      "category": "诊断与分级",
+      "difficulty": "easy",
+      "question": "根据2024年中国高血压防治指南，高血压的诊断标准是什么？诊室血压、家庭自测血压和24小时动态血压监测的诊断阈值分别是多少？",
+      "expected_keywords": ["140/90", "135/85", "130/80", "诊室血压", "家庭自测血压", "动态血压监测"],
+      "related_entities": ["Disease", "ThresholdRule", "MeasurementMethod"],
+      "related_relations": ["HAS_THRESHOLD", "DIAGNOSED_BY_METHOD"]
+    },
+    {
+      "id": "htn_2024_002",
+      "category": "诊断与分级",
+      "difficulty": "easy",
+      "question": "高血压如何进行分级？1级、2级、3级高血压的血压范围分别是多少？单纯收缩期高血压的诊断标准是什么？",
+      "expected_keywords": ["1级高血压", "2级高血压", "3级高血压", "140-159", "160-179", "≥180", "单纯收缩期高血压", "≥140", "<90"],
+      "related_entities": ["DiseaseGrade", "DiseaseStage", "ThresholdRule"],
+      "related_relations": ["HAS_GRADE", "HAS_STAGE"]
+    },
+    {
+      "id": "htn_2024_003",
+      "category": "诊断与分级",
+      "difficulty": "medium",
+      "question": "白大衣高血压和隐匿性高血压的定义是什么？如何鉴别这两种情况？它们的临床意义分别是什么？",
+      "expected_keywords": ["白大衣高血压", "隐匿性高血压", "诊室血压", "家庭血压", "动态血压", "心血管风险"],
+      "related_entities": ["BloodPressurePattern", "Phenotype", "MeasurementMethod"],
+      "related_relations": ["HAS_PHENOTYPE", "DIAGNOSED_BY_METHOD"]
+    },
+    {
+      "id": "htn_2024_004",
+      "category": "危险因素与风险评估",
+      "difficulty": "easy",
+      "question": "高血压的危险因素有哪些？哪些是可控因素，哪些是不可控因素？",
+      "expected_keywords": ["高盐饮食", "超重", "肥胖", "缺乏运动", "饮酒", "吸烟", "年龄", "遗传因素", "精神压力"],
+      "related_entities": ["RiskFactor"],
+      "related_relations": ["HAS_RISK_FACTOR"]
+    },
+    {
+      "id": "htn_2024_005",
+      "category": "危险因素与风险评估",
+      "difficulty": "medium",
+      "question": "高血压患者心血管风险如何分层？低危、中危、高危和很高危的划分依据是什么？",
+      "expected_keywords": ["心血管风险分层", "低危", "中危", "高危", "很高危", "危险因素", "靶器官损害", "并发症"],
+      "related_entities": ["RiskStratification", "RiskFactor", "TargetOrganDamage", "Complication"],
+      "related_relations": ["HAS_RISK_STRATIFICATION", "HAS_RISK_FACTOR", "HAS_TARGET_ORGAN_DAMAGE", "HAS_COMPLICATION"]
+    },
+    {
+      "id": "htn_2024_006",
+      "category": "危险因素与风险评估",
+      "difficulty": "medium",
+      "question": "高血压靶器官损害包括哪些方面？如何评估心脏、肾脏、血管和视网膜的损害？",
+      "expected_keywords": ["靶器官损害", "左心室肥厚", "肾功能损害", "颈动脉斑块", "视网膜病变", "尿蛋白", "eGFR"],
+      "related_entities": ["TargetOrganDamage", "Indicator", "Check"],
+      "related_relations": ["HAS_TARGET_ORGAN_DAMAGE", "HAS_INDICATOR", "NEEDS_CHECK"]
+    },
+    {
+      "id": "htn_2024_007",
+      "category": "治疗策略",
+      "difficulty": "easy",
+      "question": "高血压的治疗目标是什么？一般患者和特殊人群（如糖尿病、慢性肾病患者）的血压控制目标分别是多少？",
+      "expected_keywords": ["<140/90", "<130/80", "糖尿病", "慢性肾病", "蛋白尿", "老年患者", "收缩压"],
+      "related_entities": ["ThresholdRule", "PatientProfile", "Disease"],
+      "related_relations": ["HAS_THRESHOLD", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_008",
+      "category": "治疗策略",
+      "difficulty": "easy",
+      "question": "高血压的非药物治疗措施有哪些？生活方式干预的具体建议是什么？",
+      "expected_keywords": ["限盐", "减重", "运动", "戒烟", "限酒", "DASH饮食", "减轻体重", "规律运动"],
+      "related_entities": ["TreatmentPlan"],
+      "related_relations": ["RECOMMENDS_PLAN"]
+    },
+    {
+      "id": "htn_2024_009",
+      "category": "药物治疗",
+      "difficulty": "easy",
+      "question": "常用的一线降压药物有哪五大类？每类药物的代表药物和主要适应证是什么？",
+      "expected_keywords": ["CCB", "ACEI", "ARB", "利尿剂", "β受体阻滞剂", "氨氯地平", "依那普利", "缬沙坦", "氢氯噻嗪", "美托洛尔"],
+      "related_entities": ["DrugClass", "Drug"],
+      "related_relations": ["BELONGS_TO_CLASS", "RECOMMENDS_DRUG_CLASS"]
+    },
+    {
+      "id": "htn_2024_010",
+      "category": "药物治疗",
+      "difficulty": "medium",
+      "question": "钙通道阻滞剂（CCB）的分类有哪些？二氢吡啶类和非二氢吡啶类的代表药物及特点是什么？",
+      "expected_keywords": ["二氢吡啶类", "非二氢吡啶类", "硝苯地平", "氨氯地平", "维拉帕米", "地尔硫䓬", "踝部水肿"],
+      "related_entities": ["DrugClass", "Drug"],
+      "related_relations": ["BELONGS_TO_CLASS"]
+    },
+    {
+      "id": "htn_2024_011",
+      "category": "药物治疗",
+      "difficulty": "medium",
+      "question": "ACEI和ARB类药物的作用机制是什么？它们的禁忌证和常见不良反应有哪些？",
+      "expected_keywords": ["血管紧张素转换酶抑制剂", "血管紧张素受体拮抗剂", "干咳", "血管性水肿", "高钾血症", "双侧肾动脉狭窄", "妊娠"],
+      "related_entities": ["DrugClass", "Reaction"],
+      "related_relations": ["BELONGS_TO_CLASS", "MAY_CAUSE_REACTION"]
+    },
+    {
+      "id": "htn_2024_012",
+      "category": "药物治疗",
+      "difficulty": "medium",
+      "question": "利尿剂在高血压治疗中的地位如何？噻嗪类、袢利尿剂和保钾利尿剂的特点及适用人群分别是什么？",
+      "expected_keywords": ["氢氯噻嗪", "吲达帕胺", "呋塞米", "螺内酯", "低钾血症", "高尿酸血症", "肾功能不全"],
+      "related_entities": ["DrugClass", "Drug"],
+      "related_relations": ["BELONGS_TO_CLASS"]
+    },
+    {
+      "id": "htn_2024_013",
+      "category": "药物治疗",
+      "difficulty": "medium",
+      "question": "β受体阻滞剂在高血压治疗中的应用指征是什么？哪些患者应慎用或禁用？",
+      "expected_keywords": ["美托洛尔", "比索洛尔", "心绞痛", "心力衰竭", "哮喘", "COPD", "糖代谢异常", "运动员"],
+      "related_entities": ["DrugClass", "Drug", "PatientProfile"],
+      "related_relations": ["BELONGS_TO_CLASS", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_014",
+      "category": "联合用药",
+      "difficulty": "medium",
+      "question": "高血压联合用药的原则是什么？哪些药物组合是推荐的，哪些组合应避免？",
+      "expected_keywords": ["A+C", "A+D", "C+D", "C+B", "ACEI+ARB", "联合用药", "单片复方制剂"],
+      "related_entities": ["DrugClass", "TreatmentPlan"],
+      "related_relations": ["RECOMMENDS_PLAN", "RECOMMENDS_DRUG_CLASS"]
+    },
+    {
+      "id": "htn_2024_015",
+      "category": "特殊人群-老年高血压",
+      "difficulty": "medium",
+      "question": "老年高血压的特点是什么？老年患者的血压控制目标和起始治疗策略有何特殊之处？",
+      "expected_keywords": ["收缩期高血压", "脉压差大", "体位性低血压", "<150/90", "衰弱", "跌倒风险"],
+      "related_entities": ["PatientProfile", "BloodPressurePattern", "ThresholdRule"],
+      "related_relations": ["HAS_PHENOTYPE", "HAS_THRESHOLD", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_016",
+      "category": "特殊人群-妊娠期高血压",
+      "difficulty": "hard",
+      "question": "妊娠期高血压疾病的分类有哪些？子痫前期的诊断标准和对母婴的影响是什么？",
+      "expected_keywords": ["妊娠期高血压", "子痫前期", "慢性高血压", "蛋白尿", "HELLP综合征", "胎盘早剥", "胎儿生长受限"],
+      "related_entities": ["Disease", "Phenotype", "Complication"],
+      "related_relations": ["HAS_PHENOTYPE", "HAS_COMPLICATION"]
+    },
+    {
+      "id": "htn_2024_017",
+      "category": "特殊人群-妊娠期高血压",
+      "difficulty": "hard",
+      "question": "妊娠期高血压患者可以使用哪些降压药物？哪些药物是禁忌的？",
+      "expected_keywords": ["拉贝洛尔", "硝苯地平", "甲基多巴", "ACEI", "ARB", "妊娠安全", "胎儿毒性"],
+      "related_entities": ["Drug", "DrugClass", "PatientProfile"],
+      "related_relations": ["RECOMMENDS_DRUG_CLASS", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_018",
+      "category": "特殊人群-儿童青少年",
+      "difficulty": "hard",
+      "question": "儿童青少年高血压的诊断标准是什么？与成人有何不同？儿童高血压的常见原因有哪些？",
+      "expected_keywords": ["年龄别百分位", "P95", "P99", "继发性高血压", "肾实质疾病", "肾血管疾病", "主动脉缩窄"],
+      "related_entities": ["PatientProfile", "ThresholdRule", "Disease"],
+      "related_relations": ["HAS_THRESHOLD", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_019",
+      "category": "特殊人群-合并糖尿病",
+      "difficulty": "medium",
+      "question": "合并糖尿病的高血压患者血压控制目标是多少？首选的降压药物是什么？",
+      "expected_keywords": ["<130/80", "ACEI", "ARB", "蛋白尿", "肾脏保护", "心血管保护"],
+      "related_entities": ["PatientProfile", "ThresholdRule", "DrugClass"],
+      "related_relations": ["HAS_THRESHOLD", "RECOMMENDS_DRUG_CLASS", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_020",
+      "category": "特殊人群-合并慢性肾病",
+      "difficulty": "medium",
+      "question": "合并慢性肾病的高血压患者血压控制目标是多少？如何选择降压药物？",
+      "expected_keywords": ["<130/80", "蛋白尿", "ACEI", "ARB", "eGFR", "血钾监测"],
+      "related_entities": ["PatientProfile", "ThresholdRule", "DrugClass", "Indicator"],
+      "related_relations": ["HAS_THRESHOLD", "RECOMMENDS_DRUG_CLASS", "HAS_INDICATOR"]
+    },
+    {
+      "id": "htn_2024_021",
+      "category": "特殊人群-合并冠心病",
+      "difficulty": "medium",
+      "question": "合并冠心病的高血压患者血压控制目标是什么？首选哪些降压药物？",
+      "expected_keywords": ["<140/90", "β受体阻滞剂", "ACEI", "心绞痛", "心肌梗死", "心率控制"],
+      "related_entities": ["PatientProfile", "ThresholdRule", "DrugClass"],
+      "related_relations": ["HAS_THRESHOLD", "RECOMMENDS_DRUG_CLASS", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_022",
+      "category": "特殊人群-合并心力衰竭",
+      "difficulty": "medium",
+      "question": "合并心力衰竭的高血压患者应如何选择降压药物？目标血压是多少？",
+      "expected_keywords": ["<130/80", "ACEI", "ARB", "ARNI", "β受体阻滞剂", "螺内酯", "SGLT2抑制剂"],
+      "related_entities": ["PatientProfile", "ThresholdRule", "DrugClass"],
+      "related_relations": ["HAS_THRESHOLD", "RECOMMENDS_DRUG_CLASS", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_023",
+      "category": "特殊人群-脑卒中",
+      "difficulty": "medium",
+      "question": "脑卒中患者的血压管理策略是什么？急性期和恢复期的血压控制目标有何不同？",
+      "expected_keywords": ["急性期", "恢复期", "静脉溶栓", "机械取栓", "二级预防", "<140/90"],
+      "related_entities": ["PatientProfile", "ThresholdRule", "TreatmentPlan"],
+      "related_relations": ["HAS_THRESHOLD", "RECOMMENDS_PLAN", "SUITABLE_FOR_PROFILE"]
+    },
+    {
+      "id": "htn_2024_024",
+      "category": "继发性高血压",
+      "difficulty": "hard",
+      "question": "继发性高血压的常见病因有哪些？哪些临床线索提示可能存在继发性高血压？",
+      "expected_keywords": ["肾实质疾病", "肾动脉狭窄", "原发性醛固酮增多症", "嗜铬细胞瘤", "库欣综合征", "主动脉缩窄", "药物相关"],
+      "related_entities": ["Disease", "RiskFactor", "Drug"],
+      "related_relations": ["HAS_RISK_FACTOR"]
+    },
+    {
+      "id": "htn_2024_025",
+      "category": "继发性高血压",
+      "difficulty": "hard",
+      "question": "原发性醛固酮增多症的筛查和诊断流程是什么？确诊后如何治疗？",
+      "expected_keywords": ["ARR", "醛固酮/肾素比值", "盐水输注试验", "肾上腺CT", "螺内酯", "肾上腺切除术"],
+      "related_entities": ["Disease", "Check", "Indicator", "TreatmentPlan"],
+      "related_relations": ["NEEDS_CHECK", "HAS_INDICATOR", "RECOMMENDS_PLAN"]
+    },
+    {
+      "id": "htn_2024_026",
+      "category": "难治性高血压",
+      "difficulty": "hard",
+      "question": "什么是难治性高血压？如何诊断和评估？常见的原因有哪些？",
+      "expected_keywords": ["三种药物", "血压未达标", "依从性差", "白大衣效应", "继发性高血压", "螺内酯", "肾动脉消融"],
+      "related_entities": ["Phenotype", "Drug", "TreatmentPlan"],
+      "related_relations": ["HAS_PHENOTYPE", "RECOMMENDS_PLAN"]
+    },
+    {
+      "id": "htn_2024_027",
+      "category": "高血压急症",
+      "difficulty": "hard",
+      "question": "高血压急症和高血压亚急症的区别是什么？高血压急症的处理原则是什么？",
+      "expected_keywords": ["靶器官损害", "急性降压", "静脉用药", "硝普钠", "乌拉地尔", "24-48小时", "渐进降压"],
+      "related_entities": ["Disease", "TreatmentPlan", "Drug"],
+      "related_relations": ["HAS_COMPLICATION", "RECOMMENDS_PLAN"]
+    },
+    {
+      "id": "htn_2024_028",
+      "category": "随访管理",
+      "difficulty": "easy",
+      "question": "高血压患者的随访管理包括哪些内容？血压达标后和未达标患者的随访频率有何不同？",
+      "expected_keywords": ["血压监测", "依从性", "生活方式", "靶器官评估", "每3个月", "每2-4周", "调整用药"],
+      "related_entities": ["Check", "TreatmentPlan"],
+      "related_relations": ["NEEDS_CHECK", "RECOMMENDS_PLAN"]
+    },
+    {
+      "id": "htn_2024_029",
+      "category": "并发症",
+      "difficulty": "medium",
+      "question": "高血压可引起哪些并发症？如何预防心脑血管事件和肾脏损害的发生？",
+      "expected_keywords": ["脑卒中", "心肌梗死", "心力衰竭", "慢性肾病", "眼底病变", "血压控制", "危险因素管理"],
+      "related_entities": ["Complication", "TargetOrganDamage", "TreatmentPlan"],
+      "related_relations": ["HAS_COMPLICATION", "HAS_TARGET_ORGAN_DAMAGE", "RECOMMENDS_PLAN"]
+    },
+    {
+      "id": "htn_2024_030",
+      "category": "综合应用",
+      "difficulty": "hard",
+      "question": "一名65岁男性，血压160/100mmHg，合并2型糖尿病和微量白蛋白尿，无其他并发症。根据2024年指南，该患者的心血管风险分层是什么？血压控制目标应该是多少？首选的降压治疗方案是什么？",
+      "expected_keywords": ["很高危", "<130/80", "ACEI", "ARB", "联合用药", "蛋白尿", "肾脏保护"],
+      "related_entities": ["PatientProfile", "RiskStratification", "ThresholdRule", "DrugClass", "TreatmentPlan"],
+      "related_relations": ["HAS_RISK_STRATIFICATION", "HAS_THRESHOLD", "RECOMMENDS_DRUG_CLASS", "RECOMMENDS_PLAN", "SUITABLE_FOR_PROFILE"]
+    }
+  ]
+}

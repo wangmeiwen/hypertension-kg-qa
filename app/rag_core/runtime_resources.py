@@ -1,0 +1,74 @@
+﻿"""
+RAG 运行时共享资源。
+
+集中复用 Milvus 向量存储对象，避免在热路径重复初始化模型与客户端。
+"""
+
+from __future__ import annotations
+
+from threading import Lock
+from typing import Dict, Optional
+
+from app.common.config import Config
+from app.rag_core.kg_milvus_store import KgMilvusStore
+from app.rag_core.vector_store import VectorStore
+
+
+_VECTOR_LOCK = Lock()
+_KG_LOCK = Lock()
+_VECTOR_STORES: Dict[str, VectorStore] = {}
+_KG_STORES: Dict[str, KgMilvusStore] = {}
+
+
+def _vector_key(conf: Config) -> str:
+    return "|".join(
+        [
+            str(conf.MILVUS_HOST),
+            str(conf.MILVUS_PORT),
+            str(conf.MILVUS_DATABASE_NAME),
+            str(conf.MILVUS_COLLECTION_NAME),
+        ]
+    )
+
+
+def _kg_key(conf: Config) -> str:
+    return "|".join(
+        [
+            str(conf.MILVUS_HOST),
+            str(conf.MILVUS_PORT),
+            str(conf.MILVUS_DATABASE_NAME),
+            str(conf.KG_MILVUS_COLLECTION_NAME),
+        ]
+    )
+
+
+def get_shared_vector_store(conf: Optional[Config] = None) -> VectorStore:
+    active_conf = conf or Config()
+    key = _vector_key(active_conf)
+    with _VECTOR_LOCK:
+        store = _VECTOR_STORES.get(key)
+        if store is None:
+            store = VectorStore(
+                collection_name=active_conf.MILVUS_COLLECTION_NAME,
+                host=active_conf.MILVUS_HOST,
+                port=active_conf.MILVUS_PORT,
+                database=active_conf.MILVUS_DATABASE_NAME,
+            )
+            _VECTOR_STORES[key] = store
+    return store
+
+
+def get_shared_kg_milvus_store(conf: Optional[Config] = None) -> KgMilvusStore:
+    active_conf = conf or Config()
+    key = _kg_key(active_conf)
+    with _KG_LOCK:
+        store = _KG_STORES.get(key)
+        if store is None:
+            store = KgMilvusStore(
+                conf=active_conf,
+                collection_name=active_conf.KG_MILVUS_COLLECTION_NAME,
+            )
+            _KG_STORES[key] = store
+    return store
+
+

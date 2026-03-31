@@ -1,0 +1,1160 @@
+{
+  "labels": [
+    {
+      "name": "PatientProfile",
+      "description": "",
+      "properties": [
+        {
+          "name": "condition",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "has_comorbidity",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Indicator",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "gold_standard",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "purpose",
+          "description": ""
+        },
+        {
+          "name": "threshold_female",
+          "description": ""
+        },
+        {
+          "name": "threshold_male",
+          "description": ""
+        },
+        {
+          "name": "threshold_type",
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "DiseaseGrade",
+      "description": "",
+      "properties": [
+        {
+          "name": "diastolic_range",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "systolic_range",
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "DiseaseStage",
+      "description": "",
+      "properties": [
+        {
+          "name": "diastolic",
+          "description": ""
+        },
+        {
+          "name": "diastolic_range",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "systolic",
+          "description": ""
+        },
+        {
+          "name": "systolic_range",
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Phenotype",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "definition",
+          "description": ""
+        },
+        {
+          "name": "diastolic",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "systolic",
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "MeasurementContext",
+      "description": "",
+      "properties": [
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "MeasurementMethod",
+      "description": "",
+      "properties": [
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "full_name",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "purpose",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "ThresholdRule",
+      "description": "",
+      "properties": [
+        {
+          "name": "ambulatory_24h",
+          "description": ""
+        },
+        {
+          "name": "ambulatory_day",
+          "description": ""
+        },
+        {
+          "name": "ambulatory_night",
+          "description": ""
+        },
+        {
+          "name": "clinic_bp",
+          "description": ""
+        },
+        {
+          "name": "condition",
+          "description": ""
+        },
+        {
+          "name": "context",
+          "description": ""
+        },
+        {
+          "name": "diastolic",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "home_bp",
+          "description": ""
+        },
+        {
+          "name": "indicator",
+          "description": ""
+        },
+        {
+          "name": "method",
+          "description": ""
+        },
+        {
+          "name": "methods",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "out_of_clinic_bp",
+          "description": ""
+        },
+        {
+          "name": "systolic",
+          "description": ""
+        },
+        {
+          "name": "target_bp",
+          "description": ""
+        },
+        {
+          "name": "threshold_type",
+          "description": ""
+        },
+        {
+          "name": "timeframe",
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "description": ""
+        },
+        {
+          "name": "value",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "RiskStratification",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "risk_percentage",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "RiskFactor",
+      "description": "",
+      "properties": [
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "subtype",
+          "description": ""
+        },
+        {
+          "name": "threshold",
+          "description": ""
+        },
+        {
+          "name": "threshold_female",
+          "description": ""
+        },
+        {
+          "name": "threshold_male",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Guideline",
+      "description": "",
+      "properties": [
+        {
+          "name": "doi",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "issue",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "organization",
+          "description": ""
+        },
+        {
+          "name": "section",
+          "description": ""
+        },
+        {
+          "name": "title",
+          "description": ""
+        },
+        {
+          "name": "volume",
+          "description": ""
+        },
+        {
+          "name": "year",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Disease",
+      "description": "",
+      "properties": [
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "definition",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "TreatmentPlan",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "dose",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "subtype",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "DrugClass",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "subtype",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "TargetOrganDamage",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "definition",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "indicator",
+          "description": ""
+        },
+        {
+          "name": "indicator_related",
+          "description": ""
+        },
+        {
+          "name": "location",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "range",
+          "description": ""
+        },
+        {
+          "name": "subtype",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Complication",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Reaction",
+      "description": "",
+      "properties": [
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Source",
+      "description": "",
+      "properties": [
+        {
+          "name": "country",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "issue",
+          "description": ""
+        },
+        {
+          "name": "month",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "source_type",
+          "description": ""
+        },
+        {
+          "name": "title",
+          "description": ""
+        },
+        {
+          "name": "volume",
+          "description": ""
+        },
+        {
+          "name": "year",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Check",
+      "description": "",
+      "properties": [
+        {
+          "name": "canonical_name",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        },
+        {
+          "name": "purpose",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Drug",
+      "description": "",
+      "properties": [
+        {
+          "name": "alias",
+          "description": ""
+        },
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "BloodPressurePattern",
+      "description": "",
+      "properties": [
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "name": "Symptom",
+      "description": "",
+      "properties": [
+        {
+          "name": "entity_type",
+          "description": ""
+        },
+        {
+          "name": "name",
+          "description": ""
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "type": "NEEDS_CHECK",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_GRADE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_STAGE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "SUITABLE_FOR_PROFILE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_PHENOTYPE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "MEASURED_IN_CONTEXT",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "DIAGNOSED_BY_METHOD",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_RISK_STRATIFICATION",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_RISK_FACTOR",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "FROM_GUIDELINE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "START_TREATMENT_AT",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "TREATS_DISEASE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "RECOMMENDS_PLAN",
+      "description": "",
+      "properties": [
+        {
+          "name": "evidence_level",
+          "description": ""
+        },
+        {
+          "name": "recommendation_class",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "type": "BELONGS_TO_CLASS",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "RECOMMENDS_DRUG_CLASS",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "MAY_CAUSE_REACTION",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "COMMON_DRUG",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "SUPPORTED_BY",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_SYMPTOM",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_COMPLICATION",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_TARGET_ORGAN_DAMAGE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_THRESHOLD",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_COMORBIDITY",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_INDICATOR",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "METHOD_MEASURES",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "IDENTIFIED_BY",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "FROM_SOURCE",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "RECOMMENDS_DRUG",
+      "description": "",
+      "properties": []
+    },
+    {
+      "type": "HAS_CONTROL_TARGET",
+      "description": "",
+      "properties": []
+    }
+  ],
+  "triples": [
+    {
+      "from": "PatientProfile",
+      "rel_type": "NEEDS_CHECK",
+      "to": "Check",
+      "description": ""
+    },
+    {
+      "from": "Phenotype",
+      "rel_type": "SUITABLE_FOR_PROFILE",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "ThresholdRule",
+      "rel_type": "MEASURED_IN_CONTEXT",
+      "to": "MeasurementContext",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "SUITABLE_FOR_PROFILE",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "ThresholdRule",
+      "rel_type": "START_TREATMENT_AT",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "ThresholdRule",
+      "rel_type": "START_TREATMENT_AT",
+      "to": "RiskStratification",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "TREATS_DISEASE",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "SUITABLE_FOR_PROFILE",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "TreatmentPlan",
+      "rel_type": "FROM_GUIDELINE",
+      "to": "Guideline",
+      "description": ""
+    },
+    {
+      "from": "TreatmentPlan",
+      "rel_type": "RECOMMENDS_PLAN",
+      "to": "TreatmentPlan",
+      "description": ""
+    },
+    {
+      "from": "TreatmentPlan",
+      "rel_type": "TREATS_DISEASE",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "DrugClass",
+      "rel_type": "MAY_CAUSE_REACTION",
+      "to": "Reaction",
+      "description": ""
+    },
+    {
+      "from": "DrugClass",
+      "rel_type": "COMMON_DRUG",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "TargetOrganDamage",
+      "rel_type": "SUITABLE_FOR_PROFILE",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "Complication",
+      "rel_type": "SUITABLE_FOR_PROFILE",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "Guideline",
+      "rel_type": "SUPPORTED_BY",
+      "to": "RiskFactor",
+      "description": ""
+    },
+    {
+      "from": "Guideline",
+      "rel_type": "SUPPORTED_BY",
+      "to": "Complication",
+      "description": ""
+    },
+    {
+      "from": "Guideline",
+      "rel_type": "SUPPORTED_BY",
+      "to": "MeasurementMethod",
+      "description": ""
+    },
+    {
+      "from": "Guideline",
+      "rel_type": "SUPPORTED_BY",
+      "to": "TargetOrganDamage",
+      "description": ""
+    },
+    {
+      "from": "Guideline",
+      "rel_type": "SUPPORTED_BY",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "Guideline",
+      "rel_type": "SUPPORTED_BY",
+      "to": "Phenotype",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_SYMPTOM",
+      "to": "Symptom",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_GRADE",
+      "to": "DiseaseGrade",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_PHENOTYPE",
+      "to": "Phenotype",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_RISK_STRATIFICATION",
+      "to": "RiskStratification",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_COMPLICATION",
+      "to": "Complication",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_COMPLICATION",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_TARGET_ORGAN_DAMAGE",
+      "to": "TargetOrganDamage",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "DIAGNOSED_BY_METHOD",
+      "to": "MeasurementMethod",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_THRESHOLD",
+      "to": "ThresholdRule",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "FROM_GUIDELINE",
+      "to": "Guideline",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_RISK_FACTOR",
+      "to": "RiskFactor",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_STAGE",
+      "to": "DiseaseStage",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "HAS_COMORBIDITY",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "Complication",
+      "rel_type": "HAS_COMPLICATION",
+      "to": "Disease",
+      "description": ""
+    },
+    {
+      "from": "TargetOrganDamage",
+      "rel_type": "HAS_INDICATOR",
+      "to": "Indicator",
+      "description": ""
+    },
+    {
+      "from": "MeasurementMethod",
+      "rel_type": "METHOD_MEASURES",
+      "to": "Indicator",
+      "description": ""
+    },
+    {
+      "from": "MeasurementMethod",
+      "rel_type": "DIAGNOSED_BY_METHOD",
+      "to": "Phenotype",
+      "description": ""
+    },
+    {
+      "from": "Indicator",
+      "rel_type": "MEASURED_IN_CONTEXT",
+      "to": "MeasurementContext",
+      "description": ""
+    },
+    {
+      "from": "Phenotype",
+      "rel_type": "DIAGNOSED_BY_METHOD",
+      "to": "MeasurementMethod",
+      "description": ""
+    },
+    {
+      "from": "TargetOrganDamage",
+      "rel_type": "IDENTIFIED_BY",
+      "to": "Check",
+      "description": ""
+    },
+    {
+      "from": "TargetOrganDamage",
+      "rel_type": "FROM_SOURCE",
+      "to": "Source",
+      "description": ""
+    },
+    {
+      "from": "Drug",
+      "rel_type": "BELONGS_TO_CLASS",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "Drug",
+      "rel_type": "TREATS_DISEASE",
+      "to": "Phenotype",
+      "description": ""
+    },
+    {
+      "from": "BloodPressurePattern",
+      "rel_type": "HAS_THRESHOLD",
+      "to": "ThresholdRule",
+      "description": ""
+    },
+    {
+      "from": "ThresholdRule",
+      "rel_type": "FROM_GUIDELINE",
+      "to": "Guideline",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "RECOMMENDS_DRUG",
+      "to": "Drug",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "RECOMMENDS_DRUG_CLASS",
+      "to": "DrugClass",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "RECOMMENDS_PLAN",
+      "to": "TreatmentPlan",
+      "description": ""
+    },
+    {
+      "from": "Drug",
+      "rel_type": "MAY_CAUSE_REACTION",
+      "to": "Reaction",
+      "description": ""
+    },
+    {
+      "from": "ThresholdRule",
+      "rel_type": "SUPPORTED_BY",
+      "to": "Source",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "FROM_GUIDELINE",
+      "to": "Guideline",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "HAS_CONTROL_TARGET",
+      "to": "ThresholdRule",
+      "description": ""
+    },
+    {
+      "from": "PatientProfile",
+      "rel_type": "START_TREATMENT_AT",
+      "to": "ThresholdRule",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "NEEDS_CHECK",
+      "to": "Check",
+      "description": ""
+    },
+    {
+      "from": "Disease",
+      "rel_type": "NEEDS_CHECK",
+      "to": "Indicator",
+      "description": ""
+    },
+    {
+      "from": "ThresholdRule",
+      "rel_type": "FROM_SOURCE",
+      "to": "Source",
+      "description": ""
+    }
+  ]
+}
