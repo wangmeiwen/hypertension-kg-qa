@@ -223,6 +223,13 @@ def put_done_content_sync(queue_key, final_output="", traces=None, status=""):
 
 
 def remove_msg_queue(queue_key):
-    """移除指定消息队列"""
+    """移除指定消息队列。
+
+    Args:
+        queue_key: 队列唯一键，通常为会话 ID 或任务 ID。
+
+    Returns:
+        None: 无返回值。
+    """
     msg_queue_manager.del_msg_queue(queue_key)
 

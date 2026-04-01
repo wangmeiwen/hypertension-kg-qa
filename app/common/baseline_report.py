@@ -17,6 +17,17 @@ from typing import Any, Dict, List, Tuple
 
 
 def _percentile(sorted_values: List[float], p: float) -> float:
+    """计算分位数（线性插值）。
+
+    输入列表必须已按升序排列；函数对 `p` 自动裁剪到 [0, 1]。
+
+    Args:
+        sorted_values: 升序数值列表。
+        p: 分位点，取值范围通常为 0.0 到 1.0。
+
+    Returns:
+        float: 对应分位数值；空列表时返回 0.0。
+    """
     if not sorted_values:
         return 0.0
     if len(sorted_values) == 1:
@@ -29,6 +40,18 @@ def _percentile(sorted_values: List[float], p: float) -> float:
 
 
 def _build_stats(latencies: List[float], error_count: int) -> Dict[str, Any]:
+    """根据耗时样本构建统计摘要。
+
+    输出包含样本量、错误率、P50/P95/P99、均值与极值，
+    便于直接用于性能看板或日报输出。
+
+    Args:
+        latencies: 请求耗时列表（毫秒）。
+        error_count: 错误请求数量（通常是 5xx）。
+
+    Returns:
+        Dict[str, Any]: 结构化统计结果。
+    """
     if not latencies:
         return {
             "count": 0,
@@ -57,12 +80,32 @@ def _build_stats(latencies: List[float], error_count: int) -> Dict[str, Any]:
 
 
 def _target_dates(days: int) -> set[str]:
+    """生成目标统计日期集合。
+
+    会将输入天数限制在 1 到 30 之间，避免读取过多历史日志。
+
+    Args:
+        days: 希望统计的最近天数。
+
+    Returns:
+        set[str]: 形如 YYYY-MM-DD 的日期字符串集合。
+    """
     safe_days = max(1, min(int(days), 30))
     today = datetime.now().date()
     return {(today - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(safe_days)}
 
 
 def _collect_api_rows(days: int) -> List[Dict[str, Any]]:
+    """读取目标日期范围内的 API 日志行。
+
+    从 `logs/api/*.jsonl` 读取并解析 JSON 行，自动跳过空行、损坏行与 IO 异常文件。
+
+    Args:
+        days: 最近统计天数。
+
+    Returns:
+        List[Dict[str, Any]]: 可用日志记录列表。
+    """
     api_dir = Path(__file__).resolve().parents[2] / "logs" / "api"
     if not api_dir.exists():
         return []

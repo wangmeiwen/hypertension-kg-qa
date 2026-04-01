@@ -23,6 +23,11 @@ class MCPTool:
 
 class MCPServer:
     def __init__(self):
+        """初始化 MCP 工具调度服务。
+
+        Returns:
+            None: 无返回值。
+        """
         self._tools: dict[str, MCPTool] = {}
         self._aliases: dict[str, str] = {}
         self._tool_timeout_seconds = self._resolve_timeout()
@@ -43,6 +48,15 @@ class MCPServer:
 
     @staticmethod
     def _resolve_bool_env(name: str, default: bool) -> bool:
+        """读取布尔环境变量。
+
+        Args:
+            name: 环境变量名称。
+            default: 默认值。
+
+        Returns:
+            bool: 解析后的布尔值。
+        """
         raw = str(os.getenv(name, "1" if default else "0")).strip().lower()
         if raw in {"1", "true", "yes", "on"}:
             return True
@@ -52,6 +66,17 @@ class MCPServer:
 
     @staticmethod
     def _resolve_int(env_name: str, default: int, min_value: int, max_value: int) -> int:
+        """读取整型环境变量并限制取值。
+
+        Args:
+            env_name: 环境变量名。
+            default: 默认值。
+            min_value: 允许的最小值。
+            max_value: 允许的最大值。
+
+        Returns:
+            int: 限幅后的整数值。
+        """
         raw = str(os.getenv(env_name, str(default))).strip()
         try:
             value = int(raw)
@@ -65,6 +90,11 @@ class MCPServer:
 
     @staticmethod
     def _resolve_timeout() -> float:
+        """解析工具调用超时配置。
+
+        Returns:
+            float: 工具调用超时秒数。
+        """
         raw = str(os.getenv("MCP_TOOL_TIMEOUT_SECONDS", "60")).strip()
         try:
             value = float(raw)
@@ -74,6 +104,11 @@ class MCPServer:
 
     @staticmethod
     def _resolve_max_retries() -> int:
+        """解析最大重试次数配置。
+
+        Returns:
+            int: 最大重试次数。
+        """
         raw = str(os.getenv("MCP_TOOL_MAX_RETRIES", "1")).strip()
         try:
             value = int(raw)
@@ -83,12 +118,26 @@ class MCPServer:
 
     @staticmethod
     def _normalize_retry_policy(value: str, default: str = "safe") -> str:
+        """规范化重试策略名称。
+
+        Args:
+            value: 待规范化值。
+            default: 默认值。
+
+        Returns:
+            str: 规范化后的策略名。
+        """
         text = str(value or "").strip().lower()
         if text in {"none", "safe", "idempotent"}:
             return text
         return default
 
     def _resolve_retry_policy_overrides(self) -> dict[str, str]:
+        """解析工具级重试策略覆盖配置。
+
+        Returns:
+            dict[str, str]: 工具重试策略覆盖映射。
+        """
         raw = str(os.getenv("MCP_TOOL_RETRY_POLICY_MAP", "")).strip()
         if not raw:
             return {}
@@ -107,6 +156,14 @@ class MCPServer:
         return mapping
 
     def _resolve_retry_policy(self, tool: MCPTool) -> str:
+        """为工具解析最终重试策略。
+
+        Args:
+            tool: MCP 工具定义对象。
+
+        Returns:
+            str: 最终重试策略。
+        """
         direct = self._retry_policy_overrides.get(tool.name)
         if direct:
             return direct
@@ -117,6 +174,14 @@ class MCPServer:
         return self._default_retry_policy
 
     def register(self, tool: MCPTool) -> None:
+        """注册 MCP 工具。
+
+        Args:
+            tool: MCP 工具定义对象。
+
+        Returns:
+            None: 无返回值。
+        """
         name = str(tool.name or "").strip()
         if not name:
             raise ValueError("mcp_tool_name_required")
@@ -125,6 +190,11 @@ class MCPServer:
         self._aliases[canonical] = name
 
     def list_tools(self) -> list[dict[str, Any]]:
+        """列出已注册工具元数据。
+
+        Returns:
+            list[dict[str, Any]]: 工具元数据列表。
+        """
         rows: list[dict[str, Any]] = []
         for _, tool in sorted(self._tools.items(), key=lambda item: item[0]):
             rows.append(
@@ -139,6 +209,14 @@ class MCPServer:
         return rows
 
     def _resolve_tool(self, requested_name: str) -> MCPTool:
+        """按名称或别名解析工具对象。
+
+        Args:
+            requested_name: 调用方请求的工具名或别名。
+
+        Returns:
+            MCPTool: 匹配到的工具定义。
+        """
         normalized = str(requested_name or "").strip()
         if not normalized:
             raise ValueError("tool_name_required")
@@ -156,6 +234,14 @@ class MCPServer:
         raise KeyError(f"tool_not_found:{normalized}")
 
     async def _circuit_is_open(self, tool_key: str) -> bool:
+        """判断工具熔断器是否开启。
+
+        Args:
+            tool_key: 工具唯一键。
+
+        Returns:
+            bool: 熔断器是否打开。
+        """
         if not self._enable_circuit_breaker:
             return False
         now = time.time()
@@ -173,6 +259,14 @@ class MCPServer:
             return True
 
     async def _circuit_record_timeout(self, tool_key: str) -> None:
+        """记录超时并更新熔断状态。
+
+        Args:
+            tool_key: 工具唯一键。
+
+        Returns:
+            None: 无返回值。
+        """
         if not self._enable_circuit_breaker:
             return
         now = time.time()
@@ -186,6 +280,14 @@ class MCPServer:
                 state["opened_at"] = now
 
     async def _circuit_reset(self, tool_key: str) -> None:
+        """重置工具熔断状态。
+
+        Args:
+            tool_key: 工具唯一键。
+
+        Returns:
+            None: 无返回值。
+        """
         if not self._enable_circuit_breaker:
             return
         async with self._circuit_lock:
@@ -194,6 +296,15 @@ class MCPServer:
             state["opened_at"] = 0.0
 
     async def _invoke_once(self, tool: MCPTool, payload: dict[str, Any]) -> dict[str, Any]:
+        """执行一次工具调用。
+
+        Args:
+            tool: MCP 工具定义对象。
+            payload: 请求负载字典。
+
+        Returns:
+            dict[str, Any]: 单次调用结果。
+        """
         started = time.perf_counter()
         try:
             result_obj = tool.handler(payload)
@@ -214,6 +325,15 @@ class MCPServer:
             raise TimeoutError(f"tool_timeout:{tool.name}:{duration_ms}ms") from exc
 
     async def ainvoke(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """异步调用单个工具并处理重试。
+
+        Args:
+            tool_name: 工具名称。
+            payload: 请求负载字典。
+
+        Returns:
+            dict[str, Any]: 单工具调用结果。
+        """
         tool = self._resolve_tool(tool_name)
         canonical_name = f"{tool.server_name}::{tool.tool_name or tool.name}"
 
@@ -287,11 +407,27 @@ class MCPServer:
         }
 
     async def ainvoke_batch(self, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """并发调用多个工具。
+
+        Args:
+            calls: 批量调用请求列表。
+
+        Returns:
+            list[dict[str, Any]]: 批量调用结果。
+        """
         safe_calls = calls if isinstance(calls, list) else []
         if not safe_calls:
             return []
 
         async def _run_one(row: dict[str, Any]) -> dict[str, Any]:
+            """执行批量中的单条调用。
+
+            Args:
+                row: 单条调用请求。
+
+            Returns:
+                dict[str, Any]: 单条批量调用结果。
+            """
             payload_obj = row.get("payload")
             payload = payload_obj if isinstance(payload_obj, dict) else {}
             tool_name = str(row.get("tool_name") or "").strip()

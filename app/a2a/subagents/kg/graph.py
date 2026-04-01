@@ -1,4 +1,8 @@
-﻿"""KG 子代理图编排。"""
+﻿"""graph 模块。
+
+提供 graph 相关能力与对外接口。
+"""
+
 
 from __future__ import annotations
 

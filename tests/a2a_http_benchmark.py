@@ -16,6 +16,17 @@ from urllib import error, request
 
 
 def _http_json(method: str, url: str, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    """发送 HTTP JSON 请求并解析响应。
+
+    Args:
+        method: HTTP 方法，如 POST。
+        url: 完整请求地址。
+        payload: 请求 JSON 负载。
+        timeout: 请求超时时间（秒）。
+
+    Returns:
+        Dict[str, Any]: 解析后的响应 JSON；空响应体返回空字典。
+    """
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(
         url=url,
@@ -29,6 +40,17 @@ def _http_json(method: str, url: str, payload: Dict[str, Any], timeout: float) -
 
 
 def _rpc_call(base_url: str, rpc_path: str, rpc_payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    """调用 A2A JSON-RPC 接口。
+
+    Args:
+        base_url: 服务基础地址。
+        rpc_path: RPC 路径。
+        rpc_payload: JSON-RPC 请求对象。
+        timeout: 单次请求超时（秒）。
+
+    Returns:
+        Dict[str, Any]: RPC 响应对象。
+    """
     url = f"{base_url.rstrip('/')}{rpc_path}"
     return _http_json("POST", url, rpc_payload, timeout=timeout)
 
@@ -41,6 +63,19 @@ def _wait_task_terminal(
     poll_ms: int,
     request_timeout: float,
 ) -> Dict[str, Any]:
+    """轮询任务直到进入终态或超时。
+
+    Args:
+        base_url: 服务基础地址。
+        rpc_path: RPC 路径。
+        task_id: 目标任务 ID。
+        timeout_seconds: 轮询总超时（秒）。
+        poll_ms: 轮询间隔（毫秒）。
+        request_timeout: 单次 get 请求超时（秒）。
+
+    Returns:
+        Dict[str, Any]: 包含终态 `state` 与任务对象 `task`。
+    """
     started = time.perf_counter()
     while True:
         resp = _rpc_call(
@@ -65,6 +100,15 @@ def _wait_task_terminal(
 
 
 def _percentile(values: List[float], ratio: float) -> float:
+    """计算分位数（线性插值）。
+
+    Args:
+        values: 升序样本列表。
+        ratio: 分位点，范围 [0, 1]。
+
+    Returns:
+        float: 对应分位数值。
+    """
     if not values:
         return 0.0
     if len(values) == 1:
@@ -77,6 +121,17 @@ def _percentile(values: List[float], ratio: float) -> float:
 
 
 def _run_one(index: int, args: argparse.Namespace) -> Dict[str, Any]:
+    """执行一次完整压测请求流程。
+
+    流程包含：发送消息 -> 获取 task_id -> 轮询终态 -> 汇总耗时与结果。
+
+    Args:
+        index: 请求序号，用于构造唯一请求 ID。
+        args: 命令行参数对象。
+
+    Returns:
+        Dict[str, Any]: 单次请求结果，包含成功标记、状态、耗时和错误信息。
+    """
     begin = time.perf_counter()
     try:
         send = _rpc_call(
@@ -135,6 +190,14 @@ def _run_one(index: int, args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def run_benchmark(args: argparse.Namespace) -> None:
+    """执行并发压测并输出统计摘要。
+
+    Args:
+        args: 压测配置参数。
+
+    Returns:
+        None: 无返回值。
+    """
     print(
         json.dumps(
             {
@@ -191,6 +254,11 @@ def run_benchmark(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """构建命令行参数解析器。
+
+    Returns:
+        argparse.ArgumentParser: 已注册压测参数的解析器对象。
+    """
     parser = argparse.ArgumentParser(description="A2A HTTP benchmark")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Target service base URL")
     parser.add_argument("--rpc-path", default="/a2a/rpc", help="A2A JSON-RPC path")

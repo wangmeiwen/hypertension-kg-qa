@@ -21,6 +21,14 @@ _KG_STORES: Dict[str, KgMilvusStore] = {}
 
 
 def _vector_key(conf: Config) -> str:
+    """构建 VectorStore 共享缓存键。
+
+    Args:
+        conf: 当前配置对象。
+
+    Returns:
+        str: 基于 Milvus 连接与集合参数拼接的唯一键。
+    """
     return "|".join(
         [
             str(conf.MILVUS_HOST),
@@ -32,6 +40,14 @@ def _vector_key(conf: Config) -> str:
 
 
 def _kg_key(conf: Config) -> str:
+    """构建 KgMilvusStore 共享缓存键。
+
+    Args:
+        conf: 当前配置对象。
+
+    Returns:
+        str: 基于图谱 Milvus 连接与集合参数拼接的唯一键。
+    """
     return "|".join(
         [
             str(conf.MILVUS_HOST),
@@ -43,6 +59,16 @@ def _kg_key(conf: Config) -> str:
 
 
 def get_shared_vector_store(conf: Optional[Config] = None) -> VectorStore:
+    """获取进程内共享的 VectorStore 实例。
+
+    按配置生成缓存键并加锁复用，避免重复初始化模型与 Milvus 客户端。
+
+    Args:
+        conf: 可选配置对象；为空时自动创建默认配置。
+
+    Returns:
+        VectorStore: 共享向量存储实例。
+    """
     active_conf = conf or Config()
     key = _vector_key(active_conf)
     with _VECTOR_LOCK:
@@ -59,6 +85,14 @@ def get_shared_vector_store(conf: Optional[Config] = None) -> VectorStore:
 
 
 def get_shared_kg_milvus_store(conf: Optional[Config] = None) -> KgMilvusStore:
+    """获取进程内共享的 KgMilvusStore 实例。
+
+    Args:
+        conf: 可选配置对象；为空时自动创建默认配置。
+
+    Returns:
+        KgMilvusStore: 共享图谱向量存储实例。
+    """
     active_conf = conf or Config()
     key = _kg_key(active_conf)
     with _KG_LOCK:

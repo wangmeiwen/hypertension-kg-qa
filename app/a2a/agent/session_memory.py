@@ -1,4 +1,8 @@
-﻿"""会话级轻量记忆。"""
+﻿"""session_memory 模块。
+
+提供 session_memory 相关能力与对外接口。
+"""
+
 
 from __future__ import annotations
 

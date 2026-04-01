@@ -34,6 +34,20 @@ class A2AService:
         events_base_path: str = "/a2a/tasks",
         max_workers: int = 4,
     ) -> None:
+        """初始化 A2A 服务实例。
+
+        Args:
+            run_query: 任务执行函数（支持异步或同步返回）。
+            agent_name: Agent 展示名称。
+            agent_description: Agent 描述文本。
+            protocol_version: A2A 协议版本。
+            agent_url: A2A RPC 地址。
+            events_base_path: 任务事件流基础路径。
+            max_workers: 保留参数，当前未启用线程池。
+
+        Returns:
+            None: 无返回值。
+        """
         _ = max_workers
         self._run_query = run_query
         self._agent_name = str(agent_name or "A2A Agent").strip()
@@ -47,6 +61,15 @@ class A2AService:
 
     @staticmethod
     def _public_task_payload(task: dict[str, Any], include_events: bool = False) -> dict[str, Any]:
+        """构建对外可返回的任务载荷。
+
+        Args:
+            task: 任务对象字典。
+            include_events: 是否返回 events 字段。
+
+        Returns:
+            dict[str, Any]: 可对外返回的任务数据。
+        """
         payload = {
             key: value
             for key, value in task.items()
@@ -57,6 +80,11 @@ class A2AService:
         return copy.deepcopy(payload)
 
     def get_agent_card(self) -> dict[str, Any]:
+        """获取当前服务对应的 Agent Card。
+
+        Returns:
+            dict[str, Any]: Agent Card 信息。
+        """
         name_lower = self._agent_name.lower()
         if "graph" in name_lower:
             card = build_kg_subagent_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
@@ -72,10 +100,24 @@ class A2AService:
 
     @staticmethod
     def _new_task_id() -> str:
+        """生成唯一任务 ID。
+
+        Returns:
+            str: 新任务 ID。
+        """
         return f"task-{uuid.uuid4().hex}"
 
     @staticmethod
     def _build_status_message(*, text: str, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """构建标准状态消息对象。
+
+        Args:
+            text: 输入文本。
+            metadata: 附加元数据。
+
+        Returns:
+            dict[str, Any]: 状态消息对象。
+        """
         return {
             "messageId": f"msg-{uuid.uuid4().hex}",
             "role": "agent",
@@ -85,6 +127,15 @@ class A2AService:
         }
 
     async def _append_event(self, task_id: str, event: dict[str, Any]) -> None:
+        """向任务事件列表追加事件。
+
+        Args:
+            task_id: 任务 ID。
+            event: 事件字典。
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -110,6 +161,17 @@ class A2AService:
         text: str,
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
+        """更新任务状态。
+
+        Args:
+            task_id: 任务 ID。
+            state: 任务状态字符串。
+            text: 输入文本。
+            metadata: 附加元数据。
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -121,6 +183,14 @@ class A2AService:
             }
 
     async def _is_task_marked_canceled(self, task_id: str) -> bool:
+        """判断任务是否已被标记取消。
+
+        Args:
+            task_id: 任务 ID。
+
+        Returns:
+            bool: 是否已取消。
+        """
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -134,6 +204,15 @@ class A2AService:
             return bool(cancel_event.is_set()) if isinstance(cancel_event, asyncio.Event) else False
 
     def _build_artifacts(self, result: dict[str, Any], progress_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """根据执行结果构建任务产物列表。
+
+        Args:
+            result: 任务执行结果字典。
+            progress_events: 采集到的进度事件列表。
+
+        Returns:
+            list[dict[str, Any]]: 产物列表。
+        """
         output = str(result.get("output") or "")
         output_type = str(result.get("output_type") or "")
         confidence = float(result.get("confidence") or 0.0)
@@ -191,14 +270,35 @@ class A2AService:
         ]
 
     async def _run_task(self, task_id: str) -> None:
+        """执行单个任务主流程。
+
+        Args:
+            task_id: 任务 ID。
+
+        Returns:
+            None: 无返回值。
+        """
         progress_events: list[dict[str, Any]] = []
 
         def _progress_callback(event: dict[str, Any]) -> None:
+            """收集并转发进度事件。
+
+            Args:
+                event: 事件字典。
+
+            Returns:
+                None: 无返回值。
+            """
             row = event if isinstance(event, dict) else {}
             progress_events.append(row)
             asyncio.create_task(self._append_event(task_id, row))
 
         def _cancel_check() -> bool:
+            """查询任务取消状态。
+
+            Returns:
+                bool: True 表示应取消任务。
+            """
             task = self._tasks.get(task_id)
             if not task:
                 return True
@@ -314,6 +414,15 @@ class A2AService:
             )
 
     async def asend_message(self, message: dict[str, Any], trace_id: str = "") -> dict[str, Any]:
+        """提交消息并创建异步任务。
+
+        Args:
+            message: A2A 协议消息对象。
+            trace_id: 请求追踪 ID。
+
+        Returns:
+            dict[str, Any]: 新任务信息。
+        """
         message_obj = message if isinstance(message, dict) else {}
         metadata_obj = message_obj.get("metadata")
         metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
@@ -362,6 +471,14 @@ class A2AService:
         return self._public_task_payload(task_payload)
 
     async def aget_task(self, task_id: str) -> Optional[dict[str, Any]]:
+        """获取指定任务详情。
+
+        Args:
+            task_id: 任务 ID。
+
+        Returns:
+            Optional[dict[str, Any]]: 任务详情或 None。
+        """
         safe_task_id = str(task_id or "").strip()
         async with self._lock:
             task = self._tasks.get(safe_task_id)
@@ -370,6 +487,15 @@ class A2AService:
             return self._public_task_payload(task, include_events=True)
 
     async def alist_tasks(self, context_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        """列出任务列表。
+
+        Args:
+            context_id: 上下文 ID。
+            limit: 结果数量上限。
+
+        Returns:
+            list[dict[str, Any]]: 任务列表。
+        """
         safe_limit = max(1, min(int(limit or 20), 500))
         safe_context = str(context_id or "").strip()
         async with self._lock:
@@ -383,6 +509,15 @@ class A2AService:
         return [self._public_task_payload(row) for row in rows[:safe_limit]]
 
     async def aget_task_updates(self, task_id: str, cursor: int = 0) -> Optional[dict[str, Any]]:
+        """按游标拉取任务增量事件。
+
+        Args:
+            task_id: 任务 ID。
+            cursor: 事件游标位置。
+
+        Returns:
+            Optional[dict[str, Any]]: 增量事件快照。
+        """
         safe_task_id = str(task_id or "").strip()
         safe_cursor = max(0, int(cursor or 0))
 
@@ -410,6 +545,15 @@ class A2AService:
         }
 
     async def acancel_task(self, task_id: str, reason: str = "manual_cancel") -> dict[str, Any]:
+        """取消指定任务。
+
+        Args:
+            task_id: 任务 ID。
+            reason: 取消或失败原因。
+
+        Returns:
+            dict[str, Any]: 取消操作结果。
+        """
         safe_task_id = str(task_id or "").strip()
         if not safe_task_id:
             return {"ok": False, "error": "task_id_required"}
@@ -451,16 +595,45 @@ class A2AService:
         return {"ok": True, "task_id": safe_task_id, "task": task_payload}
 
     def _build_stream_info(self, task_id: str, cursor: int = 0) -> dict[str, Any]:
+        """构建事件流订阅信息。
+
+        Args:
+            task_id: 任务 ID。
+            cursor: 事件游标位置。
+
+        Returns:
+            dict[str, Any]: 事件流地址与游标。
+        """
         safe_task_id = str(task_id or "").strip()
         safe_cursor = max(0, int(cursor or 0))
         return {"url": f"{self._events_base_path}/{safe_task_id}/events?cursor={safe_cursor}", "cursor": safe_cursor}
 
     @staticmethod
     def _rpc_ok(rpc_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+        """构建 JSON-RPC 成功响应。
+
+        Args:
+            rpc_id: JSON-RPC 请求 ID。
+            result: 任务执行结果字典。
+
+        Returns:
+            dict[str, Any]: JSON-RPC 成功响应对象。
+        """
         return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
     @staticmethod
     def _rpc_error(rpc_id: Any, code: int, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        """构建 JSON-RPC 错误响应。
+
+        Args:
+            rpc_id: JSON-RPC 请求 ID。
+            code: JSON-RPC 错误码。
+            message: A2A 协议消息对象。
+            data: 请求体数据字典。
+
+        Returns:
+            dict[str, Any]: JSON-RPC 错误响应对象。
+        """
         return {
             "jsonrpc": "2.0",
             "id": rpc_id,
@@ -472,6 +645,15 @@ class A2AService:
         }
 
     async def ahandle_rpc(self, data: dict[str, Any], trace_id: str = "") -> dict[str, Any]:
+        """处理 A2A JSON-RPC 请求。
+
+        Args:
+            data: 请求体数据字典。
+            trace_id: 请求追踪 ID。
+
+        Returns:
+            dict[str, Any]: RPC 处理结果。
+        """
         payload = data if isinstance(data, dict) else {}
         rpc_id = payload.get("id")
         method = str(payload.get("method") or "").strip()
@@ -532,6 +714,11 @@ class A2AService:
             )
 
     async def ashutdown(self) -> None:
+        """关闭服务并取消未完成任务。
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._lock:
             rows = list(self._tasks.values())
         for row in rows:

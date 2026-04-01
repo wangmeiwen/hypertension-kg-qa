@@ -1,4 +1,8 @@
-﻿"""RAG 子代理状态模型。"""
+﻿"""state 模块。
+
+提供 state 相关能力与对外接口。
+"""
+
 
 from __future__ import annotations
 

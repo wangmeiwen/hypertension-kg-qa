@@ -1,10 +1,29 @@
-﻿import logging
+﻿"""项目配置加载模块。
+
+职责说明：
+1) 从项目根目录 .env 读取配置并覆盖进程环境变量。
+2) 提供 Config 对象，集中暴露模型、数据库、检索与运行参数。
+3) 对少量网络地址配置做标准化处理，降低环境差异带来的连接问题。
+"""
+
+import logging
 import os
 from dotenv import load_dotenv
 from pathlib import Path
 
 
 def _normalize_loopback_host(host: str | None) -> str | None:
+    """规范化回环主机名。
+
+    当输入为 localhost 时，统一替换为 127.0.0.1，
+    避免不同运行环境下对本地回环地址解析不一致。
+
+    Args:
+        host: 原始主机名，允许为 None。
+
+    Returns:
+        str | None: 规范化后的主机名；若输入为空则返回原值。
+    """
     value = str(host or "").strip()
     if not value:
         return host
@@ -14,6 +33,17 @@ def _normalize_loopback_host(host: str | None) -> str | None:
 
 
 def _normalize_neo4j_uri(uri: str | None) -> str | None:
+    """规范化 Neo4j 连接 URI 中的主机部分。
+
+    对 bolt://localhost 与 neo4j://localhost 场景做统一替换，
+    将 localhost 改写为 127.0.0.1，减少连接器在 IPv4/IPv6 上的歧义。
+
+    Args:
+        uri: 原始 Neo4j URI，允许为 None。
+
+    Returns:
+        str | None: 规范化后的 URI；若输入为空则返回原值。
+    """
     value = str(uri or "").strip()
     if not value:
         return uri
@@ -22,12 +52,6 @@ def _normalize_neo4j_uri(uri: str | None) -> str | None:
         if value.lower().startswith(prefix):
             return f"{scheme}127.0.0.1{value[len(prefix):]}"
     return value
-
-"""
-配置模块：统一管理项目配置项
-- 从环境变量读取配置，支持 .env 文件覆盖
-- 配置项包括：大模型、LangSmith、Neo4j、Embedding/Reranker模型、Milvus、OCR、检索参数等
-"""
 
 logger = logging.getLogger("config")
 
@@ -40,6 +64,17 @@ load_dotenv(dotenv_path=env_path, override=True)
 
 class Config:
     def __init__(self):
+        """加载并组织项目运行所需配置项。
+
+        配置来源优先级为：
+        1) .env 文件（通过 load_dotenv 注入）
+        2) 当前进程环境变量
+
+        本构造函数只负责读取与轻量标准化，不执行外部连接。
+
+        Returns:
+            None: 无返回值。
+        """
         # 大模型相关
         self.MODEL_API_KEY = os.getenv("MODEL_API_KEY")
         self.MODEL_BASE_URL = os.getenv("MODEL_BASE_URL")
@@ -103,6 +138,23 @@ class Config:
         self.KG_DISAMBIGUATION_MARGIN_DEFAULT = float(os.getenv("KG_DISAMBIGUATION_MARGIN_DEFAULT", "0.12"))
         self.KG_DISAMBIGUATION_LLM_CONFIDENCE_MIN = float(os.getenv("KG_DISAMBIGUATION_LLM_CONFIDENCE_MIN", "0.55"))
         self.KG_FORCE_SUPPLEMENT_TOP_K = int(os.getenv("KG_FORCE_SUPPLEMENT_TOP_K", "12"))
+
+        # A2A 主控与子代理执行上限（单轨重构统一入口）
+        self.A2A_ORCHESTRATOR_MAX_TURNS_DEFAULT = int(
+            os.getenv("A2A_ORCHESTRATOR_MAX_TURNS_DEFAULT", "2")
+        )
+        self.A2A_ORCHESTRATOR_MAX_TURNS_MAX = int(
+            os.getenv("A2A_ORCHESTRATOR_MAX_TURNS_MAX", "6")
+        )
+        self.A2A_ORCHESTRATOR_SUPPLEMENT_MAX_ROUNDS = int(
+            os.getenv("A2A_ORCHESTRATOR_SUPPLEMENT_MAX_ROUNDS", "2")
+        )
+        self.A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT = int(
+            os.getenv("A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT", "2")
+        )
+        self.A2A_SUBAGENT_MAX_TOOL_CALLS_MAX = int(
+            os.getenv("A2A_SUBAGENT_MAX_TOOL_CALLS_MAX", "8")
+        )
 
         # 文档分块配置（父子块策略）
         self.PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", "1200"))

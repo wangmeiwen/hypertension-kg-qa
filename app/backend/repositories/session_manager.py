@@ -1,4 +1,8 @@
-﻿"""会话与消息异步管理。"""
+﻿"""session_manager 模块。
+
+提供 session_manager 相关能力与对外接口。
+"""
+
 
 from __future__ import annotations
 
@@ -12,6 +16,15 @@ from app.backend.repositories.database import fetch_all, fetch_one, execute, ins
 class SessionManager:
     @staticmethod
     async def create_session(user_id: str, title: str = "新会话") -> dict:
+        """创建资源。
+
+        Args:
+            user_id: 会话所属用户 ID。
+            title: 会话标题。
+
+        Returns:
+            dict: 新建会话信息。
+        """
         session_id = str(uuid.uuid4())
         await execute(
             "INSERT INTO sessions (id, user_id, title) VALUES (:id, :user_id, :title)",
@@ -31,6 +44,15 @@ class SessionManager:
 
     @staticmethod
     async def get_sessions(user_id: str, limit: int = 50) -> list:
+        """查询指定用户的会话列表。
+
+        Args:
+            user_id: 用户 ID。
+            limit: 返回条数上限。
+
+        Returns:
+            list: 会话摘要列表（按更新时间倒序）。
+        """
         rows = await fetch_all(
             """
             SELECT id, user_id, title, created_at, updated_at
@@ -54,6 +76,14 @@ class SessionManager:
 
     @staticmethod
     async def get_session(session_id: str) -> Optional[dict]:
+        """根据会话 ID 查询单条会话信息。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            Optional[dict]: 命中时返回会话字典，否则返回 None。
+        """
         row = await fetch_one(
             "SELECT id, user_id, title, created_at, updated_at FROM sessions WHERE id=:id",
             {"id": session_id},
@@ -70,6 +100,15 @@ class SessionManager:
 
     @staticmethod
     async def update_session_title(session_id: str, title: str) -> bool:
+        """更新数据。
+
+        Args:
+            session_id: 会话 ID。
+            title: 新标题。
+
+        Returns:
+            bool: 更新成功返回 True。
+        """
         affected = await execute(
             "UPDATE sessions SET title=:title WHERE id=:id",
             {"title": title, "id": session_id},
@@ -78,11 +117,27 @@ class SessionManager:
 
     @staticmethod
     async def delete_session(session_id: str) -> bool:
+        """删除数据。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            bool: 删除成功返回 True。
+        """
         affected = await execute("DELETE FROM sessions WHERE id=:id", {"id": session_id})
         return affected > 0
 
     @staticmethod
     async def update_session_time(session_id: str) -> None:
+        """更新数据。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            None: 无返回值。
+        """
         await execute(
             "UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=:id",
             {"id": session_id},
@@ -90,6 +145,15 @@ class SessionManager:
 
     @staticmethod
     async def get_all_sessions(limit: int = 100, offset: int = 0) -> list:
+        """分页查询全量会话及消息计数。
+
+        Args:
+            limit: 返回条数上限。
+            offset: 分页偏移量。
+
+        Returns:
+            list: 会话与消息数量的聚合列表。
+        """
         rows = await fetch_all(
             """
             SELECT s.id, s.user_id, s.title, s.created_at, s.updated_at,
@@ -116,6 +180,11 @@ class SessionManager:
 
     @staticmethod
     async def get_total_sessions_count() -> int:
+        """统计会话总数。
+
+        Returns:
+            int: 会话总数。
+        """
         row = await fetch_one("SELECT COUNT(*) as count FROM sessions")
         return int((row or {}).get("count") or 0)
 
@@ -123,6 +192,17 @@ class SessionManager:
 class MessageManager:
     @staticmethod
     async def add_message(session_id: str, role: str, content: str, think_content: str = "") -> dict:
+        """向会话追加一条消息并更新时间。
+
+        Args:
+            session_id: 会话 ID。
+            role: 消息角色（user/assistant 等）。
+            content: 消息正文。
+            think_content: 可选思考内容。
+
+        Returns:
+            dict: 新增消息摘要。
+        """
         message_id = await insert_and_get_last_id(
             """
             INSERT INTO messages (session_id, role, content, think_content)
@@ -147,6 +227,14 @@ class MessageManager:
 
     @staticmethod
     async def get_messages(session_id: str) -> list:
+        """查询会话下全部消息（按时间正序）。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            list: 消息列表。
+        """
         rows = await fetch_all(
             """
             SELECT id, session_id, role, content, think_content, created_at
@@ -168,11 +256,29 @@ class MessageManager:
 
     @staticmethod
     async def delete_messages(session_id: str) -> bool:
+        """删除数据。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            bool: 删除成功返回 True。
+        """
         affected = await execute("DELETE FROM messages WHERE session_id=:session_id", {"session_id": session_id})
         return affected > 0
 
     @staticmethod
     async def rollback_last_question(session_id: str) -> dict:
+        """回滚到最近一条用户问题之前。
+
+        会删除“最近 user 消息及其后续消息”，用于撤销最近一轮问答。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            dict: 回滚结果，包含是否成功、删除数量和问题文本。
+        """
         row = await fetch_one(
             """
             SELECT id, content
@@ -196,6 +302,15 @@ class MessageManager:
 
     @staticmethod
     async def rollback_to_question(session_id: str, question_message_id: int) -> dict:
+        """回滚到指定问题消息位置。
+
+        Args:
+            session_id: 会话 ID。
+            question_message_id: 目标用户问题消息 ID。
+
+        Returns:
+            dict: 回滚结果，包含是否成功、删除数量和问题文本。
+        """
         row = await fetch_one(
             """
             SELECT id, content

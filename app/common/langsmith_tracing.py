@@ -25,7 +25,29 @@ try:
 except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
     # 降级处理：当 LangSmith 未安装或不可用时，返回空装饰器
     def _traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """提供 LangSmith 不可用时的降级装饰器工厂。
+
+        当运行环境没有安装 `langsmith` 或导入失败时，
+        该函数返回一个“空装饰器”，保证业务函数可正常执行。
+
+        Args:
+            *args: 与真实 `traceable` 保持兼容的位置参数。
+            **kwargs: 与真实 `traceable` 保持兼容的关键字参数。
+
+        Returns:
+            Callable[[Callable[..., Any]], Callable[..., Any]]: 不改变原函数行为的装饰器。
+        """
         def _decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            """空装饰器实现。
+
+            直接返回原函数，不注入追踪逻辑。
+
+            Args:
+                func: 被装饰的目标函数。
+
+            Returns:
+                Callable[..., Any]: 原函数本身。
+            """
             return func
         return _decorator
 

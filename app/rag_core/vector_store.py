@@ -98,6 +98,15 @@ class VectorStore:
 
     @classmethod
     def _get_cached_reranker(cls, model_path: str, device: str) -> CrossEncoder:
+        """获取（或加载）共享 Reranker 模型实例。
+
+        Args:
+            model_path: Reranker 模型本地路径。
+            device: 推理设备标识（如 cpu/cuda）。
+
+        Returns:
+            CrossEncoder: 复用的重排序模型实例。
+        """
         key = f"{model_path}|{device}"
         with cls._MODEL_LOCK:
             model = cls._RERANKER_CACHE.get(key)
@@ -111,6 +120,16 @@ class VectorStore:
     def _get_cached_embedding_function(
         cls, model_path: str, device: str, use_fp16: bool
     ) -> BGEM3EmbeddingFunction:
+        """获取（或加载）共享 embedding 函数实例。
+
+        Args:
+            model_path: Embedding 模型路径。
+            device: 推理设备标识。
+            use_fp16: 是否启用 FP16 推理。
+
+        Returns:
+            BGEM3EmbeddingFunction: 可复用 embedding 函数对象。
+        """
         key = f"{model_path}|{device}|{int(use_fp16)}"
         with cls._MODEL_LOCK:
             model = cls._EMBEDDING_FUNCTION_CACHE.get(key)
@@ -126,6 +145,16 @@ class VectorStore:
 
     @classmethod
     def _get_cached_client(cls, host: str, port: str, database: str) -> MilvusClient:
+        """获取（或创建）共享 MilvusClient 实例。
+
+        Args:
+            host: Milvus 主机地址。
+            port: Milvus 端口。
+            database: Milvus 数据库名。
+
+        Returns:
+            MilvusClient: 复用的客户端连接实例。
+        """
         key = f"http://{host}:{port}|{database}"
         with cls._CLIENT_LOCK:
             client = cls._CLIENT_CACHE.get(key)

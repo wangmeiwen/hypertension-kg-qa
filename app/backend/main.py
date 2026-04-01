@@ -1,4 +1,10 @@
-﻿# ruff: noqa: E402
+﻿"""main 模块。
+
+提供 main 相关能力与对外接口。
+"""
+
+
+# ruff: noqa: E402
 
 import asyncio
 from datetime import datetime
@@ -68,6 +74,17 @@ logger = logging.getLogger(__name__)
 
 
 def _log_api_error(endpoint: str, stage: str, exc: Exception, **kwargs: Any) -> None:
+    """记录 API 异常并输出结构化日志。
+
+    Args:
+        endpoint: 接口路径标识。
+        stage: 当前处理阶段标识。
+        exc: 捕获到的异常对象。
+        **kwargs: 补充上下文字段。
+
+    Returns:
+        None: 无返回值。
+    """
     payload = {"endpoint": endpoint, "stage": stage, "error_type": type(exc).__name__, "error": str(exc)}
     payload.update(kwargs)
     logger.exception("[api_error] %s", json.dumps(payload, ensure_ascii=False))
@@ -167,6 +184,17 @@ app = FastAPI(lifespan=_app_lifespan)
 
 
 def _read_int_env(name: str, default: int, min_value: int, max_value: int) -> int:
+    """读取整型环境变量并限制取值范围。
+
+    Args:
+        name: 环境变量名称。
+        default: 默认值。
+        min_value: 允许的最小值。
+        max_value: 允许的最大值。
+
+    Returns:
+        int: 限幅后的整型值。
+    """
     raw = str(os.getenv(name, str(default))).strip()
     try:
         value = int(raw)
@@ -180,6 +208,17 @@ def _read_int_env(name: str, default: int, min_value: int, max_value: int) -> in
 
 
 def _read_float_env(name: str, default: float, min_value: float, max_value: float) -> float:
+    """读取浮点环境变量并限制取值范围。
+
+    Args:
+        name: 环境变量名称。
+        default: 默认值。
+        min_value: 允许的最小值。
+        max_value: 允许的最大值。
+
+    Returns:
+        float: 限幅后的浮点值。
+    """
     raw = str(os.getenv(name, str(default))).strip()
     try:
         value = float(raw)
@@ -219,6 +258,14 @@ _HEAVY_ENDPOINT_LIMITS: dict[str, dict[str, int]] = {
 
 
 def _extract_bearer_token(authorization: str) -> Optional[str]:
+    """从 Authorization 头提取 Bearer Token。
+
+    Args:
+        authorization: HTTP Authorization 头原始值。
+
+    Returns:
+        Optional[str]: 解析出的 token；无效时返回 None。
+    """
     auth_text = str(authorization or "").strip()
     if not auth_text:
         return None
@@ -232,6 +279,15 @@ def _extract_bearer_token(authorization: str) -> Optional[str]:
 
 
 async def _is_session_owner(session_id: str, user_id: str) -> bool:
+    """校验指定会话是否属于目标用户。
+
+    Args:
+        session_id: 会话 ID。
+        user_id: 用户 ID。
+
+    Returns:
+        bool: 是否为会话所有者。
+    """
     session = await _await_call(SessionManager.get_session, session_id)
     if not session:
         return False
@@ -239,6 +295,14 @@ async def _is_session_owner(session_id: str, user_id: str) -> bool:
 
 
 def _validate_cypher_identifier(raw_name: Any) -> Optional[str]:
+    """校验 Cypher 标识符是否合法。
+
+    Args:
+        raw_name: 待校验的原始标识符。
+
+    Returns:
+        Optional[str]: 合法标识符或 None。
+    """
     name = str(raw_name).strip()
     if not name:
         return None
@@ -248,6 +312,14 @@ def _validate_cypher_identifier(raw_name: Any) -> Optional[str]:
 
 
 def _sanitize_graph_properties(raw_properties: Any) -> Dict[str, Any]:
+    """清洗并校验图谱属性键。
+
+    Args:
+        raw_properties: 待清洗的属性对象。
+
+    Returns:
+        Dict[str, Any]: 清洗后的属性字典。
+    """
     if raw_properties is None:
         return {}
     if not isinstance(raw_properties, dict):
@@ -263,6 +335,14 @@ def _sanitize_graph_properties(raw_properties: Any) -> Dict[str, Any]:
 
 
 def _resolve_trace_id_from_request(request: Optional[Request]) -> str:
+    """从请求上下文解析 trace_id。
+
+    Args:
+        request: FastAPI 请求对象。
+
+    Returns:
+        str: trace_id 字符串。
+    """
     if request is None:
         return ""
     return str(getattr(request.state, "request_id", "") or "")
@@ -274,6 +354,17 @@ def _enforce_heavy_api_rate_limit(
     session_id: str = "",
     request: Optional[Request] = None,
 ) -> Optional[JSONResponse]:
+    """执行重接口限流检查。
+
+    Args:
+        endpoint: 接口路径标识。
+        user_id: 用户 ID。
+        session_id: 会话 ID。
+        request: FastAPI 请求对象。
+
+    Returns:
+        Optional[JSONResponse]: 触发限流时返回响应，否则为 None。
+    """
     if not get_feature_flag("ENABLE_HEAVY_API_RATE_LIMIT", True):
         return None
     if _rate_limiter is None:
@@ -374,6 +465,15 @@ def get_a2a() -> A2AService:
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
+    """安全转换为浮点数。
+
+    Args:
+        value: 待规范化值。
+        default: 默认值。
+
+    Returns:
+        float: 转换后的浮点值；失败时返回 default。
+    """
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -381,6 +481,14 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _extract_text_from_parts(parts_obj: Any) -> str:
+    """从消息 parts 中提取文本。
+
+    Args:
+        parts_obj: parts 字段原始对象（期望为列表）。
+
+    Returns:
+        str: 拼接后的文本内容。
+    """
     parts = parts_obj if isinstance(parts_obj, list) else []
     chunks: List[str] = []
     for part in parts:
@@ -395,6 +503,15 @@ def _extract_text_from_parts(parts_obj: Any) -> str:
 
 
 def _extract_a2a_artifact(task: Dict[str, Any], artifact_name: str) -> Any:
+    """从 A2A 任务中提取指定产物。
+
+    Args:
+        task: 任务对象字典。
+        artifact_name: 目标产物名称。
+
+    Returns:
+        Any: 命中时返回 data/text 对应内容，未命中返回 None。
+    """
     artifacts_obj = task.get("artifacts")
     artifacts = artifacts_obj if isinstance(artifacts_obj, list) else []
     for artifact in artifacts:
@@ -416,6 +533,14 @@ def _extract_a2a_artifact(task: Dict[str, Any], artifact_name: str) -> Any:
 
 
 def _extract_a2a_status_message(task: Dict[str, Any]) -> Dict[str, Any]:
+    """提取任务状态消息对象。
+
+    Args:
+        task: 任务对象字典。
+
+    Returns:
+        Dict[str, Any]: 标准化后的 status.message 字典。
+    """
     status_obj = task.get("status")
     status = status_obj if isinstance(status_obj, dict) else {}
     message_obj = status.get("message")
@@ -424,6 +549,14 @@ def _extract_a2a_status_message(task: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_traces_from_processing_steps(steps_obj: Any) -> List[Dict[str, Any]]:
+    """将处理步骤转换为 trace 列表。
+
+    Args:
+        steps_obj: 处理步骤对象（通常为列表）。
+
+    Returns:
+        List[Dict[str, Any]]: 结构化 trace 列表。
+    """
     steps = steps_obj if isinstance(steps_obj, list) else []
     rows: List[Dict[str, Any]] = []
     for idx, step in enumerate(steps, start=1):
@@ -437,6 +570,14 @@ def _build_traces_from_processing_steps(steps_obj: Any) -> List[Dict[str, Any]]:
 
 
 def _build_processing_steps_from_progress_events(events_obj: Any) -> List[str]:
+    """从进度事件生成处理步骤文本。
+
+    Args:
+        events_obj: 进度事件对象（通常为列表）。
+
+    Returns:
+        List[str]: 提取出的步骤文案列表。
+    """
     events = events_obj if isinstance(events_obj, list) else []
     rows: List[str] = []
     for event in events:
@@ -449,6 +590,14 @@ def _build_processing_steps_from_progress_events(events_obj: Any) -> List[str]:
 
 
 def _resolve_agent_run_mode(payload: Dict[str, Any]) -> str:
+    """解析 agent 运行模式。
+
+    Args:
+        payload: 请求负载字典。
+
+    Returns:
+        str: 归一化后的运行模式。
+    """
     mode = str(payload.get("a2a_mode") or "").strip().lower()
     if mode in {"force", "prefer", "off", "legacy"}:
         return mode
@@ -463,6 +612,19 @@ async def _run_agent_via_a2a(
     max_turns: Optional[int],
     trace_id: str,
 ) -> Dict[str, Any]:
+    """通过 A2A 服务执行一次 Agent 调用。
+
+    Args:
+        input_text: 用户输入文本。
+        session_id: 会话 ID。
+        user_id: 用户 ID。
+        strategy: 策略名称。
+        max_turns: 最大迭代轮数。
+        trace_id: 请求追踪 ID。
+
+    Returns:
+        Dict[str, Any]: A2A 执行结果摘要。
+    """
     service = get_a2a()
     metadata: Dict[str, Any] = {
         "session_id": str(session_id or ""),
@@ -556,6 +718,14 @@ async def _run_agent_via_a2a(
 
 
 def _map_a2a_state_to_done_status(state: str) -> str:
+    """将 A2A 状态映射为前端完成状态。
+
+    Args:
+        state: 任务状态字符串。
+
+    Returns:
+        str: 映射后的终态标识。
+    """
     safe_state = str(state or "").strip().lower()
     if safe_state == "completed":
         return "done"
@@ -567,12 +737,29 @@ def _map_a2a_state_to_done_status(state: str) -> str:
 
 
 def _extract_progress_detail(event: Dict[str, Any]) -> str:
+    """提取进度事件展示文案。
+
+    Args:
+        event: 事件字典。
+
+    Returns:
+        str: 可展示的进度文本。
+    """
     if not isinstance(event, dict):
         return ""
     return str(event.get("detail") or event.get("event") or "").strip()
 
 
 def _extract_task_final_text(task: Dict[str, Any], state: str) -> str:
+    """提取任务终态展示文本。
+
+    Args:
+        task: 任务对象字典。
+        state: 任务状态字符串。
+
+    Returns:
+        str: 任务终态文案。
+    """
     if not isinstance(task, dict):
         return str(state or "")
     if state == "completed":
@@ -593,6 +780,14 @@ def _extract_task_final_text(task: Dict[str, Any], state: str) -> str:
 
 
 async def _build_a2a_runtime_snapshot(limit_per_service: int = 200) -> Dict[str, Any]:
+    """汇总 A2A 运行时任务快照。
+
+    Args:
+        limit_per_service: 每个服务统计的任务上限。
+
+    Returns:
+        Dict[str, Any]: 各 A2A 服务任务统计。
+    """
     services = {
         "orchestrator": get_a2a(),
         "graph": get_a2a_graph(),
@@ -628,6 +823,19 @@ async def _generate_a2a_stream_events(
     strategy: str = "iterative",
     max_turns: Optional[int] = None,
 ) -> Any:
+    """生成 Agent 流式输出事件。
+
+    Args:
+        input_text: 用户输入文本。
+        user_id: 用户 ID。
+        session_id: 会话 ID。
+        request_id: 请求 ID。
+        strategy: 策略名称。
+        max_turns: 最大迭代轮数。
+
+    Returns:
+        Any: 可异步迭代的事件流。
+    """
     req_id = str(request_id or uuid.uuid4())
     service = get_a2a()
 
@@ -1073,6 +1281,14 @@ async def _measure_event_loop_lag(samples: int = 20, interval_ms: int = 20) -> D
     sorted_lags = sorted(lags_ms)
 
     def _pct(p: float) -> float:
+        """计算事件循环延迟分位值。
+
+        Args:
+            p: 分位比例，范围通常为 0 到 1。
+
+        Returns:
+            float: 对应分位值（毫秒）。
+        """
         if not sorted_lags:
             return 0.0
         if len(sorted_lags) == 1:
@@ -1103,6 +1319,11 @@ async def _await_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> An
 
 
 async def _build_readiness_report() -> Dict[str, Any]:
+    """构建服务就绪性报告。
+
+    Returns:
+        Dict[str, Any]: 当前服务 readiness 报告。
+    """
     db_status = await check_databases()
 
     neo4j_ready = bool((db_status.get("neo4j") or {}).get("is_running"))
@@ -1196,6 +1417,14 @@ async def _build_readiness_report() -> Dict[str, Any]:
 
 
 async def _ensure_core_ready(endpoint: str) -> Optional[JSONResponse]:
+    """在接口执行前校验核心依赖就绪状态。
+
+    Args:
+        endpoint: 接口路径标识。
+
+    Returns:
+        Optional[JSONResponse]: 不可用时返回 503 响应，否则返回 None。
+    """
     report = await _await_call(_build_readiness_report)
     if report["level"] != "unavailable":
         return None
@@ -1223,6 +1452,15 @@ async def _ensure_core_ready(endpoint: str) -> Optional[JSONResponse]:
 
 @app.middleware("http")
 async def request_timing_middleware(request: Request, call_next):
+    """记录请求耗时与链路上下文。
+
+    Args:
+        request: FastAPI 请求对象。
+        call_next: 下一个中间件或路由处理函数。
+
+    Returns:
+        Any: 下游中间件响应对象。
+    """
     request_id = create_request_id()
     request.state.request_id = request_id
     request.state.trace_id = request_id
@@ -1271,7 +1509,11 @@ async def request_timing_middleware(request: Request, call_next):
 # 数据库状态检查端点
 @app.get("/db/status")
 async def db_status():
-    """获取数据库连接状态"""
+    """获取数据库连接状态。
+
+    Returns:
+        Dict[str, Any]: MySQL、Milvus、Neo4j 的连接状态汇总。
+    """
     status = await _await_call(check_databases)
     return status
 
@@ -1295,6 +1537,15 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.post("/process")
 async def process(data: dict, request: Request):
+    """处理流式问答请求入口。
+
+    Args:
+        data: 请求体数据字典。
+        request: FastAPI 请求对象。
+
+    Returns:
+        StreamingResponse: 流式响应对象。
+    """
     readiness_error = await _ensure_core_ready("/process")
     if readiness_error is not None:
         return readiness_error
@@ -1614,7 +1865,16 @@ async def a2a_list_tasks(
     context_id: str = "",
     limit: int = 20,
 ):
-    """列出 A2A 任务。"""
+    """列出 A2A 任务。
+
+    Args:
+        request: FastAPI 请求对象。
+        context_id: 可选上下文 ID，用于筛选某个上下文下的任务。
+        limit: 结果数量上限。
+
+    Returns:
+        Dict[str, Any]: 包含任务列表与 trace_id 的查询结果。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = get_a2a()
@@ -1685,6 +1945,11 @@ async def a2a_task_events(
             safe_cursor = 0
 
     async def _event_stream():
+        """生成 SSE 事件流。
+
+        Returns:
+            Any: SSE 事件字符串异步迭代器。
+        """
         nonlocal safe_cursor
         started_at = time.time()
         while True:
@@ -1762,7 +2027,16 @@ async def a2a_task_events(
 
 @app.post("/a2a/tasks/{task_id}/cancel")
 async def a2a_cancel_task(task_id: str, request: Request, data: Optional[Dict[str, Any]] = None):
-    """取消 A2A 任务。"""
+    """取消 A2A 任务。
+
+    Args:
+        task_id: 任务 ID。
+        request: FastAPI 请求对象。
+        data: 请求体数据字典。
+
+    Returns:
+        Dict[str, Any]: 取消请求处理结果，包含 ok/error 与 trace_id 信息。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     payload = data if isinstance(data, dict) else {}
     reason = str(payload.get("reason") or "manual_cancel")
@@ -1782,6 +2056,16 @@ async def a2a_cancel_task(task_id: str, request: Request, data: Optional[Dict[st
 
 
 def _build_a2a_rpc_fallback(data: Dict[str, Any], trace_id: str, detail: str) -> Dict[str, Any]:
+    """构建 A2A RPC 兜底错误响应。
+
+    Args:
+        data: 请求体数据字典。
+        trace_id: 请求追踪 ID。
+        detail: 错误详情文本。
+
+    Returns:
+        Dict[str, Any]: JSON-RPC 标准错误响应对象。
+    """
     return {
         "jsonrpc": "2.0",
         "id": (data or {}).get("id"),
@@ -1799,6 +2083,17 @@ async def _a2a_rpc_dispatch(
     service_getter: Callable[[], A2AService],
     endpoint: str,
 ) -> JSONResponse:
+    """分发通用 A2A JSON-RPC 请求。
+
+    Args:
+        data: 请求体数据字典。
+        request: FastAPI 请求对象。
+        service_getter: A2A 服务获取函数。
+        endpoint: 接口路径标识。
+
+    Returns:
+        JSONResponse: RPC 分发响应。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     set_trace_metadata(
         {
@@ -1826,6 +2121,18 @@ async def _a2a_list_tasks_dispatch(
     context_id: str = "",
     limit: int = 20,
 ) -> Dict[str, Any]:
+    """分发 A2A 任务列表查询。
+
+    Args:
+        request: FastAPI 请求对象。
+        service_getter: A2A 服务获取函数。
+        endpoint: 接口路径标识。
+        context_id: 上下文 ID。
+        limit: 结果数量上限。
+
+    Returns:
+        Dict[str, Any]: 任务列表查询结果。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = service_getter()
@@ -1842,6 +2149,17 @@ async def _a2a_get_task_dispatch(
     service_getter: Callable[[], A2AService],
     endpoint: str,
 ) -> Dict[str, Any] | JSONResponse:
+    """分发 A2A 单任务查询。
+
+    Args:
+        task_id: 任务 ID。
+        request: FastAPI 请求对象。
+        service_getter: A2A 服务获取函数。
+        endpoint: 接口路径标识。
+
+    Returns:
+        Dict[str, Any] | JSONResponse: 查询结果或 404 响应。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     try:
         service = service_getter()
@@ -1866,6 +2184,20 @@ async def _a2a_task_events_dispatch(
     poll_ms: int = 500,
     timeout_seconds: int = 300,
 ) -> StreamingResponse | JSONResponse:
+    """分发 A2A 任务事件流请求。
+
+    Args:
+        task_id: 任务 ID。
+        request: FastAPI 请求对象。
+        service_getter: A2A 服务获取函数。
+        endpoint: 接口路径标识。
+        cursor: 事件游标位置。
+        poll_ms: 轮询间隔（毫秒）。
+        timeout_seconds: 轮询超时（秒）。
+
+    Returns:
+        StreamingResponse | JSONResponse: 事件流或错误响应。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     set_trace_metadata(
         {
@@ -1898,6 +2230,11 @@ async def _a2a_task_events_dispatch(
             safe_cursor = 0
 
     async def _event_stream():
+        """生成 SSE 事件流。
+
+        Returns:
+            Any: SSE 事件字符串异步迭代器。
+        """
         nonlocal safe_cursor
         started_at = time.time()
         while True:
@@ -1980,6 +2317,18 @@ async def _a2a_cancel_task_dispatch(
     endpoint: str,
     data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any] | JSONResponse:
+    """分发 A2A 任务取消请求。
+
+    Args:
+        task_id: 任务 ID。
+        request: FastAPI 请求对象。
+        service_getter: A2A 服务获取函数。
+        endpoint: 接口路径标识。
+        data: 请求体数据字典。
+
+    Returns:
+        Dict[str, Any] | JSONResponse: 取消结果或错误响应。
+    """
     trace_id = _resolve_trace_id_from_request(request)
     payload = data if isinstance(data, dict) else {}
     reason = str(payload.get("reason") or "manual_cancel")
@@ -2207,6 +2556,15 @@ async def a2a_evaluator_cancel_task(
 
 @app.get("/graph/visualization")
 async def graph_visualization(keyword: str = "", limit: int = 200):
+    """查询图谱可视化节点与边数据。
+
+    Args:
+        keyword: 关键词过滤条件（匹配节点名称）。
+        limit: 结果数量上限。
+
+    Returns:
+        Dict[str, Any]: 图谱可视化数据。
+    """
     safe_limit = max(10, min(limit, 500))
     q = (keyword or "").strip()
     try:
@@ -2270,7 +2628,14 @@ async def graph_visualization(keyword: str = "", limit: int = 200):
 
 @app.get("/graph/entity/{entity_id}")
 async def get_entity_detail(entity_id: str):
-    """获取实体详细信息"""
+    """获取实体详细信息。
+
+    Args:
+        entity_id: 实体 ID。
+
+    Returns:
+        Dict[str, Any]: 实体详情及其入边、出边关系数据。
+    """
     try:
         # 获取实体基本信息
         entity_result = await _await_call(
@@ -2365,6 +2730,17 @@ async def get_entity_detail(entity_id: str):
 
 
 async def generate_data(input_text, user_id, session_id="", request_id: str = ""):
+    """将 A2A 事件转为逐行 JSON 流输出。
+
+    Args:
+        input_text: 用户输入文本。
+        user_id: 用户 ID。
+        session_id: 会话 ID。
+        request_id: 请求 ID。
+
+    Returns:
+        AsyncGenerator[str, None]: 每次产出一行 JSON 字符串，用于流式响应。
+    """
     async for msg in _generate_a2a_stream_events(
         input_text=input_text,
         user_id=user_id,
@@ -2377,7 +2753,14 @@ async def generate_data(input_text, user_id, session_id="", request_id: str = ""
 # 会话历史 API
 @app.post("/sessions")
 async def create_session(data: dict):
-    """创建新会话"""
+    """创建新会话。
+
+    Args:
+        data: 请求体数据字典。
+
+    Returns:
+        Any: 操作结果。
+    """
     user_id = data.get("user_id") or str(uuid.uuid4())
     title = data.get("title", "新会话")
     session = await _await_call(SessionManager.create_session, user_id, title)
@@ -2386,7 +2769,15 @@ async def create_session(data: dict):
 
 @app.get("/sessions")
 async def list_sessions(user_id: str = "", limit: int = 50):
-    """获取用户的会话列表"""
+    """获取用户的会话列表。
+
+    Args:
+        user_id: 用户 ID。
+        limit: 结果数量上限。
+
+    Returns:
+        Dict[str, Any]: 会话列表查询结果，data 字段为会话数组。
+    """
     if not user_id:
         return {"ok": False, "error": "user_id_required", "data": []}
     sessions = await _await_call(SessionManager.get_sessions, user_id, limit)
@@ -2395,7 +2786,15 @@ async def list_sessions(user_id: str = "", limit: int = 50):
 
 @app.get("/sessions/{session_id}")
 async def get_session(session_id: str, user_id: str = ""):
-    """获取单个会话详情"""
+    """获取单个会话详情。
+
+    Args:
+        session_id: 会话 ID。
+        user_id: 用户 ID。
+
+    Returns:
+        Dict[str, Any]: 会话详情与消息列表，或未找到错误信息。
+    """
     if not user_id:
         return {"ok": False, "error": "user_id_required"}
 
@@ -2409,7 +2808,15 @@ async def get_session(session_id: str, user_id: str = ""):
 
 @app.put("/sessions/{session_id}")
 async def update_session(session_id: str, data: dict):
-    """更新会话标题"""
+    """更新会话标题。
+
+    Args:
+        session_id: 会话 ID。
+        data: 请求体数据字典。
+
+    Returns:
+        Any: 操作结果。
+    """
     title = data.get("title")
     user_id = str(data.get("user_id") or "").strip()
     if not user_id:
@@ -2428,7 +2835,15 @@ async def update_session(session_id: str, data: dict):
 
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, user_id: str = ""):
-    """删除会话"""
+    """删除会话。
+
+    Args:
+        session_id: 会话 ID。
+        user_id: 用户 ID。
+
+    Returns:
+        Any: 操作结果。
+    """
     if not user_id:
         return {"ok": False, "error": "user_id_required"}
 
@@ -2443,7 +2858,15 @@ async def delete_session(session_id: str, user_id: str = ""):
 
 @app.post("/sessions/{session_id}/messages")
 async def add_message(session_id: str, data: dict):
-    """添加消息到会话"""
+    """添加消息到会话。
+
+    Args:
+        session_id: 会话 ID。
+        data: 请求体数据字典。
+
+    Returns:
+        Dict[str, Any]: 写入消息后的结果，data 字段为新消息记录。
+    """
     user_id = str(data.get("user_id") or "").strip()
     role = data.get("role")
     content = data.get("content")
@@ -2466,7 +2889,15 @@ async def add_message(session_id: str, data: dict):
 
 @app.get("/sessions/{session_id}/messages")
 async def get_messages(session_id: str, user_id: str = ""):
-    """获取会话的所有消息"""
+    """获取会话的所有消息。
+
+    Args:
+        session_id: 会话 ID。
+        user_id: 用户 ID。
+
+    Returns:
+        Dict[str, Any]: 会话消息列表查询结果。
+    """
     if not user_id:
         return {"ok": False, "error": "user_id_required"}
 
@@ -2735,7 +3166,14 @@ async def cancel_qa_job(job_id: str, data: dict):
 # 简化的管理员登录 API
 @app.post("/admin/login")
 async def admin_login(data: dict):
-    """管理员登录"""
+    """管理员登录。
+
+    Args:
+        data: 请求体数据字典。
+
+    Returns:
+        Dict[str, Any]: 登录结果，成功时返回管理员令牌。
+    """
     username = data.get("username", "").strip()
     password = data.get("password", "")
 
@@ -2747,7 +3185,11 @@ async def admin_login(data: dict):
 
 @app.get("/admin/status")
 async def admin_status():
-    """检查登录状态"""
+    """检查登录状态。
+
+    Returns:
+        Dict[str, Any]: 当前登录状态与管理员用户名信息。
+    """
     return {"ok": True, "logged_in": is_logged_in(), "user": get_current_admin_user()}
 
 
@@ -2826,7 +3268,11 @@ async def admin_cancel_qa_job(job_id: str):
 
 @app.post("/admin/logout")
 async def admin_logout():
-    """退出登录"""
+    """退出登录。
+
+    Returns:
+        Dict[str, Any]: 退出登录处理结果。
+    """
     logout()
     return {"ok": True, "message": "已退出登录"}
 
@@ -2885,7 +3331,14 @@ async def admin_clear_session_messages(session_id: str):
 
 @app.delete("/admin/sessions/{session_id}")
 async def admin_delete_session(session_id: str):
-    """删除会话（需要登录）"""
+    """删除会话（需要登录）。
+
+    Args:
+        session_id: 会话 ID。
+
+    Returns:
+        Dict[str, Any]: 删除结果，包含成功标识与提示信息。
+    """
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
@@ -2988,6 +3441,15 @@ def _split_error_types(
     event: dict,
     strategy_error_keys: set[str],
 ) -> tuple[dict[str, int], dict[str, int]]:
+    """拆分策略错误与执行错误统计。
+
+    Args:
+        event: 事件字典。
+        strategy_error_keys: 策略错误类型键集合。
+
+    Returns:
+        tuple[dict[str, int], dict[str, int]]: (策略错误统计, 执行错误统计)。
+    """
     strategy_errors = event.get("strategy_error_types") or {}
     execution_errors = event.get("execution_error_types") or {}
 
@@ -3012,6 +3474,14 @@ def _split_error_types(
 
 
 def _to_float_metric(value: Any) -> float:
+    """将监控值转换为浮点数。
+
+    Args:
+        value: 待规范化值。
+
+    Returns:
+        float: 转换后的浮点指标值。
+    """
     if isinstance(value, bool):
         return float(int(value))
     if isinstance(value, (int, float)):
@@ -3025,6 +3495,14 @@ def _to_float_metric(value: Any) -> float:
 
 
 def _to_int_metric(value: Any) -> int:
+    """将监控值转换为整数。
+
+    Args:
+        value: 待规范化值。
+
+    Returns:
+        int: 转换后的整型指标值。
+    """
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -3598,7 +4076,15 @@ async def create_graph_node(data: dict):
 
 @app.put("/admin/graph/nodes/{node_id}")
 async def update_graph_node(node_id: int, data: dict):
-    """更新节点（需要登录）"""
+    """更新节点（需要登录）。
+
+    Args:
+        node_id: 要更新的图谱节点内部 ID。
+        data: 请求体数据字典。
+
+    Returns:
+        Any: 操作结果。
+    """
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
@@ -3655,7 +4141,14 @@ async def delete_graph_node(node_id: int):
 
 @app.post("/admin/graph/relationships")
 async def create_graph_relationship(data: dict):
-    """创建关系（需要登录）"""
+    """创建关系（需要登录）。
+
+    Args:
+        data: 请求体数据字典。
+
+    Returns:
+        Any: 操作结果。
+    """
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
@@ -3708,7 +4201,14 @@ async def create_graph_relationship(data: dict):
 
 @app.delete("/admin/graph/relationships/{rel_id}")
 async def delete_graph_relationship(rel_id: int):
-    """删除关系（需要登录）"""
+    """删除关系（需要登录）。
+
+    Args:
+        rel_id: 关系 ID。
+
+    Returns:
+        Any: 操作结果。
+    """
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
     
@@ -3760,6 +4260,15 @@ async def extract_and_import_graph(
     file: UploadFile = File(...),
     max_chars: int = Form(12000)
 ):
+    """从上传文件抽取并导入图谱数据。
+
+    Args:
+        file: 上传文件对象。
+        max_chars: 最大处理字符数。
+
+    Returns:
+        Dict[str, Any] | JSONResponse: 导入执行结果。
+    """
     if not is_logged_in():
         return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
 
@@ -3774,6 +4283,15 @@ async def extract_and_import_graph(
     chunk_limit = 20000
 
     def split_text_by_sentence(text: str, limit: int = 20000):
+        """按句子优先策略切分长文本。
+
+        Args:
+            text: 输入文本。
+            limit: 结果数量上限。
+
+        Returns:
+            list[str]: 切分后的文本片段。
+        """
         chunks = []
         remaining = (text or "").strip()
         sentence_ends = ["。", ".", "!", "！", "?", "？"]
@@ -3803,6 +4321,16 @@ async def extract_and_import_graph(
         return chunks
 
     def extract_text_fallback(file_bytes: bytes, filename: str, suffix: str) -> str:
+        """在 Docling 不可用时执行格式回退解析。
+
+        Args:
+            file_bytes: 上传文件字节内容。
+            filename: 原始文件名。
+            suffix: 文件扩展名（小写）。
+
+        Returns:
+            str: 回退解析得到的文本。
+        """
         if suffix == ".pdf":
             import fitz
             doc = fitz.open(stream=file_bytes, filetype="pdf")

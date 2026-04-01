@@ -8,6 +8,7 @@ from app.a2a.agent.graph_subagent import GraphSubAgent
 from app.a2a.agent.rag_subagent import RagSubAgent
 from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.orchestrator.executor import OrchestratorExecutor
+from app.common.config import Config
 from app.mcp.tools import get_mcp_server
 
 
@@ -28,6 +29,7 @@ class IterativeAgent:
             rag_subagent: 参数。
         """
         mcp = mcp_server if mcp_server is not None else get_mcp_server()
+        self.conf = Config()
         self.graph_subagent = graph_subagent if graph_subagent is not None else GraphSubAgent(mcp)
         self.rag_subagent = rag_subagent if rag_subagent is not None else RagSubAgent(mcp)
         self.subagent_client = SubAgentClientFactory(self.graph_subagent, self.rag_subagent)
@@ -81,9 +83,12 @@ class IterativeAgent:
                 },
             }
 
-        turns = 2
+        default_turns = int(self.conf.A2A_ORCHESTRATOR_MAX_TURNS_DEFAULT)
+        max_turn_limit = int(self.conf.A2A_ORCHESTRATOR_MAX_TURNS_MAX)
         if isinstance(max_turns, int) and max_turns > 0:
-            turns = max_turns
+            turns = max(1, min(max_turns, max_turn_limit))
+        else:
+            turns = max(1, min(default_turns, max_turn_limit))
 
         return await self.executor.run(
             input_text=str(input_text or "").strip(),

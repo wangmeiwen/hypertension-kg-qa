@@ -18,6 +18,18 @@ class OcrDocumentManager:
         file_size: int = 0,
         page_count: int = 0,
     ) -> dict:
+        """创建资源。
+
+        Args:
+            user_id: 文档所属用户 ID。
+            file_name: 原始文件名。
+            file_type: 文件类型（如 pdf、docx）。
+            file_size: 文件大小（字节）。
+            page_count: 页数（预估或已解析）。
+
+        Returns:
+            dict: 新建 OCR 文档记录摘要。
+        """
         doc_id = str(uuid.uuid4())
         await execute(
             """
@@ -53,6 +65,17 @@ class OcrDocumentManager:
         chunk_count: Optional[int] = None,
         error_message: Optional[str] = None,
     ) -> bool:
+        """更新数据。
+
+        Args:
+            doc_id: 文档 ID。
+            status: 目标状态（processing/completed/failed 等）。
+            chunk_count: 分块数量，可选。
+            error_message: 失败原因，可选。
+
+        Returns:
+            bool: 更新成功返回 True。
+        """
         updates = ["status = :status"]
         params = {"id": doc_id, "status": status}
         if chunk_count is not None:
@@ -69,6 +92,16 @@ class OcrDocumentManager:
 
     @staticmethod
     async def add_page_content(doc_id: str, page_num: int, text_content: str) -> dict:
+        """写入单页 OCR 文本内容。
+
+        Args:
+            doc_id: 文档 ID。
+            page_num: 页码（从 1 开始）。
+            text_content: OCR 识别出的页面文本。
+
+        Returns:
+            dict: 新增页面记录摘要。
+        """
         page_id = await insert_and_get_last_id(
             """
             INSERT INTO ocr_document_pages (document_id, page_num, text_content)
@@ -85,6 +118,16 @@ class OcrDocumentManager:
 
     @staticmethod
     async def get_documents(user_id: str, limit: int = 50, offset: int = 0) -> list:
+        """分页查询用户 OCR 文档列表。
+
+        Args:
+            user_id: 用户 ID。
+            limit: 返回条数上限。
+            offset: 分页偏移量。
+
+        Returns:
+            list: 文档摘要列表。
+        """
         rows = await fetch_all(
             """
             SELECT id, user_id, file_name, file_type, file_size,
@@ -116,6 +159,14 @@ class OcrDocumentManager:
 
     @staticmethod
     async def get_document_detail(doc_id: str) -> Optional[dict]:
+        """查询文档详情及其页面文本。
+
+        Args:
+            doc_id: 文档 ID。
+
+        Returns:
+            Optional[dict]: 文档详情；不存在时返回 None。
+        """
         doc = await fetch_one(
             """
             SELECT id, user_id, file_name, file_type, file_size,
@@ -160,11 +211,27 @@ class OcrDocumentManager:
 
     @staticmethod
     async def delete_document(doc_id: str) -> bool:
+        """删除数据。
+
+        Args:
+            doc_id: 文档 ID。
+
+        Returns:
+            bool: 删除成功返回 True。
+        """
         affected = await execute("DELETE FROM ocr_documents WHERE id=:id", {"id": doc_id})
         return affected > 0
 
     @staticmethod
     async def get_total_count(user_id: Optional[str] = None) -> int:
+        """统计文档总数。
+
+        Args:
+            user_id: 用户 ID；为空时统计全量文档。
+
+        Returns:
+            int: 文档总数。
+        """
         if user_id:
             row = await fetch_one(
                 "SELECT COUNT(*) as count FROM ocr_documents WHERE user_id=:user_id",
@@ -184,6 +251,18 @@ class OcrTokenUsageManager:
         completion_tokens: int,
         page_count: int = 0,
     ) -> dict:
+        """记录 OCR 文档的 token 使用量。
+
+        Args:
+            document_id: 文档 ID。
+            user_id: 用户 ID。
+            prompt_tokens: 输入 token 数。
+            completion_tokens: 输出 token 数。
+            page_count: 处理页数。
+
+        Returns:
+            dict: 新增 token 记录摘要。
+        """
         total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
         usage_id = await insert_and_get_last_id(
             """
@@ -213,6 +292,14 @@ class OcrTokenUsageManager:
 
     @staticmethod
     async def get_usage_by_document(document_id: str) -> Optional[dict]:
+        """查询单个文档的 token 使用记录。
+
+        Args:
+            document_id: 文档 ID。
+
+        Returns:
+            Optional[dict]: 命中时返回记录，未命中返回 None。
+        """
         row = await fetch_one(
             """
             SELECT id, document_id, user_id, prompt_tokens, completion_tokens,
@@ -237,6 +324,14 @@ class OcrTokenUsageManager:
 
     @staticmethod
     async def get_daily_stats(days: int = 30) -> list:
+        """按天聚合 OCR token 使用统计。
+
+        Args:
+            days: 回溯天数。
+
+        Returns:
+            list: 每日聚合统计列表。
+        """
         rows = await fetch_all(
             """
             SELECT
@@ -269,6 +364,11 @@ class OcrTokenUsageManager:
 
     @staticmethod
     async def get_total_stats() -> dict:
+        """获取 OCR token 全量统计汇总。
+
+        Returns:
+            dict: 全局汇总统计结果。
+        """
         row = await fetch_one(
             """
             SELECT

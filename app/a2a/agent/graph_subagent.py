@@ -1,4 +1,8 @@
-﻿"""图谱子代理（兼容层）。"""
+﻿"""graph_subagent 模块。
+
+提供 graph_subagent 相关能力与对外接口。
+"""
+
 
 from __future__ import annotations
 
@@ -41,12 +45,15 @@ class GraphSubAgent:
         tool_name = str(req.get("tool_name") or "kg_entity_relation_search").strip() or "kg_entity_relation_search"
         arguments_obj = req.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+        constraints_obj = req.get("constraints")
+        constraints = constraints_obj if isinstance(constraints_obj, dict) else {"allow_extra_retrieval": False, "max_tool_calls": 1}
 
         item = {
             "subquery_id": subquery_id,
             "subquery": subquery,
             "tool_name": tool_name,
             "arguments": arguments,
+            "constraints": constraints,
         }
         try:
             result = await self.executor.run_request(
@@ -55,7 +62,7 @@ class GraphSubAgent:
                     "subquery": subquery,
                     "tool_name": tool_name,
                     "arguments": arguments,
-                    "constraints": {"allow_extra_retrieval": False},
+                    "constraints": constraints,
                 }
             )
             evidence_obj = result.get("evidence")
@@ -65,10 +72,17 @@ class GraphSubAgent:
                 {
                     "ok": True,
                     "query_statements": result.get("query_statements") if isinstance(result.get("query_statements"), list) else [],
+                    "queries_used": result.get("queries_used") if isinstance(result.get("queries_used"), list) else [],
                     "tool_results": result.get("tool_results") if isinstance(result.get("tool_results"), list) else [],
                     "evidence": evidence,
+                    "signal": str(result.get("signal") or "none"),
+                    "coverage": result.get("coverage") if isinstance(result.get("coverage"), dict) else {},
+                    "missing_points": result.get("missing_points") if isinstance(result.get("missing_points"), list) else [],
+                    "direct_support": bool(result.get("direct_support")),
+                    "suggested_next_route": str(result.get("suggested_next_route") or ""),
                     "no_signal": no_signal,
                     "reason": str(result.get("reason") or "ok"),
+                    "token_usage": result.get("token_usage") if isinstance(result.get("token_usage"), dict) else {},
                     "telemetry": result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {},
                 }
             )

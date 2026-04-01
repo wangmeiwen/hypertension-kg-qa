@@ -504,6 +504,14 @@ def build_mcp_server() -> MCPServer:
     kg_tool = KnowledgeGraphTool(conf)
 
     async def kg_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        """处理 `kg_query` 工具调用请求。
+
+        Args:
+            payload: 工具输入参数字典。
+
+        Returns:
+            dict[str, Any]: 图谱查询结果。
+        """
         return await kg_tool.query(payload)
 
     # 先构建内置工具目录，再由 ToolManager 按 YAML 动态注册。
@@ -527,12 +535,28 @@ def build_mcp_server() -> MCPServer:
         rag_tool = RagSearchTool(conf)
 
         async def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
+            """处理 `rag_search` 工具请求（正常路径）。
+
+            Args:
+                payload: 工具输入参数字典。
+
+            Returns:
+                dict[str, Any]: 向量检索返回结果。
+            """
             return await rag_tool.query(payload)
 
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         message = str(exc)
 
         async def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
+            """处理 `rag_search` 工具请求（降级路径）。
+
+            Args:
+                payload: 工具输入参数字典（降级场景下不使用）。
+
+            Returns:
+                dict[str, Any]: 标记 unavailable 的空结果。
+            """
             return {"hits": [], "unavailable": True, "reason": message}
 
     builtin_registry["rag_search"] = {
@@ -565,12 +589,28 @@ def build_mcp_server() -> MCPServer:
                 logger.warning("kg_entity_relation_search 预热失败，运行时将按需加载: %s", str(exc))
 
         async def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
+            """处理 `kg_entity_relation_search` 请求（正常路径）。
+
+            Args:
+                payload: 工具输入参数字典。
+
+            Returns:
+                dict[str, Any]: 实体关系检索结果。
+            """
             return await kg_er_tool.query(payload)
 
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         message = str(exc)
 
         async def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
+            """处理 `kg_entity_relation_search` 请求（降级路径）。
+
+            Args:
+                payload: 工具输入参数字典（降级场景下不使用）。
+
+            Returns:
+                dict[str, Any]: 标记 unavailable 的空实体/关系结果。
+            """
             return {
                 "entities": [],
                 "relationships": [],

@@ -16,6 +16,18 @@ class TokenUsageManager:
         completion_tokens: int,
         model_name: str = "",
     ) -> dict:
+        """记录一次会话 token 使用情况。
+
+        Args:
+            session_id: 会话 ID。
+            user_id: 用户 ID。
+            prompt_tokens: 输入 token 数。
+            completion_tokens: 输出 token 数。
+            model_name: 模型名称。
+
+        Returns:
+            dict: 新增 token 使用记录摘要。
+        """
         total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
         usage_id = await insert_and_get_last_id(
             """
@@ -45,6 +57,14 @@ class TokenUsageManager:
 
     @staticmethod
     async def get_usage_by_session(session_id: str) -> list:
+        """查询会话维度的 token 使用情况明细。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            list: 按时间升序排列的 token 记录列表。
+        """
         rows = await fetch_all(
             """
             SELECT id, session_id, user_id, prompt_tokens, completion_tokens,
@@ -71,6 +91,14 @@ class TokenUsageManager:
 
     @staticmethod
     async def get_daily_stats(days: int = 30) -> list:
+        """按天聚合 token 使用情况统计。
+
+        Args:
+            days: 回溯统计天数。
+
+        Returns:
+            list: 每日聚合统计列表。
+        """
         rows = await fetch_all(
             """
             SELECT
@@ -103,6 +131,14 @@ class TokenUsageManager:
 
     @staticmethod
     async def get_session_stats(limit: int = 100) -> list:
+        """按会话维度聚合 token 消耗排行。
+
+        Args:
+            limit: 返回记录上限。
+
+        Returns:
+            list: 会话统计列表（按 total_tokens 降序）。
+        """
         rows = await fetch_all(
             """
             SELECT
@@ -140,6 +176,11 @@ class TokenUsageManager:
 
     @staticmethod
     async def get_total_stats() -> dict:
+        """获取 token 使用全局汇总。
+
+        Returns:
+            dict: 总请求数、总 token、会话数、用户数等指标。
+        """
         row = await fetch_one(
             """
             SELECT

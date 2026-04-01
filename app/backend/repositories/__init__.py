@@ -1,4 +1,8 @@
-﻿"""后端异步仓储导出。"""
+﻿"""repositories 模块。
+
+提供 repositories 相关能力与对外接口。
+"""
+
 
 from app.backend.repositories.database import initialize_database
 from app.backend.repositories.ocr_manager import OcrDocumentManager, OcrTokenUsageManager

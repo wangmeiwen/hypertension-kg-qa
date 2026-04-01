@@ -58,6 +58,16 @@ class KgMilvusStore:
 
     @classmethod
     def _get_cached_client(cls, host: str, port: str, database: str) -> MilvusClient:
+        """获取（或创建）共享 Milvus 客户端。
+
+        Args:
+            host: Milvus 主机地址。
+            port: Milvus 端口。
+            database: Milvus 数据库名。
+
+        Returns:
+            MilvusClient: 缓存复用的客户端实例。
+        """
         key = f"http://{host}:{port}|{database}"
         with cls._CLIENT_LOCK:
             client = cls._CLIENT_CACHE.get(key)
@@ -71,6 +81,14 @@ class KgMilvusStore:
 
     @classmethod
     def _get_cached_embedder(cls, model_path: str) -> SentenceTransformer:
+        """获取（或加载）共享句向量模型。
+
+        Args:
+            model_path: 句向量模型本地路径。
+
+        Returns:
+            SentenceTransformer: 可复用的 embedding 模型实例。
+        """
         with cls._EMBEDDER_LOCK:
             embedder = cls._EMBEDDER_CACHE.get(model_path)
             if embedder is None:

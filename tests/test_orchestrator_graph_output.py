@@ -1,3 +1,5 @@
+"""test_orchestrator_graph_output 模块。"""
+
 import asyncio
 import unittest
 
@@ -7,9 +9,25 @@ from app.a2a.orchestrator.graph import compile_orchestrator_graph, run_orchestra
 
 class _DummyClient:
     def __init__(self) -> None:
+        """初始化测试用子代理客户端桩对象。
+
+        该桩对象会记录收到的问题文本，便于断言编排层是否正确透传输入。
+
+        Returns:
+            None: 无返回值。
+        """
         self.seen_questions: list[str] = []
 
     async def send_task(self, task, serial_guard=None):
+        """模拟子代理任务执行并返回固定成功结果。
+
+        Args:
+            task: 编排器下发的子任务对象。
+            serial_guard: 串行控制信号量；测试中不使用，仅保持接口兼容。
+
+        Returns:
+            SubAgentResult: 包含虚拟工具结果与证据的固定返回。
+        """
         _ = serial_guard
         self.seen_questions.append(str(task.question or ""))
         return SubAgentResult(
@@ -26,9 +44,24 @@ class _DummyClient:
 
 class TestOrchestratorGraphOutput(unittest.TestCase):
     def test_run_orchestrator_graph_returns_final_output(self) -> None:
+        """编排图执行后应产出最终答案与中间状态。
+
+        核心断言：
+        1) `final_output` 为字典且 answer 非空；
+        2) 检索轮次大于等于 1；
+        3) 子代理确实收到原始问题。
+
+        Returns:
+            None: 无返回值。
+        """
         client = _DummyClient()
 
         async def _run() -> dict:
+            """构建并运行一次编排图。
+
+            Returns:
+                dict: 编排图执行完成后的状态字典。
+            """
             graph = compile_orchestrator_graph(client)
             state = {
                 "input_text": "测试问题",

@@ -30,7 +30,14 @@ def get_neo4j_config():
 
 
 def get_database_stats(driver) -> dict:
-    """获取数据库统计信息"""
+    """获取数据库统计信息。
+
+    Args:
+        driver: Neo4j 驱动实例，用于创建查询会话。
+
+    Returns:
+        dict: 包含节点数、关系数、标签分布和关系类型分布的统计结果。
+    """
     with driver.session() as session:
         # 节点统计
         node_result = session.run("MATCH (n) RETURN count(n) as node_count")
@@ -143,7 +150,11 @@ def clear_database(driver, skip_confirm: bool = False) -> bool:
 
 
 def main():
-    """主函数"""
+    """主函数。
+
+    Returns:
+        None: 无返回值。
+    """
     import argparse
     
     parser = argparse.ArgumentParser(description="Neo4j 数据库管理工具")

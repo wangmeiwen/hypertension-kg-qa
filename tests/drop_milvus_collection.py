@@ -32,7 +32,15 @@ def get_milvus_config():
 
 
 def drop_collection(client: MilvusClient, collection_name: str) -> bool:
-    """删除集合"""
+    """删除集合。
+
+    Args:
+        client: 已建立连接的 Milvus 客户端。
+        collection_name: 需要删除的集合名称。
+
+    Returns:
+        bool: 删除成功返回 True，集合不存在或删除失败返回 False。
+    """
     if client.has_collection(collection_name):
         client.drop_collection(collection_name)
         print(f"✅ 已删除集合: {collection_name}")
@@ -162,7 +170,11 @@ def recreate_collection(dense_dim: int = 1024, skip_confirm: bool = False):
 
 
 def main():
-    """主函数"""
+    """主函数。
+
+    Returns:
+        None: 无返回值。
+    """
     import argparse
     
     parser = argparse.ArgumentParser(description="Milvus 集合管理工具")

@@ -21,6 +21,8 @@ async def node_validate_constraints(state: RagSubAgentState) -> RagSubAgentState
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
     if bool(constraints.get("allow_extra_retrieval")):
         raise PermissionError("rag_subagent_extra_retrieval_not_allowed")
+    max_tool_calls = int(constraints.get("max_tool_calls") or 1)
+    constraints["max_tool_calls"] = max(1, min(max_tool_calls, 8))
     state["constraints"] = constraints
     return state
 
@@ -104,13 +106,46 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
     Returns:
         执行结果。
     """
+    evidence_rows_obj = state.get("evidence")
+    evidence_rows = evidence_rows_obj if isinstance(evidence_rows_obj, list) else []
+    evidence_count = len(evidence_rows)
+
+    query_statements_obj = state.get("query_statements")
+    query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
+    queries_used: list[str] = []
+    for statement in query_statements:
+        if not isinstance(statement, dict):
+            continue
+        payload_obj = statement.get("payload")
+        payload = payload_obj if isinstance(payload_obj, dict) else {}
+        query = str(payload.get("query") or "").strip()
+        if query:
+            queries_used.append(query)
+
+    if evidence_count == 0:
+        signal = "none"
+    elif evidence_count >= 3:
+        signal = "strong"
+    else:
+        signal = "weak"
+
     result = SubAgentResult(
         subtask_id=int(state.get("subtask_id") or 1),
         target_agent="rag",
         question=str(state.get("input_question") or ""),
-        query_statements=state.get("query_statements") or [],
+        query_statements=query_statements,
+        queries_used=queries_used,
         tool_results=state.get("tool_results") or [],
-        evidence=state.get("evidence") or [],
+        evidence=evidence_rows,
+        signal=signal,
+        coverage={
+            "coverage_status": "none" if evidence_count == 0 else "partial",
+            "coverage_ratio": 0.0 if evidence_count == 0 else min(1.0, round(float(evidence_count) / 3.0, 4)),
+            "evidence_count": evidence_count,
+        },
+        missing_points=[],
+        direct_support=evidence_count > 0,
+        suggested_next_route="kg" if evidence_count == 0 else "rag",
         no_signal=bool(state.get("no_signal")),
         reason=str(state.get("reason") or ""),
         telemetry=state.get("telemetry") or {},

@@ -64,7 +64,11 @@ class LLMResponse:
         return str(self.content or "")
 
     def __repr__(self) -> str:
-        """返回对象的详细表示。"""
+        """返回对象的详细表示。
+
+        Returns:
+            str: 便于调试日志查看的摘要字符串。
+        """
         return f"LLMResponse(content={self.content[:100]!r}..., tokens={self.total_tokens})"
 
 

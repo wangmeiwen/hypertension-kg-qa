@@ -1,4 +1,8 @@
-﻿"""A2A 请求上下文解析。"""
+﻿"""request_context 模块。
+
+提供 request_context 相关能力与对外接口。
+"""
+
 
 from __future__ import annotations
 

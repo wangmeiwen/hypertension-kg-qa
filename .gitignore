@@ -70,3 +70,5 @@ htmlcov/
 
 # MySQL
 *.sql.gz
+/docker/milvus/volumes2/
+/tests/langsmith/
