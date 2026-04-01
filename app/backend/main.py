@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.a2a import A2AService, all_agent_cards
 from app.backend.repositories.database import SessionManager, MessageManager, SessionMemoryManager, fetch_one, initialize_database
+from app.backend.services import SessionMemoryService
 from app.common.auth_simple import (
     get_current_admin_user,
     is_logged_in,
@@ -102,6 +103,7 @@ _rag_subagent: Optional[RagSubAgent] = None
 _mysql_initialized: Optional[bool] = None
 _CYPHER_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _rate_limiter: Optional[InMemorySlidingWindowRateLimiter] = None
+_session_memory_service: Optional[SessionMemoryService] = None
 
 
 @asynccontextmanager
@@ -418,6 +420,14 @@ def get_mcp():
     return _mcp_server
 
 
+def get_session_memory_service() -> SessionMemoryService:
+    """获取或初始化会话记忆服务。"""
+    global _session_memory_service
+    if _session_memory_service is None:
+        _session_memory_service = SessionMemoryService()
+    return _session_memory_service
+
+
 async def _run_a2a_query(
     input_text: str,
     context_id: str = "",
@@ -437,6 +447,11 @@ async def _run_a2a_query(
         if isinstance(raw_max_turns, int) and raw_max_turns > 0
         else None
     )
+    original_input_text = str(meta.get("original_input_text") or input_text or "").strip()
+    resolved_query_obj = meta.get("resolved_query")
+    resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
+    memory_context_obj = meta.get("memory_context")
+    memory_context = memory_context_obj if isinstance(memory_context_obj, dict) else {}
 
     return await process_query(
         input_text=str(input_text or ""),
@@ -444,6 +459,9 @@ async def _run_a2a_query(
         user_id=safe_user_id,
         strategy=strategy,
         max_turns=max_turns,
+        original_input_text=original_input_text,
+        resolved_query=resolved_query,
+        memory_context=memory_context,
         cancel_check=cancel_check,
         progress_callback=progress_callback,
     )
@@ -599,9 +617,13 @@ def _resolve_agent_run_mode(payload: Dict[str, Any]) -> str:
         str: 归一化后的运行模式。
     """
     mode = str(payload.get("a2a_mode") or "").strip().lower()
-    if mode in {"force", "prefer", "off", "legacy"}:
+    if not mode:
+        return "auto"
+    if mode in {"auto", "force", "prefer"}:
         return mode
-    return "auto"
+    if mode in {"off", "legacy"}:
+        raise ValueError("a2a_mode_not_supported")
+    raise ValueError("a2a_mode_invalid")
 
 
 async def _run_agent_via_a2a(
@@ -822,6 +844,9 @@ async def _generate_a2a_stream_events(
     request_id: str = "",
     strategy: str = "iterative",
     max_turns: Optional[int] = None,
+    original_input_text: str = "",
+    resolved_query: Optional[Dict[str, Any]] = None,
+    memory_context: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """生成 Agent 流式输出事件。
 
@@ -839,10 +864,17 @@ async def _generate_a2a_stream_events(
     req_id = str(request_id or uuid.uuid4())
     service = get_a2a()
 
+    safe_original_input_text = str(original_input_text or input_text or "")
+    safe_resolved_query = resolved_query if isinstance(resolved_query, dict) else {}
+    safe_memory_context = memory_context if isinstance(memory_context, dict) else {}
+
     metadata: Dict[str, Any] = {
         "session_id": str(session_id or ""),
         "user_id": str(user_id or ""),
         "strategy": str(strategy or "iterative"),
+        "original_input_text": safe_original_input_text,
+        "resolved_query": safe_resolved_query,
+        "memory_context": safe_memory_context,
         "source": "stream_api",
     }
     if isinstance(max_turns, int) and max_turns > 0:
@@ -897,6 +929,12 @@ async def _generate_a2a_stream_events(
             task_obj = snapshot.get("task")
             task_payload = task_obj if isinstance(task_obj, dict) else {}
             final_text = _extract_task_final_text(task_payload, state)
+            processing_steps_obj = _extract_a2a_artifact(task_payload, "processing_steps")
+            processing_steps = processing_steps_obj if isinstance(processing_steps_obj, list) else []
+            tool_observations_obj = _extract_a2a_artifact(task_payload, "tool_observations")
+            tool_observations = tool_observations_obj if isinstance(tool_observations_obj, list) else []
+            evidence_summary_obj = _extract_a2a_artifact(task_payload, "evidence_summary")
+            evidence_summary = evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
             if state == "completed" and final_text:
                 yield {"type": "reply", "msg": final_text, "task_id": task_id}
             yield {
@@ -905,6 +943,9 @@ async def _generate_a2a_stream_events(
                 "status": _map_a2a_state_to_done_status(state),
                 "traces": traces,
                 "task_id": task_id,
+                "processing_steps": processing_steps,
+                "tool_observations": tool_observations,
+                "evidence_summary": evidence_summary,
             }
             break
 
@@ -1578,7 +1619,10 @@ async def agent_run(data: dict, request: Request):
     session_id = data.get("session_id", "")
     user_id = data.get("user_id", "")
     strategy = str(data.get("strategy") or "iterative").strip().lower()
-    a2a_mode = _resolve_agent_run_mode(data)
+    try:
+        a2a_mode = _resolve_agent_run_mode(data)
+    except ValueError as exc:
+        return {"ok": False, "error": f"invalid_request:{str(exc)}", "trace_id": trace_id}
     raw_max_turns = data.get("max_turns")
     max_turns: Optional[int] = raw_max_turns if isinstance(raw_max_turns, int) and raw_max_turns > 0 else None
 
@@ -1611,16 +1655,6 @@ async def agent_run(data: dict, request: Request):
     session_tokens = set_session_context(str(session_id or ""), str(user_id or ""))
 
     try:
-        if a2a_mode in {"off", "legacy"}:
-            return {
-                "ok": False,
-                "error": "legacy_pipeline_removed",
-                "trace_id": trace_id,
-                "strategy": strategy,
-                "a2a_mode": a2a_mode,
-                "run_path": "a2a",
-            }
-
         result = await _run_agent_via_a2a(
             input_text=input_text,
             session_id=session_id,
@@ -3070,6 +3104,21 @@ async def process_with_session(data: dict, request: Request):
         message_content = f"[文件:{file_name}] {input_text}".strip()
     
     user_message = await _await_call(MessageManager.add_message, session_id, "user", message_content)
+
+    runtime_payload = {
+        "original_input_text": str(input_text or ""),
+        "resolved_query": {},
+        "memory_context": {},
+    }
+    try:
+        runtime_payload = await _await_call(
+            get_session_memory_service().build_runtime_context,
+            session_id,
+            str(input_text or ""),
+            int(user_message.get("id") or 0),
+        )
+    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        _log_api_error("/process_with_session", "build_runtime_context", exc, session_id=session_id)
     
     return StreamingResponse(
         generate_data_with_session(
@@ -3079,6 +3128,13 @@ async def process_with_session(data: dict, request: Request):
             image_data,
             user_message_id=int(user_message.get("id") or 0),
             request_id=str(getattr(request.state, "request_id", "") or ""),
+            original_input_text=str(runtime_payload.get("original_input_text") or input_text or ""),
+            resolved_query=runtime_payload.get("resolved_query")
+            if isinstance(runtime_payload.get("resolved_query"), dict)
+            else {},
+            memory_context=runtime_payload.get("memory_context")
+            if isinstance(runtime_payload.get("memory_context"), dict)
+            else {},
         ),
         media_type="text/plain"
     )
@@ -3091,6 +3147,9 @@ async def generate_data_with_session(
     image_data=None,
     user_message_id: int = 0,
     request_id: str = "",
+    original_input_text: str = "",
+    resolved_query: Optional[Dict[str, Any]] = None,
+    memory_context: Optional[Dict[str, Any]] = None,
 ):
     """基于 A2A 生成流式响应并保存助手回复。"""
     _ = image_data
@@ -3098,12 +3157,18 @@ async def generate_data_with_session(
     full_reply = ""
     full_think = ""
     done_status = "done"
+    done_processing_steps: List[str] = []
+    done_tool_observations: List[Dict[str, Any]] = []
+    done_evidence_summary: Dict[str, Any] = {}
 
     async for msg in _generate_a2a_stream_events(
         input_text=input_text,
         user_id=user_id,
         session_id=session_id,
         request_id=request_id,
+        original_input_text=original_input_text,
+        resolved_query=resolved_query,
+        memory_context=memory_context,
     ):
         if msg.get("type") == "reply":
             full_reply += msg.get("msg", "")
@@ -3111,6 +3176,18 @@ async def generate_data_with_session(
             full_think += msg.get("msg", "")
         elif msg.get("type") == "done":
             done_status = str(msg.get("status") or "done")
+            processing_steps_obj = msg.get("processing_steps")
+            if isinstance(processing_steps_obj, list):
+                done_processing_steps = [str(item or "") for item in processing_steps_obj]
+            tool_observations_obj = msg.get("tool_observations")
+            if isinstance(tool_observations_obj, list):
+                done_tool_observations = [
+                    item if isinstance(item, dict) else {"raw": str(item or "")}
+                    for item in tool_observations_obj
+                ]
+            evidence_summary_obj = msg.get("evidence_summary")
+            if isinstance(evidence_summary_obj, dict):
+                done_evidence_summary = evidence_summary_obj
 
         if msg.get("type") == "done" and not full_reply:
             full_reply = str(msg.get("msg") or "").strip()
@@ -3119,12 +3196,23 @@ async def generate_data_with_session(
 
         if msg.get("type") == "done":
             if done_status == "done" and full_reply:
-                await _await_call(
+                assistant_message = await _await_call(
                     MessageManager.add_message,
                     session_id,
                     "assistant",
                     full_reply,
                     full_think,
+                )
+                await _await_call(
+                    get_session_memory_service().refresh_after_turn,
+                    session_id,
+                    int((assistant_message or {}).get("id") or 0),
+                    {
+                        "processing_steps": done_processing_steps,
+                        "tool_observations": done_tool_observations,
+                        "evidence_summary": done_evidence_summary,
+                        "assistant_reply": full_reply,
+                    },
                 )
             break
 
@@ -3301,6 +3389,35 @@ async def admin_get_session_messages(session_id: str):
     
     messages = await _await_call(MessageManager.get_messages, session_id)
     return {"ok": True, "session": session, "messages": messages}
+
+
+@app.get("/admin/sessions/{session_id}/memory")
+async def admin_get_session_memory(session_id: str):
+    """获取指定会话记忆快照（需要登录）"""
+    if not is_logged_in():
+        return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
+
+    session = await _await_call(SessionManager.get_session, session_id)
+    if not session:
+        return {"ok": False, "error": "会话不存在"}
+
+    snapshot = await _await_call(get_session_memory_service().load_memory, session_id)
+    return {"ok": True, "data": snapshot}
+
+
+@app.post("/admin/sessions/{session_id}/memory/rebuild")
+async def admin_rebuild_session_memory(session_id: str):
+    """重建指定会话记忆（需要登录）"""
+    if not is_logged_in():
+        return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
+
+    session = await _await_call(SessionManager.get_session, session_id)
+    if not session:
+        return {"ok": False, "error": "会话不存在"}
+
+    await _await_call(get_session_memory_service().clear_memory, session_id)
+    snapshot = await _await_call(get_session_memory_service().rebuild_from_messages, session_id)
+    return {"ok": True, "data": snapshot}
 
 
 @app.delete("/admin/sessions/{session_id}/messages")

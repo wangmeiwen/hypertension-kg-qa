@@ -40,6 +40,9 @@ async def process_query(
     user_id: str = "",
     strategy: str = "iterative",
     max_turns: int | None = None,
+    original_input_text: str = "",
+    resolved_query: dict[str, Any] | None = None,
+    memory_context: dict[str, Any] | None = None,
     cancel_check=None,
     progress_callback=None,
 ) -> dict[str, Any]:
@@ -70,6 +73,9 @@ async def process_query(
         user_id=str(user_id or "").strip(),
         strategy=safe_strategy,
         max_turns=max_turns,
+        original_input_text=str(original_input_text or "").strip(),
+        resolved_query=resolved_query if isinstance(resolved_query, dict) else {},
+        memory_context=memory_context if isinstance(memory_context, dict) else {},
         cancel_check=cancel_check,
         progress_callback=progress_callback,
     )

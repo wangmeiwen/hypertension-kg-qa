@@ -57,6 +57,9 @@ class OrchestratorExecutor:
         trace_id: str = "",
         strategy: str = "iterative",
         max_turns: int | None = None,
+        original_input_text: str = "",
+        resolved_query: dict[str, Any] | None = None,
+        memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """执行 run。
@@ -76,9 +79,17 @@ class OrchestratorExecutor:
         safe_max_turns = self._resolve_max_turns(max_turns)
         safe_subagent_max_tool_calls = self._resolve_subagent_max_tool_calls()
         safe_supplement_max_rounds = self._resolve_supplement_max_rounds(safe_max_turns)
+        safe_resolved_query = resolved_query if isinstance(resolved_query, dict) else {}
+        safe_memory_context = memory_context if isinstance(memory_context, dict) else {}
+        resolved_question = str(safe_resolved_query.get("standalone_question") or "").strip()
+        safe_input_text = resolved_question if resolved_question else str(input_text or "").strip()
+        safe_original_input_text = str(original_input_text or input_text or "").strip()
 
         state: OrchestratorState = {
-            "input_text": str(input_text or "").strip(),
+            "input_text": safe_input_text,
+            "original_input_text": safe_original_input_text,
+            "resolved_query": safe_resolved_query,
+            "memory_context": safe_memory_context,
             "session_id": str(session_id or "").strip(),
             "user_id": str(user_id or "").strip(),
             "trace_id": str(trace_id or "").strip(),

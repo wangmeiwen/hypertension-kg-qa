@@ -11,6 +11,9 @@ from typing import Any, TypedDict
 
 class OrchestratorState(TypedDict, total=False):
     input_text: str
+    original_input_text: str
+    resolved_query: dict[str, Any]
+    memory_context: dict[str, Any]
     session_id: str
     user_id: str
     trace_id: str

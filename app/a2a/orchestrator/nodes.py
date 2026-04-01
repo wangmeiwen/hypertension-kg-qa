@@ -73,6 +73,46 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["gate_result"] = state.get("gate_result") if isinstance(state.get("gate_result"), dict) else {}
     state["evidence_gaps"] = state.get("evidence_gaps") if isinstance(state.get("evidence_gaps"), list) else []
     state["classification"] = state.get("classification") if isinstance(state.get("classification"), dict) else {}
+
+    resolved_query_obj = state.get("resolved_query")
+    resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
+    standalone_question = str(resolved_query.get("standalone_question") or "").strip()
+    if not standalone_question:
+        standalone_question = str(state.get("input_text") or "").strip()
+
+    subqueries_obj = resolved_query.get("subqueries")
+    subqueries = [str(item or "").strip() for item in subqueries_obj] if isinstance(subqueries_obj, list) else []
+    subqueries = [item for item in subqueries if item]
+    if not subqueries and standalone_question:
+        subqueries = [standalone_question]
+
+    preferred_sources_obj = resolved_query.get("preferred_sources")
+    preferred_sources = (
+        [str(item or "").strip().lower() for item in preferred_sources_obj]
+        if isinstance(preferred_sources_obj, list)
+        else []
+    )
+    preferred_sources = [item for item in preferred_sources if item in {"kg", "rag"}]
+    if not preferred_sources:
+        preferred_sources = ["kg"]
+
+    state["resolved_query"] = {
+        "standalone_question": standalone_question,
+        "intent": str(resolved_query.get("intent") or "direct_answer").strip() or "direct_answer",
+        "subqueries": subqueries,
+        "must_cover": [str(item or "").strip() for item in (resolved_query.get("must_cover") if isinstance(resolved_query.get("must_cover"), list) else []) if str(item or "").strip()],
+        "entities": [str(item or "").strip() for item in (resolved_query.get("entities") if isinstance(resolved_query.get("entities"), list) else []) if str(item or "").strip()],
+        "filters": [str(item or "").strip() for item in (resolved_query.get("filters") if isinstance(resolved_query.get("filters"), list) else []) if str(item or "").strip()],
+        "preferred_sources": preferred_sources,
+        "carry_over_context": [str(item or "").strip() for item in (resolved_query.get("carry_over_context") if isinstance(resolved_query.get("carry_over_context"), list) else []) if str(item or "").strip()],
+    }
+
+    memory_context_obj = state.get("memory_context")
+    state["memory_context"] = memory_context_obj if isinstance(memory_context_obj, dict) else {}
+    state["original_input_text"] = str(state.get("original_input_text") or state.get("input_text") or "").strip()
+    if standalone_question:
+        state["input_text"] = standalone_question
+
     _append_step(state, "解析输入并初始化任务驱动状态")
     return state
 
@@ -81,11 +121,12 @@ async def node_decompose_and_plan(state: OrchestratorState) -> OrchestratorState
     if state.get("pending_subtasks"):
         return state
 
-    input_text = str(state.get("input_text") or "").strip()
+    resolved_query_obj = state.get("resolved_query")
+    resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
     max_tool_calls = max(1, int(state.get("subagent_max_tool_calls") or 1))
     constraints = SubAgentConstraints(allow_extra_retrieval=False, max_tool_calls=max_tool_calls)
 
-    tasks = decompose_to_tasks(input_text, constraints)
+    tasks = decompose_to_tasks(resolved_query, constraints)
     tasks = [plan_task(task) for task in tasks]
 
     state["pending_subtasks"] = [task.model_dump() for task in tasks]

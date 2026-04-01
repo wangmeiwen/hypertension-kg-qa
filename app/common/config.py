@@ -79,6 +79,7 @@ class Config:
         self.MODEL_API_KEY = os.getenv("MODEL_API_KEY")
         self.MODEL_BASE_URL = os.getenv("MODEL_BASE_URL")
         self.MODEL_NAME = os.getenv("MODEL_NAME")
+        self.SESSION_MEMORY_MODEL_NAME = os.getenv("SESSION_MEMORY_MODEL_NAME", self.MODEL_NAME)
 
         # LangSmith 追踪与评估
         self.LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
