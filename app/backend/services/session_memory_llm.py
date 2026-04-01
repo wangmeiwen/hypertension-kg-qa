@@ -27,7 +27,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         pass
 
-    fenced_match = re.search(r"```json\\s*(\{[\\s\\S]*\})\\s*```", raw, re.IGNORECASE)
+    fenced_match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", raw, re.IGNORECASE)
     if fenced_match:
         candidate = str(fenced_match.group(1) or "").strip()
         try:
