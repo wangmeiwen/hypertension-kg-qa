@@ -43,7 +43,7 @@ class _FallbackGraphRunner:
             state = await node_merge_evidence(state)
             state = await node_decide_supplement(state)
 
-            decision = state.get("decision") if isinstance(state.get("decision"), dict) else {}
+            decision = _get_current_subtask_decision(state)
             pending = state.get("pending_subtasks") if isinstance(state.get("pending_subtasks"), list) else []
             if not bool(decision.get("need_supplement")) and not pending:
                 break
@@ -58,8 +58,16 @@ def route_after_pick(state: OrchestratorState) -> str:
     return "call_subagent_serial" if current else "assess_answerability"
 
 
+def _get_current_subtask_decision(state: OrchestratorState) -> dict[str, Any]:
+    current = state.get("current_subtask") if isinstance(state.get("current_subtask"), dict) else {}
+    subtask_id = str(current.get("subtask_id") or "").strip()
+    rows = state.get("subtask_decisions") if isinstance(state.get("subtask_decisions"), dict) else {}
+    decision = rows.get(subtask_id) if isinstance(rows.get(subtask_id), dict) else {}
+    return decision
+
+
 def route_after_supplement_decision(state: OrchestratorState) -> str:
-    decision = state.get("decision") if isinstance(state.get("decision"), dict) else {}
+    decision = _get_current_subtask_decision(state)
     pending = state.get("pending_subtasks") if isinstance(state.get("pending_subtasks"), list) else []
     if bool(decision.get("need_supplement")):
         return "pick_next_subtask"
@@ -129,7 +137,7 @@ async def run_orchestrator_graph(compiled_graph: Any, state: OrchestratorState) 
                 *list(state.keys()),
                 "current_subtask",
                 "last_subagent_result",
-                "decision",
+                "subtask_decisions",
                 "gate_result",
                 "answerability",
                 "final_output",

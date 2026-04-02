@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from typing import Any
+
+import httpx
 
 from app.a2a.agent.llm_client import LLMClient
 from app.backend.services.session_memory_prompts import (
@@ -13,6 +17,30 @@ from app.backend.services.session_memory_prompts import (
 )
 from app.backend.services.session_memory_types import ResolvedQuery
 from app.common.config import Config
+
+
+logger = logging.getLogger(__name__)
+
+
+def _log_memory_fail_open(
+    *,
+    operation: str,
+    error: BaseException,
+    session_id: str = "",
+    assistant_message_id: int = 0,
+) -> None:
+    logger.warning(
+        "memory_fail_open %s",
+        json.dumps(
+            {
+                "operation": str(operation or ""),
+                "error_type": type(error).__name__,
+                "session_id": str(session_id or ""),
+                "assistant_message_id": int(assistant_message_id or 0),
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -126,7 +154,15 @@ class SessionMemoryLLM:
             llm_conf.MODEL_NAME = self.model_name
             self.client = LLMClient(llm_conf)
 
-    async def _call_json(self, system_prompt: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _call_json(
+        self,
+        system_prompt: str,
+        payload: dict[str, Any],
+        *,
+        operation: str,
+        session_id: str = "",
+        assistant_message_id: int = 0,
+    ) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": system_prompt},
             {
@@ -134,12 +170,25 @@ class SessionMemoryLLM:
                 "content": json.dumps(payload, ensure_ascii=False),
             },
         ]
-        response = await self.client.chat_with_tokens_async(
-            messages=messages,
-            temperature=self.temperature,
-            timeout=90,
-        )
-        return _extract_json_object(str(getattr(response, "content", "") or ""))
+        try:
+            response = await self.client.chat_with_tokens_async(
+                messages=messages,
+                temperature=self.temperature,
+                timeout=90,
+            )
+            return _extract_json_object(str(getattr(response, "content", "") or ""))
+        except (
+            httpx.ReadTimeout,
+            httpx.HTTPError,
+            asyncio.TimeoutError,
+        ) as exc:
+            _log_memory_fail_open(
+                operation=operation,
+                error=exc,
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+            )
+            return {}
 
     async def resolve_query(
         self,
@@ -148,6 +197,7 @@ class SessionMemoryLLM:
         recent_messages: list[dict[str, Any]],
         summary: dict[str, Any],
         retrieval_summary: dict[str, Any],
+        session_id: str = "",
     ) -> ResolvedQuery:
         payload = {
             "input_text": str(input_text or ""),
@@ -156,9 +206,26 @@ class SessionMemoryLLM:
             "retrieval_summary": retrieval_summary,
         }
         try:
-            data = await self._call_json(RESOLVE_QUERY_SYSTEM_PROMPT, payload)
+            data = await self._call_json(
+                RESOLVE_QUERY_SYSTEM_PROMPT,
+                payload,
+                operation="resolve_query",
+                session_id=session_id,
+            )
             return _normalize_resolved_query(data, input_text)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            httpx.ReadTimeout,
+            httpx.HTTPError,
+            asyncio.TimeoutError,
+        ) as exc:
+            _log_memory_fail_open(operation="resolve_query", error=exc, session_id=session_id)
             return _fallback_resolved_query(input_text)
 
     async def summarize_turn(
@@ -168,6 +235,8 @@ class SessionMemoryLLM:
         previous_retrieval_summary: dict[str, Any],
         messages_delta: list[dict[str, Any]],
         turn_artifacts: dict[str, Any],
+        session_id: str = "",
+        assistant_message_id: int = 0,
     ) -> dict[str, Any]:
         payload = {
             "previous_summary": previous_summary,
@@ -176,7 +245,13 @@ class SessionMemoryLLM:
             "turn_artifacts": turn_artifacts,
         }
         try:
-            data = await self._call_json(SUMMARIZE_TURN_SYSTEM_PROMPT, payload)
+            data = await self._call_json(
+                SUMMARIZE_TURN_SYSTEM_PROMPT,
+                payload,
+                operation="summarize_turn",
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+            )
             if not isinstance(data, dict):
                 return {
                     "summary": previous_summary,
@@ -188,7 +263,24 @@ class SessionMemoryLLM:
                 if isinstance(data.get("retrieval_summary"), dict)
                 else previous_retrieval_summary,
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            httpx.ReadTimeout,
+            httpx.HTTPError,
+            asyncio.TimeoutError,
+        ) as exc:
+            _log_memory_fail_open(
+                operation="summarize_turn",
+                error=exc,
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+            )
             return {
                 "summary": previous_summary,
                 "retrieval_summary": previous_retrieval_summary,

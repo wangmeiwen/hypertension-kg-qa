@@ -528,9 +528,6 @@ def build_mcp_server() -> MCPServer:
         }
     }
 
-    # Milvus 相关工具构建，失败时自动注册降级 handler。
-    init_milvus_database(conf)
-
     try:
         rag_tool = RagSearchTool(conf)
 

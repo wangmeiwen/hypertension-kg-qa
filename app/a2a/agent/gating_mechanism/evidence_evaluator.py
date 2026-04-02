@@ -1073,8 +1073,8 @@ def evaluate_and_gate(
         if int(graphrag_quality.get("disambiguation_ambiguous_count") or 0) > 0 and backtrack_count < max_backtrack:
             should_backtrack = True
 
-    # 门控是否通过：不回溯即通过
-    gate_passed = not should_backtrack
+    # 门控是否通过：证据充足且无需回溯
+    gate_passed = sufficient and (not should_backtrack)
 
     return {
         "evidence_items": evidence_items,

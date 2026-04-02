@@ -19,7 +19,49 @@ def _clean_question(text: str) -> str:
     return str(text or "").strip()
 
 
-def build_kg_query_payload(question: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+def _normalize_query_terms(query_terms: list[str] | None) -> list[str]:
+    if not isinstance(query_terms, list):
+        return []
+    seen: set[str] = set()
+    rows: list[str] = []
+    for item in query_terms:
+        token = str(item or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        rows.append(token)
+    return rows
+
+
+def _fallback_query_from_terms(question: str, query_terms: list[str]) -> str:
+    if question:
+        return question
+    if query_terms:
+        return " ".join(query_terms)
+    return ""
+
+
+def _normalize_refine_terms(arguments: dict[str, Any]) -> list[str]:
+    if not isinstance(arguments, dict):
+        return []
+    return _normalize_query_terms(arguments.get("refine_terms") if isinstance(arguments.get("refine_terms"), list) else [])
+
+
+def _append_refine_terms(base_query: str, refine_terms: list[str]) -> str:
+    if not refine_terms:
+        return str(base_query or "").strip()
+    base = str(base_query or "").strip()
+    suffix = " ".join(refine_terms)
+    if not base:
+        return suffix
+    return f"{base} {suffix}".strip()
+
+
+def build_kg_query_payload(
+    question: str,
+    arguments: dict[str, Any] | None = None,
+    query_terms: list[str] | None = None,
+) -> dict[str, Any]:
     """构建 kg_query_payload。
     
     Args:
@@ -32,8 +74,11 @@ def build_kg_query_payload(question: str, arguments: dict[str, Any] | None = Non
     conf = Config()
     q = _clean_question(question)
     args = arguments if isinstance(arguments, dict) else {}
+    terms = _normalize_query_terms(query_terms)
+    refine_terms = _normalize_refine_terms(args)
+    fallback_query = _fallback_query_from_terms(q, terms)
     cypher = str(args.get("cypher") or "").strip()
-    keyword = str(args.get("keyword") or q).strip()
+    keyword = _append_refine_terms(str(args.get("keyword") or fallback_query).strip(), refine_terms)
     list_all_nodes = bool(args.get("list_all_nodes"))
     limit = int(args.get("limit") or conf.KG_RETRIEVAL_TOP_K_DEFAULT)
     limit = max(1, min(limit, conf.KG_RETRIEVAL_TOP_K_MAX))
@@ -50,6 +95,7 @@ def build_kg_query_payload(question: str, arguments: dict[str, Any] | None = Non
 def build_kg_entity_relation_payload(
     question: str,
     arguments: dict[str, Any] | None = None,
+    query_terms: list[str] | None = None,
 ) -> dict[str, Any]:
     """构建 kg_entity_relation_payload。
     
@@ -63,10 +109,13 @@ def build_kg_entity_relation_payload(
     conf = Config()
     q = _clean_question(question)
     args = arguments if isinstance(arguments, dict) else {}
+    terms = _normalize_query_terms(query_terms)
+    refine_terms = _normalize_refine_terms(args)
+    fallback_query = _fallback_query_from_terms(q, terms)
     top_k = int(args.get("top_k") or args.get("limit") or conf.KG_RETRIEVAL_TOP_K_DEFAULT)
     top_k = max(1, min(top_k, conf.KG_RETRIEVAL_TOP_K_MAX))
     payload = {
-        "query": str(args.get("query") or q).strip(),
+        "query": _append_refine_terms(str(args.get("query") or fallback_query).strip(), refine_terms),
         "top_k": top_k,
     }
     optional_fields = [

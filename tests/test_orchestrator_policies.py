@@ -57,6 +57,37 @@ class TestOrchestratorPolicies(unittest.TestCase):
         self.assertIn("结论：", answer.answer)
         self.assertNotIn("{'doc_id'", answer.answer)
 
+    def test_low_value_partial_should_reroute_on_second_round(self) -> None:
+        """comparison 在 partial + 低价值信号时第二轮应触发 reroute。"""
+        task = SubTask(
+            subtask_id=1,
+            target_agent="kg",
+            question="比较复方与单药的疗效和安全性差异",
+            intent="comparison",
+            evidence_type_required=["relation", "text_quote"],
+            must_cover=["疗效差异", "安全性差异"],
+            constraints=SubAgentConstraints(allow_extra_retrieval=False, max_tool_calls=2),
+        )
+        decision = decide_supplement(
+            task=task,
+            round_index=2,
+            max_rounds=2,
+            coverage={
+                "coverage_status": "partial",
+                "missing_points": ["疗效差异"],
+                "binding_insufficient": True,
+                "high_evidence_count": 0,
+                "low_signal": True,
+                "evidence_count": 3,
+            },
+            last_agent="kg",
+            last_no_signal=False,
+        )
+        self.assertTrue(decision.need_supplement)
+        self.assertEqual(decision.supplement_type, "reroute")
+        self.assertEqual(decision.next_agent, "rag")
+        self.assertEqual(decision.reason, "low_value_signal_reroute")
+
 
 if __name__ == "__main__":
     unittest.main()

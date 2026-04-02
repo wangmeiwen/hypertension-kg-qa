@@ -46,17 +46,20 @@ def _resolve_tool_plan(state: KgSubAgentState) -> list[dict[str, Any]]:
     question = str(state.get("input_question") or "").strip()
     arguments_obj = state.get("arguments")
     arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+    query_terms_obj = state.get("query_terms")
+    query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
+    query_terms = [item for item in query_terms if item]
 
     if tool_name in {"kg_query", "kg_entity_relation_search"}:
-        return [{"tool_name": tool_name, "arguments": arguments, "question": question}]
+        return [{"tool_name": tool_name, "arguments": arguments, "question": question, "query_terms": query_terms}]
 
     if tool_name in {"kg_composite", "kg_dual_search"}:
         return [
-            {"tool_name": "kg_entity_relation_search", "arguments": arguments, "question": question},
-            {"tool_name": "kg_query", "arguments": arguments, "question": question},
+            {"tool_name": "kg_entity_relation_search", "arguments": arguments, "question": question, "query_terms": query_terms},
+            {"tool_name": "kg_query", "arguments": arguments, "question": question, "query_terms": query_terms},
         ]
 
-    return [{"tool_name": "kg_entity_relation_search", "arguments": arguments, "question": question}]
+    return [{"tool_name": "kg_entity_relation_search", "arguments": arguments, "question": question, "query_terms": query_terms}]
 
 
 async def node_generate_query_statements(state: KgSubAgentState) -> KgSubAgentState:
@@ -81,11 +84,14 @@ async def node_generate_query_statements(state: KgSubAgentState) -> KgSubAgentSt
         question = str(plan.get("question") or "").strip()
         arguments_obj = plan.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+        query_terms_obj = plan.get("query_terms")
+        query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
+        query_terms = [item for item in query_terms if item]
 
         if tool_name == "kg_query":
-            payload = build_kg_query_payload(question, arguments)
+            payload = build_kg_query_payload(question, arguments, query_terms=query_terms)
         else:
-            payload = build_kg_entity_relation_payload(question, arguments)
+            payload = build_kg_entity_relation_payload(question, arguments, query_terms=query_terms)
 
         payload = validate_generated_payload(tool_name, payload)
         query_statements.append({"tool_name": tool_name, "payload": payload})

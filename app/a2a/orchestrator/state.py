@@ -44,6 +44,6 @@ class OrchestratorState(TypedDict, total=False):
     gate_result: dict[str, Any]
     evidence_gaps: list[str]
     classification: dict[str, Any]
-    decision: dict[str, Any]
+    subtask_decisions: dict[str, dict[str, Any]]
     final_output: dict[str, Any]
     serial_guard: Any

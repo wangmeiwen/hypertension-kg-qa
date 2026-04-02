@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
 from typing import Any
+
+import httpx
 
 from app.backend.repositories.database import fetch_all, fetch_one
 from app.backend.repositories.session_memory_manager import SessionMemoryManager
@@ -20,6 +23,27 @@ from app.backend.services.session_memory_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _log_memory_fail_open(
+    *,
+    operation: str,
+    error: BaseException,
+    session_id: str = "",
+    assistant_message_id: int = 0,
+) -> None:
+    logger.warning(
+        "memory_fail_open %s",
+        json.dumps(
+            {
+                "operation": str(operation or ""),
+                "error_type": type(error).__name__,
+                "session_id": str(session_id or ""),
+                "assistant_message_id": int(assistant_message_id or 0),
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 class SessionMemoryService:
@@ -262,6 +286,9 @@ class SessionMemoryService:
         snapshot: SessionMemorySnapshot,
         messages_delta: list[dict[str, Any]],
         turn_artifacts: dict[str, Any],
+        *,
+        session_id: str = "",
+        assistant_message_id: int = 0,
     ) -> SessionMemorySnapshot:
         if not messages_delta:
             return snapshot
@@ -280,6 +307,8 @@ class SessionMemoryService:
                 previous_retrieval_summary=current_retrieval,
                 messages_delta=batch,
                 turn_artifacts=batch_artifacts,
+                session_id=session_id,
+                assistant_message_id=int(assistant_message_id or 0),
             )
 
             next_summary = self._sanitize_summary((llm_result or {}).get("summary"))
@@ -382,7 +411,8 @@ class SessionMemoryService:
             rebuilt = await self.rebuild_from_messages(session_id)
             return rebuilt
 
-        updated_snapshot = await self._fold_messages(snapshot, delta_messages, {})
+        updated_snapshot = await self._fold_messages(snapshot, delta_messages, {}, session_id=session_id)
+
         await self.save_memory(session_id, updated_snapshot)
         return updated_snapshot
 
@@ -409,10 +439,26 @@ class SessionMemoryService:
                     if isinstance(snapshot.get("retrieval_summary"), dict)
                     else {}
                 ),
+                session_id=session_id,
             )
             resolved_query = self._sanitize_resolved_query(resolved, input_text)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
-            logger.exception("build_runtime_context.resolve_query_failed")
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            httpx.ReadTimeout,
+            httpx.HTTPError,
+            asyncio.TimeoutError,
+        ) as exc:
+            _log_memory_fail_open(
+                operation="resolve_query",
+                error=exc,
+                session_id=session_id,
+            )
             resolved_query = self._build_fallback_resolved_query(str(input_text or ""))
 
         summary = self._sanitize_summary(snapshot.get("summary"))
@@ -470,15 +516,34 @@ class SessionMemoryService:
                 snapshot,
                 delta_messages,
                 turn_artifacts if isinstance(turn_artifacts, dict) else {},
+                session_id=session_id,
+                assistant_message_id=int(assistant_message_id or 0),
             )
             await self.save_memory(session_id, updated_snapshot)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
-            logger.exception("refresh_after_turn_failed")
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            httpx.ReadTimeout,
+            httpx.HTTPError,
+            asyncio.TimeoutError,
+        ) as exc:
+            _log_memory_fail_open(
+                operation="refresh_after_turn",
+                error=exc,
+                session_id=session_id,
+                assistant_message_id=int(assistant_message_id or 0),
+            )
+            return
 
     async def rebuild_from_messages(self, session_id: str) -> SessionMemorySnapshot:
         snapshot = self._empty_snapshot()
         messages = await self._get_messages_after(session_id, 0)
         if messages:
-            snapshot = await self._fold_messages(snapshot, messages, {})
+            snapshot = await self._fold_messages(snapshot, messages, {}, session_id=session_id)
         await self.save_memory(session_id, snapshot)
         return snapshot

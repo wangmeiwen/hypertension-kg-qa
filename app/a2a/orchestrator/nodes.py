@@ -51,6 +51,109 @@ def _unique(rows: list[str]) -> list[str]:
     return output
 
 
+_SUPPORTED_INTENTS = {
+    "direct_answer",
+    "comparison",
+    "conditional",
+    "multi_outcome",
+    "source_locating",
+    "evidence_verification",
+}
+
+
+_INTENT_ALIASES = {
+    "direct": "direct_answer",
+    "qa": "direct_answer",
+    "compare": "comparison",
+    "comaprison": "comparison",
+    "comparision": "comparison",
+    "source": "source_locating",
+    "verification": "evidence_verification",
+    "verify": "evidence_verification",
+    "比较": "comparison",
+    "对比": "comparison",
+    "对照": "comparison",
+    "来源": "source_locating",
+    "原文": "source_locating",
+    "出处": "source_locating",
+    "证据": "evidence_verification",
+    "验证": "evidence_verification",
+    "核实": "evidence_verification",
+}
+
+
+_INTENT_COMPARISON_HINTS = ("compare", "comparison", "vs", "versus", "比较", "对比", "相比", "差异", "优于", "劣于")
+_INTENT_SOURCE_HINTS = ("source", "citation", "quote", "原文", "出处", "来源", "文献", "引用")
+_INTENT_VERIFY_HINTS = ("verify", "verification", "evidence", "核实", "验证", "求证", "证据")
+
+
+def _normalize_intent(intent: str) -> str:
+    token = str(intent or "").strip().lower()
+    if token in _SUPPORTED_INTENTS:
+        return token
+    if token in _INTENT_ALIASES:
+        return _INTENT_ALIASES[token]
+    if any(hint in token for hint in _INTENT_COMPARISON_HINTS):
+        return "comparison"
+    if any(hint in token for hint in _INTENT_SOURCE_HINTS):
+        return "source_locating"
+    if any(hint in token for hint in _INTENT_VERIFY_HINTS):
+        return "evidence_verification"
+    return "direct_answer"
+
+
+def _normalize_tool_result_payload(row: dict[str, Any]) -> dict[str, Any]:
+    result_obj = row.get("result")
+    result = result_obj if isinstance(result_obj, dict) else {}
+    meta_obj = row.get("meta")
+    meta = meta_obj if isinstance(meta_obj, dict) else {}
+    return {
+        "ok": bool(row.get("ok")),
+        "result": result,
+        "error": str(row.get("error") or ""),
+        "meta": meta,
+    }
+
+
+def _build_gate_traces_from_tool_results(task: SubTask, tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    traces: list[dict[str, Any]] = []
+    for row in tool_results:
+        if not isinstance(row, dict):
+            continue
+        traces.append(
+            {
+                "action": "subquery_parallel_call",
+                "subquery": str(task.question or "").strip(),
+                "subquery_id": int(task.subtask_id),
+                "turn": max(1, int(task.attempt_count or 1)),
+                "tool_name": str(row.get("tool_name") or task.tool_name or "").strip(),
+                "agent": str(task.target_agent or "").strip(),
+                "result": _normalize_tool_result_payload(row),
+            }
+        )
+    return traces
+
+
+def _coerce_observations_to_gate_traces(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    traces: list[dict[str, Any]] = []
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        if isinstance(row.get("result"), dict) and str(row.get("action") or "").strip():
+            traces.append(row)
+            continue
+        if {"ok", "result", "tool_name"}.issubset(set(row.keys())):
+            traces.append(
+                {
+                    "action": "call_tool",
+                    "tool_name": str(row.get("tool_name") or "").strip(),
+                    "turn": 0,
+                    "result": _normalize_tool_result_payload(row),
+                }
+            )
+    return traces
+
+
 async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["retrieval_round"] = int(state.get("retrieval_round") or 0)
     state["pending_subtasks"] = state.get("pending_subtasks") if isinstance(state.get("pending_subtasks"), list) else []
@@ -73,6 +176,7 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["gate_result"] = state.get("gate_result") if isinstance(state.get("gate_result"), dict) else {}
     state["evidence_gaps"] = state.get("evidence_gaps") if isinstance(state.get("evidence_gaps"), list) else []
     state["classification"] = state.get("classification") if isinstance(state.get("classification"), dict) else {}
+    state["subtask_decisions"] = state.get("subtask_decisions") if isinstance(state.get("subtask_decisions"), dict) else {}
 
     resolved_query_obj = state.get("resolved_query")
     resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
@@ -96,9 +200,12 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     if not preferred_sources:
         preferred_sources = ["kg"]
 
+    raw_intent = str(resolved_query.get("intent") or "direct_answer").strip()
+    normalized_intent = _normalize_intent(raw_intent)
+
     state["resolved_query"] = {
         "standalone_question": standalone_question,
-        "intent": str(resolved_query.get("intent") or "direct_answer").strip() or "direct_answer",
+        "intent": normalized_intent,
         "subqueries": subqueries,
         "must_cover": [str(item or "").strip() for item in (resolved_query.get("must_cover") if isinstance(resolved_query.get("must_cover"), list) else []) if str(item or "").strip()],
         "entities": [str(item or "").strip() for item in (resolved_query.get("entities") if isinstance(resolved_query.get("entities"), list) else []) if str(item or "").strip()],
@@ -112,6 +219,15 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["original_input_text"] = str(state.get("original_input_text") or state.get("input_text") or "").strip()
     if standalone_question:
         state["input_text"] = standalone_question
+
+    if raw_intent and raw_intent != normalized_intent:
+        _append_step(state, f"意图归一: {raw_intent} -> {normalized_intent}")
+        _append_event(
+            state,
+            "intent_normalized",
+            f"non_standard_intent:{raw_intent}",
+            {"raw_intent": raw_intent, "normalized_intent": normalized_intent},
+        )
 
     _append_step(state, "解析输入并初始化任务驱动状态")
     return state
@@ -184,7 +300,7 @@ async def node_call_subagent_serial(
         state.get("last_subagent_result") if isinstance(state.get("last_subagent_result"), dict) else {},
     )
     task.target_agent = "rag" if selected_agent == "rag" else "kg"
-    task.tool_name = "rag_search" if task.target_agent == "rag" else task.tool_name
+    task.tool_name = "rag_search" if task.target_agent == "rag" else "kg_entity_relation_search"
 
     attempts = state.get("attempt_counters") if isinstance(state.get("attempt_counters"), dict) else {}
     key = str(task.subtask_id)
@@ -198,7 +314,14 @@ async def node_call_subagent_serial(
     if isinstance(query_hints.get(key), dict):
         hint = query_hints[key]
         if hint.get("missing_points") and isinstance(hint.get("missing_points"), list):
-            task.query_terms = _unique([*task.query_terms, *[str(x) for x in hint.get("missing_points")]])
+            refine_terms = _unique([str(x) for x in hint.get("missing_points")])
+            task.query_terms = _unique([*task.query_terms, *refine_terms])
+            task.arguments = {
+                **(task.arguments if isinstance(task.arguments, dict) else {}),
+                "refine_terms": refine_terms,
+            }
+
+    state["current_subtask"] = task.model_dump()
 
     guard_raw = state.get("serial_guard")
     guard = guard_raw if isinstance(guard_raw, asyncio.Semaphore) else asyncio.Semaphore(1)
@@ -252,6 +375,9 @@ async def node_merge_evidence(state: OrchestratorState) -> OrchestratorState:
     state["evidence_bundle"] = bundle.model_dump()
 
     coverage = evaluate_task_coverage(task, evidence_rows)
+    coverage["binding_insufficient"] = bool(coverage.get("binding_insufficient"))
+    coverage["high_evidence_count"] = int(coverage.get("high_evidence_count") or 0)
+    coverage["low_signal"] = bool(coverage.get("low_signal"))
     coverage_map = state.get("coverage_map") if isinstance(state.get("coverage_map"), dict) else {}
     coverage_map[str(task.subtask_id)] = coverage
     state["coverage_map"] = coverage_map
@@ -261,6 +387,11 @@ async def node_merge_evidence(state: OrchestratorState) -> OrchestratorState:
         "task": task.model_dump(),
         "result": result_raw,
         "coverage": coverage,
+        "signal_flags": {
+            "binding_insufficient": bool(coverage.get("binding_insufficient")),
+            "high_evidence_count": int(coverage.get("high_evidence_count") or 0),
+            "low_signal": bool(coverage.get("low_signal")),
+        },
     }
     state["subtask_results"] = subtask_results
 
@@ -280,8 +411,9 @@ async def node_merge_evidence(state: OrchestratorState) -> OrchestratorState:
     tool_results_obj = result_raw.get("tool_results")
     tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
     observations = state.get("tool_observations") if isinstance(state.get("tool_observations"), list) else []
-    observations.extend(tool_results)
-    state["tool_observations"] = observations
+    traces = _build_gate_traces_from_tool_results(task, tool_results)
+    observations.extend(traces)
+    state["tool_observations"] = _coerce_observations_to_gate_traces(observations)
 
     if bool(result_raw.get("no_signal")):
         state["no_signal_streak"] = int(state.get("no_signal_streak") or 0) + 1
@@ -303,7 +435,6 @@ async def node_decide_supplement(state: OrchestratorState) -> OrchestratorState:
     current_raw = state.get("current_subtask")
     result_raw = state.get("last_subagent_result")
     if not isinstance(current_raw, dict) or not isinstance(result_raw, dict):
-        state["decision"] = {}
         return state
 
     task = SubTask.model_validate(current_raw)
@@ -322,7 +453,16 @@ async def node_decide_supplement(state: OrchestratorState) -> OrchestratorState:
         last_agent=str(result_raw.get("target_agent") or task.target_agent),
         last_no_signal=bool(result_raw.get("no_signal")),
     )
-    state["decision"] = decision.model_dump()
+
+    decision_rows = state.get("subtask_decisions") if isinstance(state.get("subtask_decisions"), dict) else {}
+    key = str(task.subtask_id)
+    decision_rows[key] = {
+        "need_supplement": bool(decision.need_supplement),
+        "next_agent": str(decision.next_agent or ""),
+        "query_hint": decision.query_hint if isinstance(decision.query_hint, dict) else {},
+        "subtask_stop_reason": str(decision.reason or ""),
+    }
+    state["subtask_decisions"] = decision_rows
 
     if decision.need_supplement:
         next_task = task.model_copy(deep=True)
@@ -358,7 +498,9 @@ async def node_decide_supplement(state: OrchestratorState) -> OrchestratorState:
 
 
 async def node_assess_answerability(state: OrchestratorState) -> OrchestratorState:
-    traces = state.get("tool_observations") if isinstance(state.get("tool_observations"), list) else []
+    observations = state.get("tool_observations") if isinstance(state.get("tool_observations"), list) else []
+    traces = _coerce_observations_to_gate_traces(observations)
+    state["tool_observations"] = traces
     classification = state.get("classification") if isinstance(state.get("classification"), dict) else {}
     evidence_bundle = state.get("evidence_bundle") if isinstance(state.get("evidence_bundle"), dict) else {}
 
@@ -375,13 +517,9 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
     )
     state["gate_result"] = gate_result
 
-    decision_obj = state.get("decision") if isinstance(state.get("decision"), dict) else {}
-    round_stop_reason = str(decision_obj.get("reason") or "")
-
     answerability = assess_answerability(
         gate_result=gate_result,
         coverage_map=state.get("coverage_map") if isinstance(state.get("coverage_map"), dict) else {},
-        round_stop_reason=round_stop_reason,
     )
     state["answerability"] = answerability
 

@@ -19,7 +19,7 @@ from pathlib import Path
 import logging
 from collections import defaultdict
 import threading
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 # 首先加载环境变量，确保后续模块能读取到配置
 from dotenv import load_dotenv
@@ -106,6 +106,15 @@ _rate_limiter: Optional[InMemorySlidingWindowRateLimiter] = None
 _session_memory_service: Optional[SessionMemoryService] = None
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "1" if default else "0")).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 @asynccontextmanager
 async def _app_lifespan(_: FastAPI):
     """应用生命周期（替代 on_event）。"""
@@ -128,6 +137,19 @@ async def _app_lifespan(_: FastAPI):
     else:
         print("⚠ 检测到部分数据库未启动，请手动启动后再使用相关功能")
     print("=" * 50 + "\n")
+
+    print("正在预热共享检索资源...")
+    try:
+        with log_duration("startup.prewarm_vector_store"):
+            get_shared_vector_store()
+        kg_store = get_shared_kg_milvus_store()
+        if _env_bool("KG_ENTITY_RELATION_PRELOAD_EMBEDDER", True):
+            with log_duration("startup.prewarm_kg_embedder"):
+                kg_store.ensure_embedder_loaded()
+        print("✓ 共享检索资源预热完成")
+    except Exception as exc:
+        _log_api_error("startup", "retrieval_prewarm", exc)
+        print(f"⚠ 共享检索资源预热失败: {exc}")
 
     print("正在初始化 MCP 服务...")
     try:
@@ -1214,7 +1236,7 @@ async def _run_evaluator_a2a_query(
         is_degraded=is_degraded,
     )
     gate_passed = bool(gate_result.get("gate_passed"))
-    note = "证据门控通过，可终答" if gate_passed else "证据门控未通过，建议补检索"
+    note = "证据门控通过，可终答" if gate_passed else "证据仍不足或需补检索"
     if progress_callback is not None:
         progress_callback(
             {
@@ -1230,6 +1252,7 @@ async def _run_evaluator_a2a_query(
         "evaluator_result": gate_result,
         "telemetry": {
             "gate_passed": gate_passed,
+            "sufficient": bool(gate_result.get("sufficient")),
             "should_backtrack": bool(gate_result.get("should_backtrack")),
             "evidence_count": int(gate_result.get("evidence_count") or 0),
             "conflict_count": int(gate_result.get("conflict_count") or 0),
@@ -1491,6 +1514,40 @@ async def _ensure_core_ready(endpoint: str) -> Optional[JSONResponse]:
     )
 
 
+async def _wrap_stream_body_iterator(
+    body_iterator: Any,
+    on_close: Callable[[str], Any],
+) -> AsyncIterator[bytes]:
+    """包装 StreamingResponse body_iterator，确保结束时回调统一收口。"""
+    stream_error_type = ""
+    try:
+        if hasattr(body_iterator, "__aiter__"):
+            async for chunk in body_iterator:
+                yield chunk
+        else:
+            for chunk in body_iterator:
+                yield chunk
+    except BaseException as exc:
+        stream_error_type = type(exc).__name__
+        raise
+    finally:
+        callback_ret = on_close(stream_error_type)
+        if inspect.isawaitable(callback_ret):
+            await callback_ret
+
+
+def _resolve_api_session_user(request: Request) -> Dict[str, str]:
+    """解析接口日志身份信息，优先使用 request.state。"""
+    state_session_id = str(getattr(request.state, "session_id", "") or "")
+    state_user_id = str(getattr(request.state, "user_id", "") or "")
+    query_session_id = str(request.query_params.get("session_id") or "")
+    query_user_id = str(request.query_params.get("user_id") or "")
+    return {
+        "session_id": state_session_id or query_session_id,
+        "user_id": state_user_id or query_user_id,
+    }
+
+
 @app.middleware("http")
 async def request_timing_middleware(request: Request, call_next):
     """记录请求耗时与链路上下文。
@@ -1511,6 +1568,47 @@ async def request_timing_middleware(request: Request, call_next):
     started = time.perf_counter()
     status_code = 500
     error_type = ""
+    ttfb_ms = 0.0
+    logged = False
+    is_streaming_response = False
+    client_ip = request.client.host if request.client else ""
+    request_timer_ctx = log_duration("http_request", method=request.method, path=request.url.path)
+    request_timer_ctx.__enter__()
+    request_timer_closed = False
+
+    def _finish_request_timer(exc: Optional[BaseException] = None) -> None:
+        nonlocal request_timer_closed
+        if request_timer_closed:
+            return
+        request_timer_closed = True
+        if exc is None:
+            request_timer_ctx.__exit__(None, None, None)
+            return
+        request_timer_ctx.__exit__(type(exc), exc, exc.__traceback__)
+
+    async def _log_stream_finished(stream_error_type: str) -> None:
+        nonlocal logged
+        if logged:
+            _finish_request_timer()
+            return
+        stream_total_ms = (time.perf_counter() - started) * 1000
+        identity = _resolve_api_session_user(request)
+        log_api_call(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=status_code,
+            is_streaming=True,
+            ttfb_ms=ttfb_ms,
+            stream_total_ms=stream_total_ms,
+            client_ip=client_ip,
+            session_id=identity["session_id"],
+            user_id=identity["user_id"],
+            error_type=stream_error_type or error_type,
+        )
+        logged = True
+        _finish_request_timer()
+
     try:
         set_trace_metadata(
             {
@@ -1521,28 +1619,61 @@ async def request_timing_middleware(request: Request, call_next):
             },
             tags=["api"],
         )
-        with log_duration("http_request", method=request.method, path=request.url.path):
-            response = await call_next(request)
+        response = await call_next(request)
         response.headers["X-Trace-Id"] = request_id
         status_code = int(response.status_code)
-        return response
-    except Exception as exc:
-        error_type = type(exc).__name__
-        raise
-    finally:
-        duration_ms = (time.perf_counter() - started) * 1000
-        client_ip = request.client.host if request.client else ""
+
+        ttfb_ms = (time.perf_counter() - started) * 1000
+        if isinstance(response, StreamingResponse):
+            response.body_iterator = _wrap_stream_body_iterator(
+                response.body_iterator,
+                _log_stream_finished,
+            )
+            is_streaming_response = True
+            return response
+
+        identity = _resolve_api_session_user(request)
         log_api_call(
             request_id=request_id,
             method=request.method,
             path=request.url.path,
             status_code=status_code,
-            duration_ms=duration_ms,
+            is_streaming=False,
+            ttfb_ms=ttfb_ms,
+            stream_total_ms=ttfb_ms,
             client_ip=client_ip,
-            session_id=str(request.query_params.get("session_id") or ""),
-            user_id=str(request.query_params.get("user_id") or ""),
+            session_id=identity["session_id"],
+            user_id=identity["user_id"],
             error_type=error_type,
         )
+        logged = True
+        _finish_request_timer()
+        return response
+    except Exception as exc:
+        error_type = type(exc).__name__
+        if not logged:
+            stream_total_ms = (time.perf_counter() - started) * 1000
+            fallback_ttfb = ttfb_ms if ttfb_ms > 0.0 else stream_total_ms
+            identity = _resolve_api_session_user(request)
+            log_api_call(
+                request_id=request_id,
+                method=request.method,
+                path=request.url.path,
+                status_code=status_code,
+                is_streaming=False,
+                ttfb_ms=fallback_ttfb,
+                stream_total_ms=stream_total_ms,
+                client_ip=client_ip,
+                session_id=identity["session_id"],
+                user_id=identity["user_id"],
+                error_type=error_type,
+            )
+            logged = True
+        _finish_request_timer(exc)
+        raise
+    finally:
+        if not is_streaming_response:
+            _finish_request_timer()
         reset_current_admin_token(token_handle)
         reset_request_context(request_token)
 
@@ -3065,6 +3196,9 @@ async def process_with_session(data: dict, request: Request):
     if not user_id:
         user_id = str(uuid.uuid4())
 
+    request.state.user_id = str(user_id)
+    request.state.session_id = str(session_id or "")
+
     set_trace_metadata(
         {
             "trace_id": trace_id,
@@ -3092,6 +3226,7 @@ async def process_with_session(data: dict, request: Request):
             input_text[:30] + "..." if len(input_text) > 30 else input_text,
         )
         session_id = session["id"]
+        request.state.session_id = str(session_id)
     else:
         session = await _await_call(SessionManager.get_session, session_id)
         if not session or str(session.get("user_id") or "") != user_id:
@@ -3160,61 +3295,170 @@ async def generate_data_with_session(
     done_processing_steps: List[str] = []
     done_tool_observations: List[Dict[str, Any]] = []
     done_evidence_summary: Dict[str, Any] = {}
+    assistant_message_persisted = False
+    assistant_message_id = 0
+    memory_refresh_scheduled = False
+    done_emitted = False
 
-    async for msg in _generate_a2a_stream_events(
-        input_text=input_text,
-        user_id=user_id,
-        session_id=session_id,
-        request_id=request_id,
-        original_input_text=original_input_text,
-        resolved_query=resolved_query,
-        memory_context=memory_context,
-    ):
-        if msg.get("type") == "reply":
-            full_reply += msg.get("msg", "")
-        elif msg.get("type") == "msg":
-            full_think += msg.get("msg", "")
-        elif msg.get("type") == "done":
-            done_status = str(msg.get("status") or "done")
-            processing_steps_obj = msg.get("processing_steps")
-            if isinstance(processing_steps_obj, list):
-                done_processing_steps = [str(item or "") for item in processing_steps_obj]
-            tool_observations_obj = msg.get("tool_observations")
-            if isinstance(tool_observations_obj, list):
-                done_tool_observations = [
-                    item if isinstance(item, dict) else {"raw": str(item or "")}
-                    for item in tool_observations_obj
-                ]
-            evidence_summary_obj = msg.get("evidence_summary")
-            if isinstance(evidence_summary_obj, dict):
-                done_evidence_summary = evidence_summary_obj
+    async def persist_assistant_message_once() -> int:
+        nonlocal assistant_message_persisted, assistant_message_id
+        if assistant_message_persisted:
+            return int(assistant_message_id or 0)
+        if not full_reply:
+            return 0
+        assistant_message = await _await_call(
+            MessageManager.add_message,
+            session_id,
+            "assistant",
+            full_reply,
+            full_think,
+        )
+        assistant_message_id = int((assistant_message or {}).get("id") or 0)
+        assistant_message_persisted = assistant_message_id > 0
+        return int(assistant_message_id or 0)
 
-        if msg.get("type") == "done" and not full_reply:
-            full_reply = str(msg.get("msg") or "").strip()
-        
-        yield json.dumps(msg, ensure_ascii=False) + "\n"
+    def schedule_memory_refresh(persisted_assistant_message_id: int) -> None:
+        nonlocal memory_refresh_scheduled
+        if memory_refresh_scheduled or int(persisted_assistant_message_id or 0) <= 0:
+            return
 
-        if msg.get("type") == "done":
-            if done_status == "done" and full_reply:
-                assistant_message = await _await_call(
-                    MessageManager.add_message,
-                    session_id,
-                    "assistant",
-                    full_reply,
-                    full_think,
+        turn_artifacts = {
+            "processing_steps": done_processing_steps,
+            "tool_observations": done_tool_observations,
+            "evidence_summary": done_evidence_summary,
+            "assistant_reply": full_reply,
+        }
+
+        async def _refresh_memory_task() -> None:
+            await _await_call(
+                get_session_memory_service().refresh_after_turn,
+                session_id,
+                int(persisted_assistant_message_id or 0),
+                turn_artifacts,
+            )
+
+        def _on_refresh_done(task: asyncio.Task) -> None:
+            try:
+                task.result()
+            except Exception as exc:
+                _log_api_error(
+                    "/process_with_session",
+                    "memory_refresh_failed",
+                    exc,
+                    session_id=session_id,
+                    user_id=user_id,
+                    assistant_message_id=int(persisted_assistant_message_id or 0),
+                    request_id=request_id,
                 )
-                await _await_call(
-                    get_session_memory_service().refresh_after_turn,
-                    session_id,
-                    int((assistant_message or {}).get("id") or 0),
-                    {
-                        "processing_steps": done_processing_steps,
-                        "tool_observations": done_tool_observations,
-                        "evidence_summary": done_evidence_summary,
-                        "assistant_reply": full_reply,
-                    },
+
+        try:
+            refresh_task = asyncio.create_task(
+                _refresh_memory_task(),
+                name=f"memory-refresh-{session_id}-{persisted_assistant_message_id}",
+            )
+            refresh_task.add_done_callback(_on_refresh_done)
+            memory_refresh_scheduled = True
+        except Exception as exc:
+            _log_api_error(
+                "/process_with_session",
+                "memory_refresh_schedule_failed",
+                exc,
+                session_id=session_id,
+                user_id=user_id,
+                assistant_message_id=int(persisted_assistant_message_id or 0),
+                request_id=request_id,
+            )
+
+    try:
+        async for msg in _generate_a2a_stream_events(
+            input_text=input_text,
+            user_id=user_id,
+            session_id=session_id,
+            request_id=request_id,
+            original_input_text=original_input_text,
+            resolved_query=resolved_query,
+            memory_context=memory_context,
+        ):
+            if msg.get("type") == "reply":
+                full_reply += msg.get("msg", "")
+            elif msg.get("type") == "msg":
+                full_think += msg.get("msg", "")
+            elif msg.get("type") == "done":
+                done_status = str(msg.get("status") or "done")
+                processing_steps_obj = msg.get("processing_steps")
+                if isinstance(processing_steps_obj, list):
+                    done_processing_steps = [str(item or "") for item in processing_steps_obj]
+                tool_observations_obj = msg.get("tool_observations")
+                if isinstance(tool_observations_obj, list):
+                    done_tool_observations = [
+                        item if isinstance(item, dict) else {"raw": str(item or "")}
+                        for item in tool_observations_obj
+                    ]
+                evidence_summary_obj = msg.get("evidence_summary")
+                if isinstance(evidence_summary_obj, dict):
+                    done_evidence_summary = evidence_summary_obj
+
+            if msg.get("type") == "done" and not full_reply:
+                full_reply = str(msg.get("msg") or "").strip()
+
+            yield json.dumps(msg, ensure_ascii=False) + "\n"
+
+            if msg.get("type") == "done":
+                done_emitted = True
+                if done_status == "done" and full_reply:
+                    try:
+                        persisted_id = await persist_assistant_message_once()
+                        if persisted_id > 0:
+                            schedule_memory_refresh(persisted_id)
+                    except Exception as exc:
+                        _log_api_error(
+                            "/process_with_session",
+                            "assistant_persist_failed_after_done",
+                            exc,
+                            session_id=session_id,
+                            user_id=user_id,
+                            request_id=request_id,
+                            done_emitted=done_emitted,
+                        )
+                break
+    except asyncio.CancelledError as exc:
+        done_status = "cancelled"
+        _log_api_error(
+            "/process_with_session",
+            "generate_data_with_session_cancelled",
+            exc,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        raise
+    except Exception as exc:
+        done_status = "error"
+        _log_api_error(
+            "/process_with_session",
+            "generate_data_with_session_exception",
+            exc,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        if not done_emitted:
+            yield json.dumps({"type": "done", "status": "error", "msg": "流式输出异常终止"}, ensure_ascii=False) + "\n"
+            done_emitted = True
+    finally:
+        if full_reply and not assistant_message_persisted:
+            try:
+                persisted_id = await persist_assistant_message_once()
+                if persisted_id > 0:
+                    schedule_memory_refresh(persisted_id)
+            except Exception as exc:
+                _log_api_error(
+                    "/process_with_session",
+                    "persist_assistant_turn_finally",
+                    exc,
+                    session_id=session_id,
+                    user_id=user_id,
+                    request_id=request_id,
+                    done_emitted=done_emitted,
                 )
-            break
 
 
 @app.post("/qa/jobs/{job_id}/cancel")

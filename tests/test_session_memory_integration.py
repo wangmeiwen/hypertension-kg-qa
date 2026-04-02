@@ -5,13 +5,18 @@ import json
 import unittest
 from datetime import datetime
 from typing import Any
+from unittest.mock import patch
 
+import httpx
+
+from app.backend.services.session_memory_llm import SessionMemoryLLM
 from app.backend.services.session_memory_service import SessionMemoryService
 
 
 class _IntegrationLLM:
     def __init__(self) -> None:
         self.fail_next_summarize = False
+        self.fail_exception: BaseException | None = None
 
     async def resolve_query(self, **kwargs):
         input_text = str(kwargs.get("input_text") or "").strip()
@@ -39,6 +44,11 @@ class _IntegrationLLM:
         }
 
     async def summarize_turn(self, **kwargs):
+        if self.fail_exception is not None:
+            exc = self.fail_exception
+            self.fail_exception = None
+            raise exc
+
         if self.fail_next_summarize:
             self.fail_next_summarize = False
             raise RuntimeError("summarize_failed")
@@ -280,6 +290,86 @@ class TestSessionMemoryIntegration(unittest.TestCase):
         self.assertEqual(int(((payload.get("memory_context") or {}).get("last_message_id") or 0)), user_2)
         self.assertEqual(int(snapshot_after_compensate.get("summary", {}).get("last_message_id") or 0), user_2)
         self.assertIn("ACEI", " ".join(snapshot_after_compensate.get("summary", {}).get("confirmed_facts", [])))
+
+    def test_refresh_after_turn_should_fail_open_on_timeout_types(self) -> None:
+        session_id = "s-timeout-fail-open"
+
+        user_1 = self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        self._run(self.service.build_runtime_context(session_id, "ACEI 和 ARB 联用推荐吗", user_1))
+        assistant_1 = self._add_message(session_id, "assistant", "一般不推荐 ACEI 与 ARB 联用。")
+
+        timeout_errors = [
+            httpx.ReadTimeout("memory-timeout"),
+            asyncio.TimeoutError(),
+        ]
+        for timeout_error in timeout_errors:
+            self.llm.fail_exception = timeout_error
+            self._run(self.service.refresh_after_turn(session_id, assistant_1, {}))
+
+        snapshot_after_fail = self._run(self.service.load_memory(session_id))
+        self.assertEqual(int(snapshot_after_fail.get("summary", {}).get("last_message_id") or 0), user_1)
+
+        user_2 = self._add_message(session_id, "user", "那老年人呢")
+        payload = self._run(self.service.build_runtime_context(session_id, "那老年人呢", user_2))
+        snapshot_after_compensate = self._run(self.service.load_memory(session_id))
+
+        self.assertEqual(int(((payload.get("memory_context") or {}).get("last_message_id") or 0)), user_2)
+        self.assertEqual(int(snapshot_after_compensate.get("summary", {}).get("last_message_id") or 0), user_2)
+
+    def test_summarize_turn_fail_open_log_should_include_session_and_message_context(self) -> None:
+        class _TimeoutClient:
+            async def chat_with_tokens_async(self, **kwargs):
+                _ = kwargs
+                raise httpx.ReadTimeout("timeout")
+
+        llm = SessionMemoryLLM(llm_client=_TimeoutClient())
+        with patch("app.backend.services.session_memory_llm.logger.warning") as warning_mock:
+            result = self._run(
+                llm.summarize_turn(
+                    previous_summary={"version": 1, "last_message_id": 1},
+                    previous_retrieval_summary={"version": 1, "last_message_id": 1},
+                    messages_delta=[],
+                    turn_artifacts={},
+                    session_id="s-log-1",
+                    assistant_message_id=88,
+                )
+            )
+
+        self.assertIsInstance(result, dict)
+        self.assertGreaterEqual(warning_mock.call_count, 1)
+        payload_json = str(warning_mock.call_args_list[0][0][1] or "{}")
+        payload = json.loads(payload_json)
+        self.assertEqual(str(payload.get("operation") or ""), "summarize_turn")
+        self.assertEqual(str(payload.get("session_id") or ""), "s-log-1")
+        self.assertEqual(int(payload.get("assistant_message_id") or 0), 88)
+        self.assertEqual(str(payload.get("error_type") or ""), "ReadTimeout")
+
+    def test_resolve_query_fail_open_log_should_include_session_context(self) -> None:
+        class _TimeoutClient:
+            async def chat_with_tokens_async(self, **kwargs):
+                _ = kwargs
+                raise asyncio.TimeoutError()
+
+        llm = SessionMemoryLLM(llm_client=_TimeoutClient())
+        with patch("app.backend.services.session_memory_llm.logger.warning") as warning_mock:
+            result = self._run(
+                llm.resolve_query(
+                    input_text="那老年人呢",
+                    recent_messages=[],
+                    summary={},
+                    retrieval_summary={},
+                    session_id="s-log-2",
+                )
+            )
+
+        self.assertEqual(str(result.get("standalone_question") or ""), "那老年人呢")
+        self.assertGreaterEqual(warning_mock.call_count, 1)
+        payload_json = str(warning_mock.call_args_list[0][0][1] or "{}")
+        payload = json.loads(payload_json)
+        self.assertEqual(str(payload.get("operation") or ""), "resolve_query")
+        self.assertEqual(str(payload.get("session_id") or ""), "s-log-2")
+        self.assertEqual(int(payload.get("assistant_message_id") or 0), 0)
+        self.assertEqual(str(payload.get("error_type") or ""), "TimeoutError")
 
 
 if __name__ == "__main__":

@@ -496,121 +496,125 @@ class VectorStore:
         with log_duration("milvus.hybrid_search_with_rerank", k=k, source_filter=source_filter):
             with log_duration("milvus.embed_query"):
                 query_embeddings = self.embedding_function([query])
-        # 获取查询的稠密向量
-        dense_query_vector = _to_float32_vector(query_embeddings["dense"][0], self.dense_dim)
-        # 初始化查询的稀疏向量字典
-        sparse_query_vector = {}
-        # 获取查询稀疏向量的第 0 行数据
-        # 兼容新旧版本 scipy: csr_matrix 和 csr_array
-        sparse_emb = query_embeddings["sparse"]
-        if hasattr(sparse_emb, 'getrow'):
-            row = sparse_emb.getrow(0)
-        else:
-            # 新版本 scipy 使用 csr_array，直接用索引访问
-            row = sparse_emb[0]
-        # 确保 row 是一维的
-        if hasattr(row, 'toarray'):
-            row = row.toarray().flatten()
-        # 获取稀疏向量的非零值索引
-        if hasattr(row, 'indices'):
-            indices = row.indices
-            values = row.data
-        else:
-            # 如果是普通数组，找出非零元素
-            indices = row.nonzero()[0] if hasattr(row, 'nonzero') else [j for j, v in enumerate(row) if v != 0]
-            values = [row[j] for j in indices] if not hasattr(row, 'nonzero') else row[row.nonzero()[0]]
-        # 将索引和值配对，填充稀疏向量字典
-        for idx, value in zip(indices, values):
-            sparse_query_vector[idx] = value
-        # 初始化过滤表达式，默认不过滤
-        filter_expr = f"source == '{source_filter}'" if source_filter else ""
-        dense_field = "dense_vector" if "dense_vector" in self.collection_fields else ("embedding" if "embedding" in self.collection_fields else None)
-        sparse_enabled = "sparse_vector" in self.collection_fields
-        if dense_field is None:
-            raise ValueError(f"集合 {self.collection_name} 缺少可用向量字段")
-        dense_metric = "IP" if dense_field == "dense_vector" else "COSINE"
 
-        if not sparse_enabled:
-            with log_duration("milvus.search_dense_only", limit=k):
-                results = self._search_with_params(
+            # 获取查询的稠密向量
+            dense_query_vector = _to_float32_vector(query_embeddings["dense"][0], self.dense_dim)
+            # 初始化查询的稀疏向量字典
+            sparse_query_vector = {}
+            # 获取查询稀疏向量的第 0 行数据
+            # 兼容新旧版本 scipy: csr_matrix 和 csr_array
+            sparse_emb = query_embeddings["sparse"]
+            if hasattr(sparse_emb, 'getrow'):
+                row = sparse_emb.getrow(0)
+            else:
+                # 新版本 scipy 使用 csr_array，直接用索引访问
+                row = sparse_emb[0]
+            # 确保 row 是一维的
+            if hasattr(row, 'toarray'):
+                row = row.toarray().flatten()
+            # 获取稀疏向量的非零值索引
+            if hasattr(row, 'indices'):
+                indices = row.indices
+                values = row.data
+            else:
+                # 如果是普通数组，找出非零元素
+                indices = row.nonzero()[0] if hasattr(row, 'nonzero') else [j for j, v in enumerate(row) if v != 0]
+                values = [row[j] for j in indices] if not hasattr(row, 'nonzero') else row[row.nonzero()[0]]
+            # 将索引和值配对，填充稀疏向量字典
+            for idx, value in zip(indices, values):
+                sparse_query_vector[idx] = value
+            # 初始化过滤表达式，默认不过滤
+            filter_expr = f"source == '{source_filter}'" if source_filter else ""
+            dense_field = "dense_vector" if "dense_vector" in self.collection_fields else ("embedding" if "embedding" in self.collection_fields else None)
+            sparse_enabled = "sparse_vector" in self.collection_fields
+            if dense_field is None:
+                raise ValueError(f"集合 {self.collection_name} 缺少可用向量字段")
+            dense_metric = "IP" if dense_field == "dense_vector" else "COSINE"
+
+            if not sparse_enabled:
+                with log_duration("milvus.search_dense", mode="dense_only", limit=k):
+                    results = self._search_with_params(
+                        search_kwargs={
+                            "collection_name": self.collection_name,
+                            "data": [dense_query_vector],
+                            "anns_field": dense_field,
+                            "limit": k,
+                            "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
+                            "filter": filter_expr,
+                        },
+                        search_params={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
+                    )[0]
+                sub_chunks = [self._doc_from_hit(hit["entity"]) for hit in results]
+                parent_docs = self._get_unique_parent_docs(sub_chunks)
+                if len(parent_docs) < 2:
+                    return parent_docs[:conf.CANDIDATE_M]
+                pairs = [[query, doc.page_content] for doc in parent_docs]
+                with log_duration("milvus.rerank", pairs=len(pairs)):
+                    scores = self.reranker.predict(pairs)
+                ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
+                return ranked_parent_docs[:conf.CANDIDATE_M]
+
+            # 使用 RRF 算法：分别执行两次检索，然后融合结果
+            logger.info("使用 RRF 算法融合检索结果")
+
+            with log_duration("milvus.search_dense", mode="rrf", limit=k * int(conf.RAG_DENSE_RECALL_MULTIPLIER)):
+                dense_results = self._search_with_params(
                     search_kwargs={
                         "collection_name": self.collection_name,
                         "data": [dense_query_vector],
                         "anns_field": dense_field,
-                        "limit": k,
+                        "limit": k * int(conf.RAG_DENSE_RECALL_MULTIPLIER),
                         "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
                         "filter": filter_expr,
                     },
                     search_params={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
                 )[0]
-            sub_chunks = [self._doc_from_hit(hit["entity"]) for hit in results]
+
+            with log_duration("milvus.search_sparse", mode="rrf", limit=k * int(conf.RAG_SPARSE_RECALL_MULTIPLIER)):
+                sparse_results = self._search_with_params(
+                    search_kwargs={
+                        "collection_name": self.collection_name,
+                        "data": [sparse_query_vector],
+                        "anns_field": "sparse_vector",
+                        "limit": k * int(conf.RAG_SPARSE_RECALL_MULTIPLIER),
+                        "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
+                        "filter": filter_expr,
+                    },
+                    search_params={"metric_type": "IP", "params": {}},
+                )[0]
+
+            with log_duration("milvus.rrf_fusion", k=conf.RRF_K):
+                fused_entities = self._reciprocal_rank_fusion(dense_results, sparse_results, k=conf.RRF_K)
+            # 限制返回数量
+            fused_entities = fused_entities[:k]
+            # 转换为 Document 对象
+            sub_chunks = [self._doc_from_hit(entity) for entity in fused_entities]
+
+            # 从子块中提取去重的父文档
             parent_docs = self._get_unique_parent_docs(sub_chunks)
+
+            # 如果只有1个文档或者没有，直接返回跳过重排序
             if len(parent_docs) < 2:
                 return parent_docs[:conf.CANDIDATE_M]
-            pairs = [[query, doc.page_content] for doc in parent_docs]
-            with log_duration("milvus.rerank", pairs=len(pairs)):
-                scores = self.reranker.predict(pairs)
-            ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
+
+            # 如果有父文档，进行重排序
+            if parent_docs:
+                # 创建查询与文档内容的配对列表
+                pairs = [[query, doc.page_content] for doc in parent_docs]
+                # 使用 BGE-Reranker 计算每个配对的得分
+                with log_duration("milvus.rerank", pairs=len(pairs)):
+                    try:
+                        scores = self.reranker.predict(pairs)
+                        # 根据得分从高到低排序文档
+                        ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
+                    except Exception as e:
+                        logger.warning(f"重排序失败: {e}")
+                        ranked_parent_docs = parent_docs
+            else:
+                ranked_parent_docs = []
+
+            # 返回前 m 个重排序后的文档
             return ranked_parent_docs[:conf.CANDIDATE_M]
-        
-        # 使用 RRF 算法：分别执行两次检索，然后融合结果
-        logger.info("使用 RRF 算法融合检索结果")
-
-        dense_results = self._search_with_params(
-            search_kwargs={
-                "collection_name": self.collection_name,
-                "data": [dense_query_vector],
-                "anns_field": dense_field,
-                "limit": k * int(conf.RAG_DENSE_RECALL_MULTIPLIER),
-                "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
-                "filter": filter_expr,
-            },
-            search_params={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
-        )[0]
-
-        sparse_results = self._search_with_params(
-            search_kwargs={
-                "collection_name": self.collection_name,
-                "data": [sparse_query_vector],
-                "anns_field": "sparse_vector",
-                "limit": k * int(conf.RAG_SPARSE_RECALL_MULTIPLIER),
-                "output_fields": ["text", "parent_id", "parent_content", "source", "timestamp"],
-                "filter": filter_expr,
-            },
-            search_params={"metric_type": "IP", "params": {}},
-        )[0]
-
-        # 使用 RRF 融合结果
-        fused_entities = self._reciprocal_rank_fusion(dense_results, sparse_results, k=conf.RRF_K)
-        # 限制返回数量
-        fused_entities = fused_entities[:k]
-        # 转换为 Document 对象
-        sub_chunks = [self._doc_from_hit(entity) for entity in fused_entities]
-        
-        # 从子块中提取去重的父文档
-        parent_docs = self._get_unique_parent_docs(sub_chunks)
-        
-        # 如果只有1个文档或者没有，直接返回跳过重排序
-        if len(parent_docs) < 2:
-            return parent_docs[:conf.CANDIDATE_M]
-            
-        # 如果有父文档，进行重排序
-        if parent_docs:
-            # 创建查询与文档内容的配对列表
-            pairs = [[query, doc.page_content] for doc in parent_docs]
-            # 使用 BGE-Reranker 计算每个配对的得分
-            try:
-                scores = self.reranker.predict(pairs)
-                # 根据得分从高到低排序文档
-                ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
-            except Exception as e:
-                logger.warning(f"重排序失败: {e}")
-                ranked_parent_docs = parent_docs
-        else:
-            ranked_parent_docs = []
-
-        # 返回前 m 个重排序后的文档
-        return ranked_parent_docs[:conf.CANDIDATE_M]
 
     def _get_unique_parent_docs(self, sub_chunks):
         """

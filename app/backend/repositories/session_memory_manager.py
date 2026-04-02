@@ -40,8 +40,8 @@ class SessionMemoryManager:
         affected = await execute(
             """
             INSERT INTO session_memory (session_id, summary_text)
-            VALUES (:session_id, :summary_text)
-            ON DUPLICATE KEY UPDATE summary_text=VALUES(summary_text)
+            VALUES (:session_id, :summary_text) AS new
+            ON DUPLICATE KEY UPDATE summary_text=new.summary_text
             """,
             {"session_id": session_id, "summary_text": summary_text},
         )
@@ -77,8 +77,8 @@ class SessionMemoryManager:
         affected = await execute(
             """
             INSERT INTO session_memory (session_id, retrieval_summary_text)
-            VALUES (:session_id, :retrieval_summary_text)
-            ON DUPLICATE KEY UPDATE retrieval_summary_text=VALUES(retrieval_summary_text)
+            VALUES (:session_id, :retrieval_summary_text) AS new
+            ON DUPLICATE KEY UPDATE retrieval_summary_text=new.retrieval_summary_text
             """,
             {"session_id": session_id, "retrieval_summary_text": retrieval_summary_text},
         )

@@ -15,19 +15,19 @@ def select_agent(
     coverage = coverage_map.get(task_id) if isinstance(coverage_map, dict) else {}
     status = str((coverage or {}).get("coverage_status") or "")
 
-    if "text_quote" in task.evidence_type_required:
-        preferred = "rag"
-    elif "relation" in task.evidence_type_required:
-        preferred = "kg"
-    else:
-        preferred = str(task.target_agent or "kg")
+    # 主路径默认遵从 decompose/planner 已确定的 target_agent。
+    preferred = "rag" if str(task.target_agent or "kg") == "rag" else "kg"
+
+    # 明确 reroute 补检索任务直接使用既定目标代理。
+    if str(task.agent_role or "") == "supplement" and "reroute" in str(task.reason or ""):
+        return preferred
 
     if status == "strong":
         return preferred
 
     last_no_signal = bool((last_result or {}).get("no_signal"))
     last_agent = str((last_result or {}).get("target_agent") or "")
-    if last_no_signal and last_agent in {"kg", "rag"}:
+    if last_no_signal and last_agent in {"kg", "rag"} and last_agent == preferred:
         return "rag" if last_agent == "kg" else "kg"
 
     recent_fail = False

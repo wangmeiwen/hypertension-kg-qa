@@ -41,6 +41,7 @@ class RagSubAgentExecutor:
             "constraints": req.get("constraints") if isinstance(req.get("constraints"), dict) else {"allow_extra_retrieval": False, "max_tool_calls": 1},
             "tool_name": "rag_search",
             "arguments": req.get("arguments") if isinstance(req.get("arguments"), dict) else {},
+            "query_terms": [str(item or "").strip() for item in req.get("query_terms")] if isinstance(req.get("query_terms"), list) else [],
         }
         output = await run_rag_graph(self.graph, state)
         final_obj = output.get("final_result")

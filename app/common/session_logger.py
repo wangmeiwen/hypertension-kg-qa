@@ -443,7 +443,9 @@ def log_api_call(
     method: str,
     path: str,
     status_code: int,
-    duration_ms: float,
+    is_streaming: bool,
+    ttfb_ms: float,
+    stream_total_ms: float,
     client_ip: str = "",
     session_id: str = "",
     user_id: str = "",
@@ -457,7 +459,9 @@ def log_api_call(
         method: HTTP 方法。
         path: 请求路径。
         status_code: 响应状态码。
-        duration_ms: 耗时毫秒。
+        is_streaming: 是否流式响应。
+        ttfb_ms: 首字节耗时毫秒。
+        stream_total_ms: 全流耗时毫秒。
         client_ip: 客户端 IP。
         session_id: 会话 ID。
         user_id: 用户 ID。
@@ -467,13 +471,20 @@ def log_api_call(
         None。
     """
     day_file = _api_dir() / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    ttfb = max(0.0, float(ttfb_ms))
+    stream_total = max(ttfb, float(stream_total_ms))
+    streaming = bool(is_streaming)
+    if not streaming:
+        ttfb = stream_total
     payload = {
         "ts": _utc_now(),
         "request_id": str(request_id or ""),
         "method": str(method or ""),
         "path": str(path or ""),
         "status_code": int(status_code),
-        "duration_ms": round(float(duration_ms), 2),
+        "is_streaming": streaming,
+        "ttfb_ms": round(ttfb, 2),
+        "stream_total_ms": round(stream_total, 2),
         "client_ip": str(client_ip or ""),
         "session_id": str(session_id or ""),
         "user_id": str(user_id or ""),

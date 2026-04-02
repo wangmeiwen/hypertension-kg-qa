@@ -39,7 +39,10 @@ async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentS
     question = str(state.get("input_question") or "").strip()
     arguments_obj = state.get("arguments")
     arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
-    payload = validate_rag_payload(build_rag_payload(question, arguments))
+    query_terms_obj = state.get("query_terms")
+    query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
+    query_terms = [item for item in query_terms if item]
+    payload = validate_rag_payload(build_rag_payload(question, arguments, query_terms=query_terms))
     statement = {"tool_name": "rag_search", "payload": payload}
     state["query_statements"] = [statement]
     state["tool_calls"] = [statement]

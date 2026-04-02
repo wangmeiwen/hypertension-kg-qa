@@ -16,9 +16,12 @@ def assess_answerability(
     *,
     gate_result: dict[str, Any],
     coverage_map: dict[str, dict[str, Any]],
-    round_stop_reason: str,
 ) -> dict[str, Any]:
-    gate_passed = bool((gate_result or {}).get("gate_passed"))
+    should_backtrack = bool((gate_result or {}).get("should_backtrack"))
+    sufficient_raw = (gate_result or {}).get("sufficient")
+    sufficient = bool(sufficient_raw) if sufficient_raw is not None else True
+    raw_gate_passed = bool((gate_result or {}).get("gate_passed"))
+    gate_passed = raw_gate_passed and (not should_backtrack) and sufficient
     confidence = float((gate_result or {}).get("confidence") or 0.0)
     missing_points_obj = (gate_result or {}).get("missing_points")
     missing_points = missing_points_obj if isinstance(missing_points_obj, list) else []
@@ -29,30 +32,24 @@ def assess_answerability(
             direct_support = True
             break
 
-    if round_stop_reason == "max_rounds_with_insufficient_evidence":
-        return {
-            "answer_mode": "insufficient",
-            "gate_passed": False,
-            "confidence_cap": min(confidence, 0.45),
-            "missing_points": missing_points,
-            "direct_support": direct_support,
-            "reason": round_stop_reason,
-        }
-
-    if gate_passed and direct_support:
-        mode = "direct"
-    elif gate_passed:
-        mode = "conservative"
-    else:
+    if should_backtrack or (not sufficient):
         mode = "insufficient"
+        reason = "gate_backtrack_required" if should_backtrack else "gate_not_sufficient"
+    elif direct_support:
+        mode = "direct"
+        reason = "global_gate_passed_with_direct_support"
+    else:
+        mode = "conservative"
+        reason = "global_gate_passed"
 
     return {
         "answer_mode": mode,
         "gate_passed": gate_passed,
-        "confidence_cap": confidence,
+        "should_backtrack": should_backtrack,
+        "confidence_cap": min(confidence, 0.45) if mode == "insufficient" else confidence,
         "missing_points": missing_points,
         "direct_support": direct_support,
-        "reason": round_stop_reason,
+        "reason": reason,
     }
 
 
@@ -68,7 +65,14 @@ def compose_final_answer(
     rag_rows = (evidence_bundle or {}).get("rag_evidence")
     kg_count = len(kg_rows) if isinstance(kg_rows, list) else 0
     rag_count = len(rag_rows) if isinstance(rag_rows, list) else 0
-    total = kg_count + rag_count
+    gate_total_raw = (gate_result or {}).get("evidence_count")
+    if gate_total_raw is None:
+        total = kg_count + rag_count
+    else:
+        try:
+            total = int(gate_total_raw)
+        except (TypeError, ValueError):
+            total = kg_count + rag_count
 
     mode = str((answerability or {}).get("answer_mode") or "insufficient")
     confidence = float((answerability or {}).get("confidence_cap") or 0.0)
