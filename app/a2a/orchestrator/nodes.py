@@ -7,7 +7,8 @@ from typing import Any
 
 from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.models import EvidenceBundle, SubAgentConstraints, SubTask
-from app.a2a.orchestrator.answer_gate import assess_answerability, compose_final_answer
+from app.a2a.orchestrator.answer_gate import _INSUFFICIENT_MESSAGE, assess_answerability, compose_final_answer
+from app.a2a.orchestrator.answer_writer import generate_final_answer_async
 from app.a2a.orchestrator.coverage import evaluate_task_coverage
 from app.a2a.orchestrator.evidence_store import merge_task_evidence
 from app.a2a.orchestrator.gating_adapter import run_gate
@@ -518,6 +519,7 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
     state["gate_result"] = gate_result
 
     answerability = assess_answerability(
+        evidence_bundle=evidence_bundle,
         gate_result=gate_result,
         coverage_map=state.get("coverage_map") if isinstance(state.get("coverage_map"), dict) else {},
     )
@@ -528,12 +530,49 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
 
 
 async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorState:
+    answerability = state.get("answerability") if isinstance(state.get("answerability"), dict) else {}
+    answer_mode = str(answerability.get("answer_mode") or "none").strip() or "none"
+
+    processing_steps = [
+        str(item)
+        for item in (state.get("processing_steps") if isinstance(state.get("processing_steps"), list) else [])
+    ]
+
+    if answer_mode == "none":
+        writer_result = {
+            "answer_text": _INSUFFICIENT_MESSAGE,
+            "writer_metadata": {
+                "writer_used": "template",
+                "writer_fallback_reason": "",
+                "prompt_version": "none",
+                "mode": "none",
+            },
+            "token_usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+    else:
+        writer_result = await generate_final_answer_async(
+            question=str(state.get("input_text") or ""),
+            answer_mode=answer_mode,
+            evidence_bundle=state.get("evidence_bundle") if isinstance(state.get("evidence_bundle"), dict) else {},
+            gate_result=state.get("gate_result") if isinstance(state.get("gate_result"), dict) else {},
+            coverage_map=state.get("coverage_map") if isinstance(state.get("coverage_map"), dict) else {},
+            resolved_query=state.get("resolved_query") if isinstance(state.get("resolved_query"), dict) else {},
+            processing_steps=processing_steps,
+        )
+
     final = compose_final_answer(
         question=str(state.get("input_text") or ""),
         evidence_bundle=state.get("evidence_bundle") if isinstance(state.get("evidence_bundle"), dict) else {},
         gate_result=state.get("gate_result") if isinstance(state.get("gate_result"), dict) else {},
-        answerability=state.get("answerability") if isinstance(state.get("answerability"), dict) else {},
-        trace=[str(item) for item in (state.get("processing_steps") if isinstance(state.get("processing_steps"), list) else [])],
+        answerability=answerability,
+        trace=processing_steps,
+        answer_text=str(writer_result.get("answer_text") or ""),
+        writer_metadata=writer_result.get("writer_metadata") if isinstance(writer_result.get("writer_metadata"), dict) else {},
+        writer_token_usage=writer_result.get("token_usage") if isinstance(writer_result.get("token_usage"), dict) else {},
     )
     state["final_output"] = final.model_dump()
     _append_step(state, "主控完成终答组装")

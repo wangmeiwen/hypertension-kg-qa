@@ -32,57 +32,142 @@ class TestOrchestratorAlignmentRegressions(unittest.TestCase):
 
     def test_should_backtrack_should_override_gate_passed_flag(self) -> None:
         answerability = assess_answerability(
+            evidence_bundle={"kg_evidence": [], "rag_evidence": []},
             gate_result={
                 "should_backtrack": True,
                 "gate_passed": True,
                 "sufficient": True,
                 "confidence": 0.9,
                 "missing_points": ["outcomes"],
+                "evidence_count": 0,
             },
             coverage_map={"1": {"direct_support": True}},
         )
         self.assertFalse(bool(answerability.get("gate_passed")))
-        self.assertEqual(str(answerability.get("answer_mode")), "insufficient")
+        self.assertEqual(str(answerability.get("answer_mode")), "none")
+
+    def test_reason_should_not_claim_gate_passed_when_backtrack_required(self) -> None:
+        answerability = assess_answerability(
+            evidence_bundle={"kg_evidence": [{"entity": {"name": "A"}}], "rag_evidence": []},
+            gate_result={
+                "should_backtrack": True,
+                "gate_passed": True,
+                "sufficient": True,
+                "confidence": 0.9,
+                "evidence_count": 1,
+            },
+            coverage_map={"1": {"direct_support": True}},
+        )
+        self.assertFalse(bool(answerability.get("gate_passed")))
+        self.assertEqual(str(answerability.get("reason") or ""), "gate_failed_backtrack_required")
+
+    def test_reason_should_not_claim_gate_passed_when_not_sufficient(self) -> None:
+        answerability = assess_answerability(
+            evidence_bundle={"kg_evidence": [{"entity": {"name": "A"}}], "rag_evidence": []},
+            gate_result={
+                "should_backtrack": False,
+                "gate_passed": True,
+                "sufficient": False,
+                "confidence": 0.9,
+                "evidence_count": 1,
+            },
+            coverage_map={"1": {"direct_support": False}},
+        )
+        self.assertFalse(bool(answerability.get("gate_passed")))
+        self.assertEqual(str(answerability.get("reason") or ""), "gate_failed_not_sufficient")
 
     def test_gate_passed_should_not_output_insufficient(self) -> None:
         answerability = assess_answerability(
+            evidence_bundle={"kg_evidence": [{"entity": {"name": "A"}}], "rag_evidence": []},
             gate_result={
                 "should_backtrack": False,
                 "gate_passed": True,
                 "sufficient": True,
                 "confidence": 0.8,
                 "missing_points": [],
+                "evidence_count": 2,
             },
             coverage_map={"1": {"direct_support": False}},
         )
-        self.assertNotEqual(str(answerability.get("answer_mode")), "insufficient")
-        self.assertEqual(str(answerability.get("answer_mode")), "conservative")
+        self.assertNotEqual(str(answerability.get("answer_mode")), "none")
+        self.assertEqual(str(answerability.get("answer_mode")), "partial")
 
     def test_answerability_should_reject_gate_passed_when_not_sufficient(self) -> None:
         answerability = assess_answerability(
+            evidence_bundle={"kg_evidence": [], "rag_evidence": []},
             gate_result={
                 "should_backtrack": False,
                 "gate_passed": True,
                 "sufficient": False,
                 "confidence": 0.9,
                 "missing_points": ["outcomes"],
+                "evidence_count": 0,
             },
             coverage_map={"1": {"direct_support": True}},
         )
         self.assertFalse(bool(answerability.get("gate_passed")))
-        self.assertEqual(str(answerability.get("answer_mode")), "insufficient")
+        self.assertEqual(str(answerability.get("answer_mode")), "none")
 
-    def test_final_answer_should_use_gate_evidence_count(self) -> None:
+    def test_answer_mode_should_follow_final_evidence_pool_not_gate_counter(self) -> None:
+        answerability = assess_answerability(
+            evidence_bundle={"kg_evidence": [{"entity": {"name": "A"}}], "rag_evidence": []},
+            gate_result={
+                "should_backtrack": False,
+                "gate_passed": True,
+                "sufficient": True,
+                "confidence": 0.7,
+                "evidence_count": 0,
+            },
+            coverage_map={"1": {"direct_support": False}},
+        )
+        self.assertEqual(str(answerability.get("answer_mode")), "partial")
+        self.assertEqual(int(answerability.get("final_evidence_count") or -1), 1)
+
+    def test_final_answer_should_use_final_evidence_count(self) -> None:
         final = compose_final_answer(
             question="测试问题",
             evidence_bundle={"kg_evidence": [{"entity": {"name": "A"}}], "rag_evidence": [], "citations": []},
             gate_result={"evidence_count": 0},
-            answerability={"answer_mode": "conservative", "confidence_cap": 0.6, "direct_support": False},
+            answerability={"answer_mode": "partial", "confidence_cap": 0.6, "direct_support": False},
             trace=[],
+            answer_text="结论：当前证据支持的部分可回答。\n证据支持点：A。\n不确定性与适用边界：目前不能直接下结论的部分仍需补充证据。",
         )
         summary = final.evidence_summary if isinstance(final.evidence_summary, dict) else {}
-        self.assertEqual(int(summary.get("evidence_count")), 0)
+        self.assertEqual(int(summary.get("evidence_count")), 1)
         self.assertEqual(int(summary.get("kg_evidence_count") or -1), 1)
+
+    def test_coverage_axes_should_be_omitted_when_not_produced(self) -> None:
+        final = compose_final_answer(
+            question="测试问题",
+            evidence_bundle={"kg_evidence": [{"entity": {"name": "A"}}], "rag_evidence": [], "citations": []},
+            gate_result={"hop_coverage": 1.0},
+            answerability={"answer_mode": "direct", "confidence_cap": 0.8, "direct_support": True},
+            trace=[],
+            answer_text="结论：可回答。\n证据支持点：A。\n不确定性与适用边界：需结合场景。",
+        )
+        summary = final.evidence_summary if isinstance(final.evidence_summary, dict) else {}
+        self.assertNotIn("coverage_comparator", summary)
+        self.assertNotIn("coverage_outcomes", summary)
+
+    def test_gate_result_should_produce_coverage_axes_for_comparison_like_query(self) -> None:
+        gate_result = evaluate_and_gate(
+            traces=[],
+            classification={
+                "primary_type": "SIMPLE",
+                "intent": "comparison",
+                "types": ["COMPARISON"],
+                "must_cover": ["comparator", "outcomes"],
+                "subqueries": ["比较A与B在疗效结局上的差异"],
+                "signal_words": [],
+            },
+            backtrack_count=0,
+            max_backtrack=2,
+            is_degraded=False,
+        )
+        self.assertIn("coverage_comparator", gate_result)
+        self.assertIn("coverage_outcomes", gate_result)
+        self.assertEqual(float(gate_result.get("coverage_comparator") or 0.0), 0.0)
+        self.assertEqual(float(gate_result.get("coverage_outcomes") or 0.0), 0.0)
 
     def test_relation_task_should_not_require_source_cover_point(self) -> None:
         task = SubTask(

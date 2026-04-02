@@ -72,3 +72,6 @@ htmlcov/
 *.sql.gz
 /docker/milvus/volumes2/
 /tests/langsmith/
+/docker/milvus/
+/tests/langsmith/
+/tests/

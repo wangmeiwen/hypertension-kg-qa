@@ -51,8 +51,9 @@ class TestOrchestratorPolicies(unittest.TestCase):
                 "citations": [],
             },
             gate_result={"hop_coverage": 0.8},
-            answerability={"answer_mode": "direct", "confidence_cap": 0.8, "direct_support": True},
+            answerability={"answer_mode": "direct", "confidence_cap": 0.8, "direct_support": True, "evidence_count": 1},
             trace=[],
+            answer_text="结论：当前证据可支持回答。\n证据支持点：已有相关实体证据。\n不确定性与适用边界：仍需结合具体人群。",
         )
         self.assertIn("结论：", answer.answer)
         self.assertNotIn("{'doc_id'", answer.answer)

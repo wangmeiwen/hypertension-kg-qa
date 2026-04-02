@@ -79,6 +79,39 @@ _HIGH_RISK_KEYWORDS: set[str] = {
 # 只有来自这些来源的证据才会计算语义相似度分数
 _SEMANTIC_SOURCES: set[str] = {"kg_entity_relation_search", "rag_search"}
 
+# 覆盖轴关键词
+_COMPARATOR_COVERAGE_HINTS: tuple[str, ...] = (
+    "comparison",
+    "comparator",
+    "compare",
+    "versus",
+    "vs",
+    "head_to_head",
+    "比较",
+    "对比",
+    "相比",
+    "差异",
+    "单药",
+    "复方",
+)
+_OUTCOMES_COVERAGE_HINTS: tuple[str, ...] = (
+    "outcome",
+    "outcomes",
+    "efficacy",
+    "safety",
+    "risk",
+    "benefit",
+    "疗效",
+    "效果",
+    "结局",
+    "安全",
+    "风险",
+    "获益",
+    "降压",
+    "靶器官",
+    "保护",
+)
+
 # 血压阈值正则表达式
 # 用于从证据文本中提取血压数值，检测不同来源的阈值冲突
 # 匹配格式：
@@ -914,6 +947,84 @@ def build_subquery_evidence_bindings(
     return [slots[idx] for idx in sorted(slots.keys())]
 
 
+def _normalize_text_list(rows: Any) -> List[str]:
+    """将输入列表归一化为非空字符串列表。"""
+    if not isinstance(rows, list):
+        return []
+    output: List[str] = []
+    for item in rows:
+        text = str(item or "").strip()
+        if text:
+            output.append(text)
+    return output
+
+
+def _contains_any_hint(text: str, hints: Tuple[str, ...]) -> bool:
+    """判断文本是否包含任一关键词。"""
+    lowered = str(text or "").lower()
+    if not lowered:
+        return False
+    for hint in hints:
+        token = str(hint or "").lower().strip()
+        if token and token in lowered:
+            return True
+    return False
+
+
+def _is_axis_relevant(classification: Dict[str, Any], hints: Tuple[str, ...]) -> bool:
+    """判断覆盖轴是否与当前问题相关。"""
+    rows: List[str] = []
+    rows.extend(
+        [
+            str(classification.get("primary_type") or "").strip(),
+            str(classification.get("intent") or "").strip(),
+        ]
+    )
+    rows.extend(_normalize_text_list(classification.get("types")))
+    rows.extend(_normalize_text_list(classification.get("must_cover")))
+    rows.extend(_normalize_text_list(classification.get("subqueries")))
+    rows.extend(_normalize_text_list(classification.get("signal_words")))
+    merged = "\n".join([row for row in rows if row])
+    return _contains_any_hint(merged, hints)
+
+
+def _is_axis_missing(missing_points: List[str], uncovered_points: List[str], hints: Tuple[str, ...]) -> bool:
+    """判断覆盖轴是否出现在缺失点中。"""
+    rows = [*missing_points, *uncovered_points]
+    for item in rows:
+        if _contains_any_hint(str(item or ""), hints):
+            return True
+    return False
+
+
+def _build_coverage_axes(
+    *,
+    classification: Dict[str, Any],
+    missing_points: List[str],
+    uncovered_points: List[str],
+) -> Dict[str, float]:
+    """构建覆盖轴分数。
+
+    仅在轴与问题语义相关时生产字段：
+    - comparator 轴：相关且缺失时为 0.0，否则为 1.0
+    - outcomes 轴：相关且缺失时为 0.0，否则为 1.0
+    """
+    output: Dict[str, float] = {}
+
+    comparator_relevant = _is_axis_relevant(classification, _COMPARATOR_COVERAGE_HINTS)
+    outcomes_relevant = _is_axis_relevant(classification, _OUTCOMES_COVERAGE_HINTS)
+
+    if comparator_relevant:
+        comparator_missing = _is_axis_missing(missing_points, uncovered_points, _COMPARATOR_COVERAGE_HINTS)
+        output["coverage_comparator"] = 0.0 if comparator_missing else 1.0
+
+    if outcomes_relevant:
+        outcomes_missing = _is_axis_missing(missing_points, uncovered_points, _OUTCOMES_COVERAGE_HINTS)
+        output["coverage_outcomes"] = 0.0 if outcomes_missing else 1.0
+
+    return output
+
+
 def evaluate_and_gate(
     traces: List[Dict[str, Any]],
     classification: Dict[str, Any],
@@ -1029,6 +1140,12 @@ def evaluate_and_gate(
         dedup_missing.append(item)
     missing_points = dedup_missing
 
+    coverage_axes = _build_coverage_axes(
+        classification=classification if isinstance(classification, dict) else {},
+        missing_points=missing_points,
+        uncovered_points=uncovered if isinstance(uncovered, list) else [],
+    )
+
     # 充足性判断
     sufficient = evidence_count > 0 and not missing_points
 
@@ -1089,6 +1206,7 @@ def evaluate_and_gate(
         "sufficient": sufficient,
         "missing_points": missing_points,
         "strict_subquery_binding": strict_binding_required,
+        **coverage_axes,
         **high_risk_info,
         **graphrag_quality,
         **semantic_quality,
