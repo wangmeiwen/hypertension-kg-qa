@@ -213,7 +213,7 @@ class VectorStore:
             reranker_path = reranker_path.replace('\\', '/')
         # 检查 reranker 模型是否存在，不存在则警告
         if not os.path.exists(reranker_path):
-             self.logger.warning(f"未找到 Reranker 模型: {reranker_path}")
+            self.logger.warning("未找到 Reranker 模型: %s", reranker_path)
         self.reranker = self._get_cached_reranker(reranker_path, self.device)
         # 初始化 BGE-M3 嵌入函数，使用 CPU 设备，不启用 FP16
         m3_path = conf.EMBEDDING_MODEL_PATH
@@ -224,7 +224,7 @@ class VectorStore:
             m3_path = os.path.join(project_root, m3_path)
             m3_path = m3_path.replace('\\', '/')
         if not os.path.exists(m3_path):
-             self.logger.warning(f"Embedding model not found at {m3_path}.")
+            self.logger.warning("Embedding model not found at %s.", m3_path)
         self.embedding_function = self._get_cached_embedding_function(
             m3_path,
             self.device,
@@ -260,7 +260,11 @@ class VectorStore:
             try:
                 desc = self.client.describe_collection(self.collection_name)
             except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e2:
-                logger.warning(f"获取集合字段失败: {e2}")
+                logger.warning(
+                    "获取集合字段失败: error_type=%s error=%s",
+                    type(e2).__name__,
+                    e2,
+                )
                 desc = {}
 
         # 确保在 try/except 后仍然提取字段信息
@@ -274,7 +278,11 @@ class VectorStore:
                 if name:
                     self.collection_fields.add(name)
         except Exception as e:
-            logger.warning(f"提取集合字段信息失败: {e}")
+            logger.warning(
+                "提取集合字段信息失败: error_type=%s error=%s",
+                type(e).__name__,
+                e,
+            )
 
     def _create_or_load_collection(self):
         """
@@ -378,7 +386,7 @@ class VectorStore:
                         try:
                             doc_id = uuid.UUID(str(user_id)).int & ((1 << 63) - 1)
                         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
-                            self.logger.warning(f"无效 metadata.id={user_id}，改用 UUID 生成 ID")
+                            self.logger.warning("无效 metadata.id=%s，改用 UUID 生成 ID", user_id)
                             doc_id = _generate_uuid_int64_id()
                 else:
                     doc_id = _generate_uuid_int64_id()
@@ -614,7 +622,7 @@ class VectorStore:
                         # 根据得分从高到低排序文档
                         ranked_parent_docs = [doc for _, doc in sorted(zip(scores, rerank_docs), reverse=True)]
                     except Exception as e:
-                        logger.warning(f"重排序失败: {e}")
+                        logger.warning("重排序失败: %s", e)
                         ranked_parent_docs = rerank_docs
             else:
                 ranked_parent_docs = []

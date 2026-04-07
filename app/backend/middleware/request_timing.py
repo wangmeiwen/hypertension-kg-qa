@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import time
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -19,6 +20,8 @@ from app.common.session_logger import (
     reset_request_context,
     set_request_context,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_bearer_token(authorization: str) -> Optional[str]:
@@ -50,6 +53,11 @@ async def _wrap_stream_body_iterator(
                 yield chunk
     except BaseException as exc:
         stream_error_type = type(exc).__name__
+        logger.exception(
+            "stream_body_iterator_failed: error_type=%s error=%s",
+            type(exc).__name__,
+            exc,
+        )
         raise
     finally:
         callback_ret = on_close(stream_error_type)
@@ -172,6 +180,14 @@ async def request_timing_middleware(request: Request, call_next):
         return response
     except Exception as exc:
         error_type = type(exc).__name__
+        logger.exception(
+            "request_timing_middleware_failed: method=%s path=%s request_id=%s error_type=%s error=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            type(exc).__name__,
+            exc,
+        )
         if not logged:
             stream_total_ms = (time.perf_counter() - started) * 1000
             fallback_ttfb = ttfb_ms if ttfb_ms > 0.0 else stream_total_ms

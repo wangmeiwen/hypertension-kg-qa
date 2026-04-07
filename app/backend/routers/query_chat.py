@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Callable, Optional
 
@@ -13,6 +14,8 @@ from app.backend.services.agent_run_service import AgentRunService
 from app.backend.services.readiness_service import ReadinessService
 from app.backend.services.session_stream_service import SessionStreamService
 from app.backend.services.session_turn_service import SessionTurnService
+
+logger = logging.getLogger(__name__)
 
 
 def create_query_chat_router(
@@ -66,6 +69,12 @@ def create_query_chat_router(
         try:
             a2a_mode = agent_run_service.resolve_agent_run_mode(data)
         except ValueError as exc:
+            logger.exception(
+                "agent_run_invalid_request: trace_id=%s error_type=%s error=%s",
+                trace_id,
+                type(exc).__name__,
+                exc,
+            )
             return {"ok": False, "error": f"invalid_request:{str(exc)}", "trace_id": trace_id}
 
         raw_max_turns = data.get("max_turns")

@@ -24,6 +24,7 @@
 """
 
 import hashlib
+import logging
 import os
 import re
 from collections import defaultdict
@@ -40,14 +41,21 @@ from app.common.config import Config
 from app.common.perf_logger import log_duration
 from app.knowledge_graph.neo4j_manager import neo4j_client
 
+logger = logging.getLogger(__name__)
+
 try:
     import igraph as ig  # type: ignore
     import leidenalg  # type: ignore
     _LEIDEN_AVAILABLE = True
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
     ig = None
     leidenalg = None
     _LEIDEN_AVAILABLE = False
+    logger.warning(
+        "kg_milvus_leiden_dependency_unavailable: error_type=%s error=%s",
+        type(exc).__name__,
+        exc,
+    )
 
 
 class KgMilvusStore:
@@ -340,10 +348,24 @@ class KgMilvusStore:
         index_names: List[str] = []
         try:
             index_names = self.client.list_indexes(collection_name=self.collection_name, field_name=self.anns_field)
-        except TypeError:
+        except TypeError as exc:
             # 兼容旧版 API（不支持 field_name 参数）
+            logger.warning(
+                "kg_milvus_list_indexes_fallback_legacy_api: collection=%s anns_field=%s error_type=%s error=%s",
+                self.collection_name,
+                self.anns_field,
+                type(exc).__name__,
+                exc,
+            )
             index_names = self.client.list_indexes(collection_name=self.collection_name)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "kg_milvus_list_indexes_failed_use_fallback_metric: collection=%s fallback_metric=%s error_type=%s error=%s",
+                self.collection_name,
+                fallback_metric,
+                type(exc).__name__,
+                exc,
+            )
             return fallback_metric
 
         if not isinstance(index_names, list):
@@ -354,7 +376,14 @@ class KgMilvusStore:
                 continue
             try:
                 index_desc = self.client.describe_index(collection_name=self.collection_name, index_name=str(index_name))
-            except Exception:
+            except Exception as exc:
+                logger.debug(
+                    "kg_milvus_describe_index_failed_skip: collection=%s index_name=%s error_type=%s error=%s",
+                    self.collection_name,
+                    str(index_name),
+                    type(exc).__name__,
+                    exc,
+                )
                 continue
             if not isinstance(index_desc, dict):
                 continue
@@ -626,7 +655,13 @@ class KgMilvusStore:
         """
         try:
             value = float(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "kg_milvus_invalid_score_default_zero: raw=%s error_type=%s error=%s",
+                raw,
+                type(exc).__name__,
+                exc,
+            )
             return 0.0
         if value < 0:
             return 0.0
@@ -976,7 +1011,15 @@ class KgMilvusStore:
                 ]
                 try:
                     resolve_result = resolver(str(query or ""), candidate_rows, margin)
-                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+                    logger.warning(
+                        "kg_milvus_disambiguation_resolver_failed: query=%s margin=%s error_type=%s error=%s",
+                        str(query or ""),
+                        margin,
+                        type(exc).__name__,
+                        exc,
+                        exc_info=True,
+                    )
                     resolve_result = {}
 
                 if isinstance(resolve_result, dict):

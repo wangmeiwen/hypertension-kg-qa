@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncConnection, create_async_engine
+
+logger = logging.getLogger(__name__)
 
 
 def _build_async_mysql_url(database: str | None = None) -> URL:
@@ -277,10 +280,10 @@ async def initialize_database(force: bool = False) -> bool:
     try:
         await init_db()
         _db_initialized = True
-        print("MySQL数据库初始化成功")
+        logger.info("MySQL 数据库初始化成功")
         return True
     except Exception as exc:
-        print(f"MySQL数据库初始化失败: {exc}")
+        logger.exception("MySQL 数据库初始化失败: error_type=%s error=%s", type(exc).__name__, exc)
         return False
 
 

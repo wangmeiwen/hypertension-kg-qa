@@ -43,7 +43,13 @@ def _json_text_len(value: Any) -> int:
     """
     try:
         return len(json.dumps(value, ensure_ascii=False))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_memory_llm_json_text_len_fallback: value_type=%s error_type=%s error=%s",
+            type(value).__name__,
+            type(exc).__name__,
+            exc,
+        )
         return len(str(value or ""))
 
 
@@ -61,11 +67,23 @@ def _sanitize_projection_metrics(turn_artifacts: dict[str, Any]) -> tuple[int, i
     chars = 0
     try:
         count = int(source.get("tool_observations_count") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_memory_llm_projection_count_parse_failed: raw=%s error_type=%s error=%s",
+            source.get("tool_observations_count"),
+            type(exc).__name__,
+            exc,
+        )
         count = 0
     try:
         chars = int(source.get("tool_observations_chars") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_memory_llm_projection_chars_parse_failed: raw=%s error_type=%s error=%s",
+            source.get("tool_observations_chars"),
+            type(exc).__name__,
+            exc,
+        )
         chars = 0
     mode = str(source.get("projection_mode") or "legacy_raw")
     return max(0, count), max(0, chars), mode
@@ -167,7 +185,12 @@ def _extract_json_object(text: str) -> dict[str, Any]:
         data = json.loads(raw)
         if isinstance(data, dict):
             return data
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_memory_llm_extract_json_direct_failed: error_type=%s error=%s",
+            type(exc).__name__,
+            exc,
+        )
         pass
 
     fenced_match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", raw, re.IGNORECASE)
@@ -177,7 +200,12 @@ def _extract_json_object(text: str) -> dict[str, Any]:
             data = json.loads(candidate)
             if isinstance(data, dict):
                 return data
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "session_memory_llm_extract_json_fenced_failed: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             pass
 
     start = raw.find("{")
@@ -188,7 +216,12 @@ def _extract_json_object(text: str) -> dict[str, Any]:
             data = json.loads(candidate)
             if isinstance(data, dict):
                 return data
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "session_memory_llm_extract_json_brace_failed: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             pass
 
     return {}

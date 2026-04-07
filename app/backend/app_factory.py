@@ -8,6 +8,7 @@ import inspect
 import json
 from contextlib import asynccontextmanager
 import logging
+import sys
 from typing import Any, Callable
 
 from fastapi import FastAPI, Request
@@ -70,7 +71,7 @@ async def _await_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> An
 
 def create_app() -> FastAPI:
     """创建并返回 FastAPI 应用实例。"""
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
     class _LazyNeo4jClient:
         """按需解析 neo4j_client，避免工厂装配阶段触发重依赖导入。"""

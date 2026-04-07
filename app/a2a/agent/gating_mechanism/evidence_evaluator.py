@@ -219,7 +219,7 @@ def _safe_float(raw: Any, default: float = 0.0) -> float:
     try:
         return float(raw)
     except (TypeError, ValueError):
-        logger.warning(f"类型转换失败: 无法将 {raw!r} 转换为浮点数，使用默认值 {default}")
+        logger.warning("类型转换失败: 无法将 %r 转换为浮点数，使用默认值 %s", raw, default)
         return default
 
 

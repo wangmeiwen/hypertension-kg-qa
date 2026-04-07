@@ -225,7 +225,13 @@ class SessionMemoryService:
         """
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "session_memory_to_int_fallback: raw=%s error_type=%s error=%s",
+                value,
+                type(exc).__name__,
+                exc,
+            )
             return int(default)
 
     @staticmethod
@@ -279,7 +285,13 @@ class SessionMemoryService:
         """
         try:
             return len(json.dumps(value, ensure_ascii=False))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "session_memory_json_text_len_fallback: value_type=%s error_type=%s error=%s",
+                type(value).__name__,
+                type(exc).__name__,
+                exc,
+            )
             return len(str(value or ""))
 
     def _build_assistant_reply_digest(self, reply: str, max_len: int = 160) -> str:
@@ -1525,7 +1537,13 @@ class SessionMemoryService:
                 "retrieval_summary": retrieval,
                 "updated_at": updated_text,
             }
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "session_memory_load_parse_failed_empty_snapshot: session_id=%s error_type=%s error=%s",
+                str(session_id or ""),
+                type(exc).__name__,
+                exc,
+            )
             return self._empty_snapshot(updated_at=updated_text)
 
     async def save_memory(self, session_id: str, snapshot: SessionMemorySnapshot) -> None:

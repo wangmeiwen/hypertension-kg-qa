@@ -19,12 +19,15 @@ import contextvars
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import threading
 import uuid
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 _REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
@@ -164,7 +167,13 @@ def _max_content_chars() -> int:
     raw = str(os.getenv("LOG_LLM_CONTENT_MAX_CHARS", "8000")).strip()
     try:
         value = int(raw)
-    except ValueError:
+    except ValueError as exc:
+        logger.warning(
+            "session_logger_invalid_max_content_chars: raw=%s error_type=%s error=%s",
+            raw,
+            type(exc).__name__,
+            exc,
+        )
         value = 8000
     if value < 500:
         return 500
@@ -184,7 +193,13 @@ def _compact_text(value: Any, max_chars: int) -> str:
     """
     try:
         text = json.dumps(value, ensure_ascii=False)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_logger_compact_text_json_fallback: value_type=%s error_type=%s error=%s",
+            type(value).__name__,
+            type(exc).__name__,
+            exc,
+        )
         text = str(value)
     if len(text) <= max_chars:
         return text
@@ -203,7 +218,13 @@ def _sha256_text(value: Any) -> str:
     """
     try:
         text = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_logger_sha_json_fallback: value_type=%s error_type=%s error=%s",
+            type(value).__name__,
+            type(exc).__name__,
+            exc,
+        )
         text = str(value)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -398,7 +419,13 @@ def ensure_session_meta(session_id: str, user_id: str = "") -> None:
     if meta_file.exists():
         try:
             existing = json.loads(meta_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning(
+                "session_logger_meta_read_failed_reset: session_id=%s error_type=%s error=%s",
+                sid,
+                type(exc).__name__,
+                exc,
+            )
             existing = {}
     else:
         existing = {}
@@ -431,7 +458,13 @@ def _bump_session_meta_count(session_id: str, field_name: str) -> None:
     ensure_session_meta(sid, get_user_id())
     try:
         data = json.loads(meta_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning(
+            "session_logger_meta_counter_read_failed_reset: session_id=%s error_type=%s error=%s",
+            sid,
+            type(exc).__name__,
+            exc,
+        )
         data = {"session_id": sid}
     data[field_name] = int(data.get(field_name) or 0) + 1
     data["latest_request_at"] = _utc_now()

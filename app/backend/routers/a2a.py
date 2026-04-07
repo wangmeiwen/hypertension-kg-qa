@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request
@@ -10,6 +11,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.a2a import A2AService, all_agent_cards
 from app.backend.services.a2a_dispatch_service import A2ADispatchService
 from app.common.langsmith_tracing import set_trace_metadata
+
+logger = logging.getLogger(__name__)
 
 
 def create_a2a_router(
@@ -36,6 +39,12 @@ def create_a2a_router(
             service = get_a2a()
             return {"ok": True, "agent_card": service.get_agent_card(), "trace_id": trace_id}
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.exception(
+                "a2a_agent_card_failed: trace_id=%s error_type=%s error=%s",
+                trace_id,
+                type(exc).__name__,
+                exc,
+            )
             fallback = A2ADispatchService.build_rpc_fallback({"id": None}, trace_id, str(exc))
             return {"ok": False, "error": f"a2a_card_error:{str(exc)}", "trace_id": trace_id, "rpc": fallback}
 
@@ -54,6 +63,12 @@ def create_a2a_router(
         try:
             return {"ok": True, "cards": all_agent_cards(), "trace_id": trace_id}
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.exception(
+                "a2a_agent_cards_failed: trace_id=%s error_type=%s error=%s",
+                trace_id,
+                type(exc).__name__,
+                exc,
+            )
             return {"ok": False, "error": f"a2a_cards_error:{str(exc)}", "trace_id": trace_id}
 
     @router.post("/a2a/rpc")

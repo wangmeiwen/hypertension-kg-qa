@@ -16,6 +16,7 @@ import logging
 import time
 import json
 import re
+import sys
 from pathlib import Path
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
@@ -84,7 +85,7 @@ def _ensure_logger_configured() -> None:
     )
 
     # 控制台输出
-    stream_handler = logging.StreamHandler()
+    stream_handler = logging.StreamHandler(stream=sys.stdout)
     stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
@@ -109,7 +110,7 @@ def _ensure_logger_configured() -> None:
 @contextmanager
 def log_duration(operation: str, **kwargs):
     """
-    记录代码块的开始、结束及耗时毫秒。
+    记录代码块耗时毫秒（仅输出一次）。
 
     Args:
         operation: 操作名称，用于日志标识。
@@ -123,19 +124,15 @@ def log_duration(operation: str, **kwargs):
     start = time.perf_counter()
     kv = " ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
     prefix = f"[性能] {operation}"
-    if kv:
-        logger.info(f"{prefix} 开始 {kv}")
-    else:
-        logger.info(f"{prefix} 开始")
 
     try:
         yield
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
         if kv:
-            logger.info(f"{prefix} 结束 耗时毫秒={elapsed_ms:.2f} {kv}")
+            logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f} {kv}")
         else:
-            logger.info(f"{prefix} 结束 耗时毫秒={elapsed_ms:.2f}")
+            logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f}")
 
 
 def log_perf_event(event: str, **kwargs) -> None:

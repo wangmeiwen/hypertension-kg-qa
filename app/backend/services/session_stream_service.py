@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 import re
 import time
@@ -23,6 +24,8 @@ from app.common.session_logger import (
     set_request_context,
     set_session_context,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_text(value: Any, max_len: int) -> str:
@@ -49,7 +52,13 @@ def _json_text_len(value: Any) -> int:
     """
     try:
         return len(json.dumps(value, ensure_ascii=False))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "session_stream_json_text_len_fallback: value_type=%s error_type=%s error=%s",
+            type(value).__name__,
+            type(exc).__name__,
+            exc,
+        )
         return len(str(value or ""))
 
 
@@ -428,7 +437,15 @@ def _read_session_llm_records(session_id: str, request_id: str) -> list[dict[str
                 if not isinstance(payload, dict):
                     continue
                 rows.append(payload)
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning(
+                "session_stream_skip_invalid_llm_log_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
+                sid,
+                str(request_id or ""),
+                str(file_path),
+                type(exc).__name__,
+                exc,
+            )
             continue
     rows.sort(key=lambda item: str(item.get("ts") or ""))
     return rows

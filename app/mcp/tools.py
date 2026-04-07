@@ -250,6 +250,11 @@ class KnowledgeGraphTool:
                 }
             return {"records": records, "blocked": False}
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.exception(
+                "kg_query_failed: dependency=neo4j error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             return {
                 "records": [],
                 "blocked": False,
@@ -316,6 +321,11 @@ class RagSearchTool:
                 )
             return {"hits": hits}
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.exception(
+                "rag_search_failed: dependency=milvus error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             return {
                 "hits": [],
                 "unavailable": True,
@@ -342,7 +352,13 @@ class KgEntityRelationSearchTool:
         self._llm: Optional[LLMClient] = None
         try:
             self._llm = LLMClient(conf)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.warning(
+                "kg_disambiguation_llm_init_failed: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             self._llm = None
 
     def _resolve_disambiguation_with_llm(self, query: str, candidates: list[dict[str, Any]], margin: float) -> dict[str, Any]:
@@ -379,7 +395,12 @@ class KgEntityRelationSearchTool:
         try:
             response = self._llm.chat_with_tokens(messages, temperature=0.1)
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            logger.warning(f"实体消歧失败: {type(exc).__name__}: {exc}")
+            logger.warning(
+                "entity_disambiguation_call_failed: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return {}
 
         token_usage = {
@@ -406,7 +427,13 @@ class KgEntityRelationSearchTool:
             canonical_name = str(parsed.get("canonical_name") or "").strip()
             try:
                 confidence = float(parsed.get("confidence") or 0.0)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                logger.debug(
+                    "entity_disambiguation_confidence_parse_failed: raw=%s error_type=%s error=%s",
+                    parsed.get("confidence"),
+                    type(exc).__name__,
+                    exc,
+                )
                 confidence = 0.0
             reason = str(parsed.get("reason") or "").strip()
             return {
@@ -417,7 +444,12 @@ class KgEntityRelationSearchTool:
                 "token_usage": token_usage,
             }
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
-            logger.warning(f"实体消歧失败: {type(exc).__name__}: {exc}")
+            logger.warning(
+                "entity_disambiguation_parse_failed: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return {
                 "canonical_name": "",
                 "confidence": 0.0,
@@ -461,6 +493,11 @@ class KgEntityRelationSearchTool:
                 disambiguation_resolver=self._resolve_disambiguation_with_llm,
             )
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.exception(
+                "kg_entity_relation_search_failed: dependency=milvus error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             return {
                 "entities": [],
                 "relationships": [],
@@ -544,6 +581,11 @@ def build_mcp_server() -> MCPServer:
 
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         message = str(exc)
+        logger.exception(
+            "build_mcp_server_rag_tool_failed_fallback: error_type=%s error=%s",
+            type(exc).__name__,
+            exc,
+        )
 
         async def rag_handler(payload: dict[str, Any]) -> dict[str, Any]:
             """处理 `rag_search` 工具请求（降级路径）。
@@ -583,7 +625,12 @@ def build_mcp_server() -> MCPServer:
                 OSError,
                 ImportError,
             ) as exc:
-                logger.warning("kg_entity_relation_search 预热失败，运行时将按需加载: %s", str(exc))
+                logger.warning(
+                    "kg_entity_relation_search_prewarm_failed: error_type=%s error=%s",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
 
         async def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
             """处理 `kg_entity_relation_search` 请求（正常路径）。
@@ -598,6 +645,11 @@ def build_mcp_server() -> MCPServer:
 
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
         message = str(exc)
+        logger.exception(
+            "build_mcp_server_kg_er_tool_failed_fallback: error_type=%s error=%s",
+            type(exc).__name__,
+            exc,
+        )
 
         async def kg_er_handler(payload: dict[str, Any]) -> dict[str, Any]:
             """处理 `kg_entity_relation_search` 请求（降级路径）。
@@ -725,6 +777,13 @@ async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str
                     runtime_unavailable_optional.append(tool_name)
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             runtime_errors[tool_name] = str(exc)
+            logger.warning(
+                "mcp_runtime_probe_failed: tool=%s error_type=%s error=%s",
+                tool_name,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             if tool_name in required_tools:
                 runtime_unavailable_required.append(tool_name)
             else:

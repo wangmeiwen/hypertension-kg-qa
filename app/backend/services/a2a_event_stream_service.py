@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import uuid
@@ -11,12 +12,21 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.a2a import A2AService
 
+logger = logging.getLogger(__name__)
+
 
 def safe_float(value: Any, default: float = 0.0) -> float:
     """安全转换为浮点数。"""
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "a2a_event_stream_safe_float_fallback: raw=%s default=%s error_type=%s error=%s",
+            value,
+            default,
+            type(exc).__name__,
+            exc,
+        )
         return default
 
 

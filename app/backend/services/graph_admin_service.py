@@ -260,7 +260,14 @@ class GraphAdminService:
             try:
                 source_id_int = int(source_id)
                 target_id_int = int(target_id)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                self._log_api_error(
+                    "/admin/graph/relationships",
+                    "create_relationship_id_parse",
+                    exc,
+                    source_id=source_id,
+                    target_id=target_id,
+                )
                 return {"ok": False, "error": "源节点和目标节点ID必须是整数"}
 
             if properties:

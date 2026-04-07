@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import logging
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Optional
@@ -18,6 +19,7 @@ from app.a2a.cards import (
 from app.a2a.runtime.request_context import RequestContextParser
 
 TerminalStates = {"completed", "failed", "canceled"}
+logger = logging.getLogger(__name__)
 
 
 class A2AService:
@@ -397,6 +399,12 @@ class A2AService:
             )
             raise
         except Exception as exc:
+            logger.exception(
+                "a2a_task_failed: task_id=%s error_type=%s error=%s",
+                task_id,
+                type(exc).__name__,
+                exc,
+            )
             await self._set_status(
                 task_id,
                 state="failed",
@@ -706,6 +714,13 @@ class A2AService:
 
             return self._rpc_error(rpc_id, -32601, "method_not_found", {"method": method})
         except Exception as exc:
+            logger.exception(
+                "a2a_rpc_failed: method=%s trace_id=%s error_type=%s error=%s",
+                method,
+                str(trace_id or "").strip(),
+                type(exc).__name__,
+                exc,
+            )
             return self._rpc_error(
                 rpc_id,
                 -32000,

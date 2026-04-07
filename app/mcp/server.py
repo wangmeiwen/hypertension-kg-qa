@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,7 +87,14 @@ class MCPServer:
         raw = str(os.getenv(env_name, str(default))).strip()
         try:
             value = int(raw)
-        except ValueError:
+        except ValueError as exc:
+            logger.warning(
+                "mcp_env_int_invalid: env=%s raw=%s error_type=%s error=%s",
+                env_name,
+                raw,
+                type(exc).__name__,
+                exc,
+            )
             value = default
         if value < min_value:
             return min_value
@@ -102,7 +112,13 @@ class MCPServer:
         raw = str(os.getenv("MCP_TOOL_TIMEOUT_SECONDS", "60")).strip()
         try:
             value = float(raw)
-        except ValueError:
+        except ValueError as exc:
+            logger.warning(
+                "mcp_env_timeout_invalid: env=MCP_TOOL_TIMEOUT_SECONDS raw=%s error_type=%s error=%s",
+                raw,
+                type(exc).__name__,
+                exc,
+            )
             value = 60.0
         return max(1.0, min(value, 300.0))
 
@@ -116,7 +132,13 @@ class MCPServer:
         raw = str(os.getenv("MCP_TOOL_MAX_RETRIES", "1")).strip()
         try:
             value = int(raw)
-        except ValueError:
+        except ValueError as exc:
+            logger.warning(
+                "mcp_env_retries_invalid: env=MCP_TOOL_MAX_RETRIES raw=%s error_type=%s error=%s",
+                raw,
+                type(exc).__name__,
+                exc,
+            )
             value = 1
         return max(0, min(value, 3))
 
@@ -147,9 +169,18 @@ class MCPServer:
             return {}
         try:
             payload = json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "mcp_retry_policy_map_invalid_json: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             return {}
         if not isinstance(payload, dict):
+            logger.warning(
+                "mcp_retry_policy_map_invalid_type: expected=dict actual=%s",
+                type(payload).__name__,
+            )
             return {}
         mapping: dict[str, str] = {}
         for key, value in payload.items():
@@ -326,6 +357,13 @@ class MCPServer:
             }
         except asyncio.TimeoutError as exc:
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            logger.warning(
+                "mcp_tool_timeout: tool=%s duration_ms=%s error_type=%s error=%s",
+                tool.name,
+                duration_ms,
+                type(exc).__name__,
+                exc,
+            )
             raise TimeoutError(f"tool_timeout:{tool.name}:{duration_ms}ms") from exc
 
     async def ainvoke(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -370,6 +408,14 @@ class MCPServer:
                 return row
             except TimeoutError as exc:
                 await self._circuit_record_timeout(canonical_name)
+                logger.warning(
+                    "mcp_tool_call_timeout: tool=%s canonical_name=%s attempt=%s max_attempts=%s error=%s",
+                    tool.name,
+                    canonical_name,
+                    attempt,
+                    attempts,
+                    exc,
+                )
                 if attempt >= attempts or retry_policy == "none":
                     return {
                         "ok": False,
@@ -383,6 +429,15 @@ class MCPServer:
                         },
                     }
             except Exception as exc:
+                logger.exception(
+                    "mcp_tool_call_failed: tool=%s canonical_name=%s attempt=%s max_attempts=%s error_type=%s error=%s",
+                    tool.name,
+                    canonical_name,
+                    attempt,
+                    attempts,
+                    type(exc).__name__,
+                    exc,
+                )
                 if attempt >= attempts or retry_policy == "none":
                     return {
                         "ok": False,

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 class AdminObservabilityService:
@@ -145,7 +148,13 @@ class AdminObservabilityService:
         if isinstance(value, str):
             try:
                 return float(value)
-            except ValueError:
+            except ValueError as exc:
+                logger.debug(
+                    "admin_observability_float_parse_failed: raw=%s error_type=%s error=%s",
+                    value,
+                    type(exc).__name__,
+                    exc,
+                )
                 return 0.0
         return 0.0
 
@@ -168,7 +177,13 @@ class AdminObservabilityService:
         if isinstance(value, str):
             try:
                 return int(float(value))
-            except ValueError:
+            except ValueError as exc:
+                logger.debug(
+                    "admin_observability_int_parse_failed: raw=%s error_type=%s error=%s",
+                    value,
+                    type(exc).__name__,
+                    exc,
+                )
                 return 0
         return 0
 

@@ -17,8 +17,11 @@
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+import logging
 import threading
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def build_queue_key(user_id: str, session_id: str = "", request_id: str = "") -> str:
@@ -124,7 +127,14 @@ class MsgQueueManager:
         future = asyncio.run_coroutine_threadsafe(binding.queue.put(message), binding.loop)
         try:
             future.result(timeout=5)
-        except FutureTimeoutError:
+        except FutureTimeoutError as exc:
+            logger.warning(
+                "msg_queue_put_threadsafe_timeout: queue_key=%s timeout_seconds=%s error_type=%s error=%s",
+                queue_key,
+                5,
+                type(exc).__name__,
+                exc,
+            )
             return
 
     def del_msg_queue(self, queue_key: str) -> None:

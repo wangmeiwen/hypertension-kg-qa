@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict
 
 from app.common.config import Config
 
 conf = Config()
+logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
@@ -90,7 +92,15 @@ class DatabaseManager:
             await writer.wait_closed()
             _ = reader
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "check_port_open_failed: host=%s port=%s timeout=%s error_type=%s error=%s",
+                host,
+                port,
+                timeout,
+                type(exc).__name__,
+                exc,
+            )
             return False
 
     async def check_neo4j(self) -> Dict[str, Any]:

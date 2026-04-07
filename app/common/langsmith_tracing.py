@@ -95,6 +95,6 @@ def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional
                 # 兼容旧版本可能使用 set_run_metadata(dict) 的调用方式
                 set_run_metadata(payload)
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-        logger.warning(f"设置 LangSmith 追踪元数据失败: {e}")
+        logger.warning("设置 LangSmith 追踪元数据失败: %s", e)
         return
 

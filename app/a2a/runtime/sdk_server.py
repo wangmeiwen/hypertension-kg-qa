@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -55,10 +58,22 @@ def build_fastapi_app(
             rpc_url=rpc_url,
             card_url=card_url,
         )
-    except TypeError:
+    except TypeError as exc:
+        logger.warning(
+            "A2A SDK app init fallback to legacy signature: error_type=%s error=%s",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         try:
             app = app_cls(request_handler=request_handler, agent_card=agent_card)
-        except TypeError:
+        except TypeError as nested_exc:
+            logger.warning(
+                "A2A SDK app init fallback to minimal signature: error_type=%s error=%s",
+                type(nested_exc).__name__,
+                nested_exc,
+                exc_info=True,
+            )
             app = app_cls(request_handler=request_handler)
     return getattr(app, "app", app)
 

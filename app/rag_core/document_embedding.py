@@ -228,7 +228,7 @@ class DocumentEmbedder:
                 "row_count": stats.get("row_count", 0)
             }
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-            logger.error(f"获取集合统计信息失败: {e}")
+            logger.error("获取集合统计信息失败: %s", e)
             return {
                 "success": False,
                 "error": str(e)

@@ -12,12 +12,15 @@
 
 import base64
 import io
+import logging
 import math
 from typing import Any, Dict, Optional
 
 from zhipuai import ZhipuAI
 
 from app.common.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class GlmOcrClient:
@@ -120,7 +123,12 @@ class GlmOcrClient:
         """
         try:
             from PIL import Image
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            logger.warning(
+                "glm_ocr_split_image_pillow_unavailable_fallback: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+            )
             return [image_bytes]
 
         img = Image.open(io.BytesIO(image_bytes))

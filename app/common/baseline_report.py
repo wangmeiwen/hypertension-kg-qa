@@ -11,9 +11,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 def _percentile(sorted_values: List[float], p: float) -> float:
@@ -122,11 +125,23 @@ def _collect_api_rows(days: int) -> List[Dict[str, Any]]:
                         continue
                     try:
                         row = json.loads(text)
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as exc:
+                        logger.debug(
+                            "baseline_report_skip_invalid_json_line: file=%s error_type=%s error=%s",
+                            str(path),
+                            type(exc).__name__,
+                            exc,
+                        )
                         continue
                     if isinstance(row, dict):
                         rows.append(row)
-        except OSError:
+        except OSError as exc:
+            logger.warning(
+                "baseline_report_read_file_failed: file=%s error_type=%s error=%s",
+                str(path),
+                type(exc).__name__,
+                exc,
+            )
             continue
     return rows
 

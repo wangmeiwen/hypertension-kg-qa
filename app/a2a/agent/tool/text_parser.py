@@ -5,7 +5,10 @@ A2A agent/tool/text_parser.py 模块。
 """
 
 import json
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_code_block(text: str) -> str:
@@ -29,7 +32,12 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 
     try:
         return json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.debug(
+            "extract_json_object_initial_parse_failed: error_type=%s error=%s",
+            type(exc).__name__,
+            exc,
+        )
         pass
 
     start = cleaned.find("{")

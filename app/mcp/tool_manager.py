@@ -49,25 +49,36 @@ class ToolManager:
             ValueError: 配置文件格式无效。
         """
         if not path.exists():
-            logger.error(f"MCP 工具配置文件不存在: {path}")
+            logger.error("MCP 工具配置文件不存在: %s", path)
             raise FileNotFoundError(f"mcp_tool_config_not_found:{path}")
 
         try:
             import yaml  # type: ignore[import-untyped]
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            logger.error(f"PyYAML 未安装，无法解析 MCP 工具配置: {exc}")
+            logger.error(
+                "PyYAML 未安装，无法解析 MCP 工具配置: error_type=%s error=%s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             raise RuntimeError("pyyaml_not_installed") from exc
 
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
         if not isinstance(data, dict):
-            logger.error(f"MCP 工具配置文件格式无效，期望 dict 实际为 {type(data).__name__}")
+            logger.error(
+                "MCP 工具配置文件格式无效，期望 dict 实际为 %s",
+                type(data).__name__,
+            )
             raise ValueError("invalid_mcp_tool_config")
 
         tools = data.get("tools", [])
         if not isinstance(tools, list):
-            logger.error(f"MCP 工具配置中 tools 字段格式无效，期望 list 实际为 {type(tools).__name__}")
+            logger.error(
+                "MCP 工具配置中 tools 字段格式无效，期望 list 实际为 %s",
+                type(tools).__name__,
+            )
             raise ValueError("invalid_tools_section")
 
         return data

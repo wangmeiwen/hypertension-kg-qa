@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import logging
 import shutil
 from typing import Any, Awaitable, Callable
 
 from app.backend.repositories.database import MessageManager, SessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class AdminSessionsService:
@@ -68,7 +71,14 @@ class AdminSessionsService:
         try:
             child.relative_to(parent)
             return True
-        except ValueError:
+        except ValueError as exc:
+            logger.debug(
+                "admin_sessions_relative_path_check_failed: child=%s parent=%s error_type=%s error=%s",
+                str(child),
+                str(parent),
+                type(exc).__name__,
+                exc,
+            )
             return False
 
     async def _clear_session_memory(self, session_id: str) -> tuple[bool, str]:
@@ -77,6 +87,12 @@ class AdminSessionsService:
             await self._await_call(self._get_session_memory_service().clear_memory, session_id)
             return True, ""
         except Exception as exc:  # pragma: no cover - error type is surfaced to API response
+            logger.exception(
+                "clear_session_memory_failed: session_id=%s error_type=%s error=%s",
+                session_id,
+                type(exc).__name__,
+                exc,
+            )
             return False, type(exc).__name__
 
     def _delete_session_log_artifacts(self, session_id: str) -> tuple[bool, str]:
@@ -91,6 +107,12 @@ class AdminSessionsService:
             shutil.rmtree(target_dir)
             return True, ""
         except Exception as exc:  # pragma: no cover - filesystem failures depend on OS state
+            logger.exception(
+                "delete_session_log_artifacts_failed: session_id=%s error_type=%s error=%s",
+                session_id,
+                type(exc).__name__,
+                exc,
+            )
             return False, type(exc).__name__
 
     @staticmethod
@@ -140,7 +162,13 @@ class AdminSessionsService:
                         turn_id = str(payload.get("turn_id") or "")
                         if turn_id:
                             memory_updates[turn_id] = payload
-            except (OSError, ValueError, TypeError):
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "read_session_turn_records_skip_file: file=%s error_type=%s error=%s",
+                    str(file_path),
+                    type(exc).__name__,
+                    exc,
+                )
                 continue
         turn_rows.sort(key=lambda item: str(item.get("started_at") or ""))
         return turn_rows, memory_updates

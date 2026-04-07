@@ -16,10 +16,13 @@
 
 import re
 import math
+import logging
 from dataclasses import dataclass
 from typing import List, Optional
 
 from app.document_parser.docling_parser import DoclingParser
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -183,8 +186,14 @@ class DocxParser:
             
             return sentences
             
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             # 如果HanLP出错，使用简单的规则切分
+            logger.warning(
+                "hanlp_sentence_split_failed_fallback: text_len=%s error_type=%s error=%s",
+                len(str(text or "")),
+                type(exc).__name__,
+                exc,
+            )
             return self._fallback_sentence_split(text)
     
     def _split_paragraph_by_sentences(self, para: str) -> List[str]:
@@ -225,8 +234,14 @@ class DocxParser:
             
             return sentences
             
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             # 降级处理
+            logger.warning(
+                "hanlp_paragraph_split_failed_fallback: para_len=%s error_type=%s error=%s",
+                len(str(para or "")),
+                type(exc).__name__,
+                exc,
+            )
             return self._fallback_sentence_split(para)
     
     def _fallback_sentence_split(self, text: str) -> List[str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Awaitable, Callable
 
 from app.a2a.client.subagent_client import SubAgentClientFactory
@@ -18,11 +19,19 @@ from app.a2a.orchestrator.nodes import (
 )
 from app.a2a.orchestrator.state import OrchestratorState
 
+logger = logging.getLogger(__name__)
+
 try:
     from langgraph.graph import END, StateGraph
 
     _LANGGRAPH_AVAILABLE = True
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+    logger.warning(
+        "LangGraph import failed for orchestrator graph, fallback runner enabled: error_type=%s error=%s",
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
     END = "__end__"
     StateGraph = None
     _LANGGRAPH_AVAILABLE = False
