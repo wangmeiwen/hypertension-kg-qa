@@ -755,8 +755,10 @@ export default function App() {
       />
       <div className="main-content">
         <header className="header">
-          <h1>HypertensionKG Agentic RAG</h1>
-          <span className="sub">高血压知识图谱 + RAG + Agent 自主检索</span>
+          <div className="brand-copy">
+            <h1>HypertensionKG Agentic RAG</h1>
+            <span className="sub">高血压知识图谱智能问答系统</span>
+          </div>
           <div className="header-actions">
             {currentSessionId && (
               <button className="new-chat-btn" onClick={handleNewChat}>
@@ -829,7 +831,7 @@ export default function App() {
           </button>
         </div>
         {activeTab === "chat" ? (
-          <>
+          <div className="chat-stage">
             <main className="chat">
               {messages.length === 0 ? (
                 <div className="welcome">
@@ -926,7 +928,6 @@ export default function App() {
                   <span className="composer-label">提问区</span>
                   <p>请描述症状、血压数值、用药情况或想了解的高血压问题。</p>
                 </div>
-                <span className="composer-badge">患者友好</span>
               </div>
               {filePreview && (
                 <div className="image-preview-container">
@@ -990,7 +991,7 @@ export default function App() {
                 系统回答用于健康知识参考，不能替代医生诊断；急症或明显不适请及时就医。
               </div>
             </footer>
-          </>
+          </div>
         ) : (
           <GraphView />
         )}

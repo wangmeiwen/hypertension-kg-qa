@@ -4628,35 +4628,48 @@ label:focus-within {
 }
 
 .main-content {
-  gap: 18px;
-  padding: 28px clamp(20px, 3vw, 44px);
+  gap: 12px;
+  padding: 18px clamp(14px, 1.8vw, 24px);
 }
 
 .main-content .header {
-  width: min(1120px, 100%);
-  margin: 0 auto;
-  padding: 10px 0 0;
+  width: 100%;
+  margin: 0;
+  padding: 8px 0 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.main-content .brand-copy {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
 }
 
 .main-content .header h1 {
   margin: 0;
   color: var(--primary-900);
-  font-size: clamp(24px, 3vw, 34px);
+  font-size: clamp(22px, 2.4vw, 28px);
   line-height: 1.15;
 }
 
 .main-content .sub {
   color: var(--text-secondary);
-  font-size: 15px;
+  font-size: 13px;
 }
 
-.header-actions {
+.main-content .header-actions {
   gap: 10px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .new-chat-btn,
 .admin-entry-btn {
-  min-height: 40px;
+  min-height: 34px;
   border: 1px solid var(--border-light);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
@@ -4673,8 +4686,8 @@ label:focus-within {
 }
 
 .tabs {
-  width: min(1120px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   justify-content: flex-start;
   border-color: var(--border-light);
   background: rgba(255, 255, 255, 0.88);
@@ -4683,9 +4696,10 @@ label:focus-within {
 }
 
 .tab {
-  min-height: 44px;
+  min-height: 36px;
   border-radius: 999px;
   color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .tab.active {
@@ -4693,15 +4707,25 @@ label:focus-within {
   box-shadow: none;
 }
 
-.chat {
-  width: min(1120px, 100%);
-  margin: 0 auto;
+.chat-stage {
+  width: 100%;
+  margin: 0;
   flex: 1;
   min-height: 0;
-  padding: clamp(18px, 2.5vw, 32px);
-  gap: 18px;
+  position: relative;
+  display: flex;
+}
+
+.chat {
+  width: 100%;
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  padding: clamp(14px, 2vw, 22px);
+  padding-bottom: 170px;
+  gap: 12px;
   border: 1px solid var(--border-light);
-  border-radius: 28px;
+  border-radius: 22px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94)),
     var(--bg-card);
@@ -4711,41 +4735,41 @@ label:focus-within {
 .welcome {
   max-width: 720px;
   margin: auto;
-  padding: clamp(28px, 6vw, 72px) 20px;
+  padding: clamp(18px, 4vw, 42px) 16px;
 }
 
 .welcome-kicker {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   color: var(--primary-700);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .welcome h2 {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   color: var(--primary-900);
-  font-size: clamp(28px, 5vw, 46px);
+  font-size: clamp(24px, 4vw, 34px);
   line-height: 1.12;
   letter-spacing: -0.04em;
 }
 
 .welcome p {
   max-width: 620px;
-  margin: 0 auto 22px;
+  margin: 0 auto 14px;
   color: var(--text-secondary);
-  font-size: 17px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.58;
 }
 
 .welcome-note {
-  padding: 14px 18px;
+  padding: 10px 14px;
   border: 1px solid var(--warning-100);
-  border-radius: 18px;
+  border-radius: 14px;
   background: var(--warning-50);
   color: #7c2d12 !important;
-  font-size: 15px !important;
+  font-size: 13px !important;
 }
 
 .examples {
@@ -4754,13 +4778,13 @@ label:focus-within {
 }
 
 .examples button {
-  min-height: 52px;
-  padding: 14px 18px;
+  min-height: 42px;
+  padding: 10px 14px;
   border-color: var(--border-light);
-  border-radius: 16px;
+  border-radius: 13px;
   background: #ffffff;
   color: var(--primary-900);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.55;
   box-shadow: var(--shadow-sm);
@@ -4775,8 +4799,8 @@ label:focus-within {
 
 .msg {
   max-width: min(86%, 840px);
-  padding: 18px 20px;
-  border-radius: 22px;
+  padding: 12px 14px;
+  border-radius: 17px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
@@ -4795,15 +4819,15 @@ label:focus-within {
 }
 
 .role {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   color: var(--primary-700);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 
 .content {
-  font-size: 16px;
-  line-height: 1.78;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .assistant-markdown {
@@ -4811,7 +4835,7 @@ label:focus-within {
 }
 
 .assistant-markdown .md-paragraph {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .assistant-markdown .md-h1,
@@ -4820,47 +4844,47 @@ label:focus-within {
 .assistant-markdown .md-h4,
 .assistant-markdown .md-h5,
 .assistant-markdown .md-h6 {
-  margin: 18px 0 10px;
+  margin: 12px 0 8px;
   color: var(--primary-900);
   line-height: 1.35;
 }
 
 .assistant-markdown .md-h1 {
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .assistant-markdown .md-h2 {
-  font-size: 21px;
-}
-
-.assistant-markdown .md-h3 {
   font-size: 18px;
 }
 
+.assistant-markdown .md-h3 {
+  font-size: 16px;
+}
+
 .assistant-markdown .md-list {
-  padding-left: 24px;
+  padding-left: 20px;
 }
 
 .assistant-markdown .md-list li {
-  margin: 8px 0;
+  margin: 5px 0;
   padding-left: 2px;
 }
 
 .assistant-markdown .md-quote,
 .assistant-markdown .medical-info-block {
-  margin: 14px 0;
-  padding: 14px 16px;
+  margin: 10px 0;
+  padding: 10px 12px;
   border: 1px solid var(--border-light);
-  border-left: 5px solid var(--primary-400);
-  border-radius: 16px;
+  border-left: 4px solid var(--primary-400);
+  border-radius: 12px;
   background: #f8feff;
   color: var(--text-primary);
 }
 
 .assistant-markdown .medical-info-block::before {
   display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
+  margin-bottom: 4px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4905,12 +4929,12 @@ label:focus-within {
 }
 
 .assistant-markdown .md-table {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .assistant-markdown .md-table th,
 .assistant-markdown .md-table td {
-  padding: 12px 14px;
+  padding: 8px 10px;
 }
 
 .assistant-markdown .md-table thead th {
@@ -4919,20 +4943,20 @@ label:focus-within {
 }
 
 .live-tool-status {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-color: var(--primary-200);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--primary-50);
   color: var(--primary-800);
 }
 
 .think summary {
-  min-height: 44px;
+  min-height: 34px;
   color: var(--text-secondary);
 }
 
 .msg-actions {
-  margin-top: 14px;
+  margin-top: 10px;
   flex-wrap: wrap;
 }
 
@@ -4944,60 +4968,56 @@ label:focus-within {
 }
 
 .inputBar {
-  width: min(1120px, 100%);
-  margin: 0 auto;
-  padding: 18px;
-  border-color: var(--border-light);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: var(--shadow-lg);
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 20;
+  width: min(1120px, calc(100% - 32px));
+  margin: 0;
+  padding: 10px 12px;
+  transform: translateX(-50%);
+  border-color: rgba(148, 163, 184, 0.28);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14), 0 2px 8px rgba(8, 145, 178, 0.08);
+  backdrop-filter: blur(18px);
 }
 
 .composer-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 2px 2px 6px;
+  gap: 8px;
+  padding: 0 4px 2px;
 }
 
 .composer-label {
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 1px;
   color: var(--primary-900);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .composer-header p {
   margin: 0;
   color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.composer-badge {
-  flex-shrink: 0;
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: var(--primary-50);
-  color: var(--primary-700);
   font-size: 12px;
-  font-weight: 800;
+  line-height: 1.35;
 }
 
 .input-row {
   align-items: stretch;
-  gap: 12px;
+  gap: 8px;
 }
 
 .image-upload-btn {
-  width: 48px;
-  min-width: 48px;
+  width: 44px;
+  min-width: 44px;
   height: auto;
-  min-height: 56px;
+  min-height: 46px;
   border: 1px solid var(--border-light);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--primary-50);
 }
 
@@ -5007,14 +5027,15 @@ label:focus-within {
 }
 
 .inputBar textarea {
-  min-height: 84px;
-  max-height: 220px;
+  min-height: 50px;
+  max-height: 150px;
+  resize: none;
   border: 1px solid var(--border-light);
-  border-radius: 18px;
+  border-radius: 15px;
   background: #fbfefe;
   color: var(--text-primary);
-  font-size: 16px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .inputBar textarea:focus {
@@ -5023,9 +5044,9 @@ label:focus-within {
 }
 
 .inputBar .send-btn {
-  width: 116px;
-  min-height: 56px;
-  border-radius: 16px;
+  width: 96px;
+  min-height: 46px;
+  border-radius: 14px;
   background: var(--cta-500);
   box-shadow: 0 10px 22px rgba(5, 150, 105, 0.2);
 }
@@ -5043,10 +5064,10 @@ label:focus-within {
 
 .inputBar .msg-action-btn.danger {
   width: auto;
-  min-width: 72px;
-  min-height: 56px;
+  min-width: 64px;
+  min-height: 46px;
   border: 1px solid var(--danger-100);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--danger-50);
   color: var(--danger-700);
   box-shadow: none;
@@ -5082,10 +5103,10 @@ label:focus-within {
 }
 
 .medical-disclaimer {
-  padding-top: 2px;
+  padding: 2px 4px 0;
   color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5150,15 +5171,20 @@ label:focus-within {
   }
 
   .main-content {
-    padding: 18px 14px 22px;
-    gap: 14px;
+    padding: 14px 12px 18px;
+    gap: 10px;
   }
 
   .main-content .header {
     gap: 8px;
+    flex-wrap: wrap;
   }
 
-  .header-actions {
+  .main-content .brand-copy {
+    width: 100%;
+  }
+
+  .main-content .header-actions {
     width: 100%;
     margin-left: 0;
     flex-wrap: wrap;
@@ -5181,11 +5207,12 @@ label:focus-within {
 
   .chat {
     min-height: 50vh;
-    border-radius: 22px;
+    border-radius: 18px;
+    padding-bottom: 230px;
   }
 
   .welcome {
-    padding: 28px 4px;
+    padding: 20px 4px;
   }
 
   .msg,
@@ -5195,24 +5222,26 @@ label:focus-within {
   }
 
   .inputBar {
-    padding: 14px;
-    border-radius: 20px;
+    width: calc(100% - 24px);
+    bottom: 12px;
+    padding: 10px;
+    border-radius: 18px;
   }
 
   .composer-header {
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
   }
 
   .input-row {
     display: grid;
-    grid-template-columns: 48px 1fr;
+    grid-template-columns: 44px 1fr;
     align-items: stretch;
   }
 
   .inputBar textarea {
     grid-column: 2;
-    min-height: 104px;
+    min-height: 72px;
   }
 
   .inputBar .send-btn {
@@ -5246,19 +5275,19 @@ label:focus-within {
   }
 
   .main-content .header h1 {
-    font-size: 23px;
+    font-size: 21px;
   }
 
   .main-content .sub {
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .welcome h2 {
-    font-size: 28px;
+    font-size: 24px;
   }
 
   .welcome p {
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .assistant-markdown .md-table {
