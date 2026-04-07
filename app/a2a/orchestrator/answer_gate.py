@@ -11,6 +11,25 @@ _INSUFFICIENT_MESSAGE = (
     "数据库未检索到足够数据支撑回答，根据通识回答为：当前信息无法形成可靠结论，建议补充更具体的问题条件后重试，例如明确人群、指标阈值或治疗场景。"
 )
 
+_MEDICAL_DISCLAIMER = "免责声明：以上内容仅供健康科普参考，不构成个体化医疗诊断或处方建议，请以执业医生面诊意见为准。"
+
+
+def _append_medical_disclaimer(answer: str) -> str:
+    """执行append_medical_disclaimer流程并返回结果。
+    
+    Args:
+        answer: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
+    text = str(answer or "").strip()
+    if not text:
+        return _MEDICAL_DISCLAIMER
+    if _MEDICAL_DISCLAIMER in text or "免责声明：" in text:
+        return text
+    return f"{text}\n{_MEDICAL_DISCLAIMER}"
+
 
 def assess_answerability(
     *,
@@ -18,6 +37,16 @@ def assess_answerability(
     gate_result: dict[str, Any],
     coverage_map: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    """执行assess_answerability流程并返回结果。
+    
+    Args:
+        evidence_bundle: 融合后的证据集合。
+        gate_result: 门控评估结果。
+        coverage_map: 子任务覆盖度映射。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     should_backtrack = bool((gate_result or {}).get("should_backtrack"))
     sufficient_raw = (gate_result or {}).get("sufficient")
     sufficient = bool(sufficient_raw) if sufficient_raw is not None else True
@@ -77,6 +106,21 @@ def compose_final_answer(
     writer_metadata: dict[str, Any] | None = None,
     writer_token_usage: dict[str, Any] | None = None,
 ) -> FinalAnswer:
+    """执行compose_final_answer流程并返回结果。
+    
+    Args:
+        question: 用户输入问题文本。
+        evidence_bundle: 融合后的证据集合。
+        gate_result: 门控评估结果。
+        answerability: 函数输入参数。
+        trace: 处理链路追踪信息。
+        answer_text: 终答文本内容。
+        writer_metadata: 写作器元数据。
+        writer_token_usage: 写作阶段的 token 统计。
+    
+    Returns:
+        FinalAnswer: 执行结果。
+    """
     kg_rows = (evidence_bundle or {}).get("kg_evidence")
     rag_rows = (evidence_bundle or {}).get("rag_evidence")
     kg_count = len(kg_rows) if isinstance(kg_rows, list) else 0
@@ -96,12 +140,13 @@ def compose_final_answer(
                 "证据支持点：已基于现有证据生成降级回答。\n"
                 "不确定性与适用边界：请结合缺失证据项进行审慎判断。"
             )
+    answer = _append_medical_disclaimer(answer)
 
     writer_meta = writer_metadata if isinstance(writer_metadata, dict) else {}
     writer_tokens = writer_token_usage if isinstance(writer_token_usage, dict) else {}
     prompt_version = str(writer_meta.get("prompt_version") or "")
     writer_used_raw = str(writer_meta.get("writer_used") or "").strip().lower()
-    if writer_used_raw in {"llm", "fallback", "template"}:
+    if writer_used_raw in {"llm", "fallback", "template", "memory", "direct"}:
         writer_used = writer_used_raw
     else:
         writer_used = "template" if mode == "none" else "llm"

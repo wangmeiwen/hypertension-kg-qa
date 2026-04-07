@@ -21,6 +21,18 @@ class SessionTurnService:
         message_manager: Any = MessageManager,
         session_manager: Any = SessionManager,
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            await_call: 函数输入参数。
+            get_session_memory_service: 函数输入参数。
+            log_api_error: 函数输入参数。
+            message_manager: 函数输入参数。
+            session_manager: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._await_call = await_call
         self._get_session_memory_service = get_session_memory_service
         self._log_api_error = log_api_error
@@ -112,4 +124,11 @@ class SessionTurnService:
             "original_input_text": str(runtime_payload.get("original_input_text") or input_text or ""),
             "resolved_query": runtime_payload.get("resolved_query") if isinstance(runtime_payload.get("resolved_query"), dict) else {},
             "memory_context": runtime_payload.get("memory_context") if isinstance(runtime_payload.get("memory_context"), dict) else {},
+            "topic_shift_detected": bool(
+                (
+                    runtime_payload.get("memory_context")
+                    if isinstance(runtime_payload.get("memory_context"), dict)
+                    else {}
+                ).get("topic_shift_signal", {}).get("topic_shift_detected")
+            ),
         }

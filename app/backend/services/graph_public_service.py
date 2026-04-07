@@ -14,6 +14,16 @@ class GraphPublicService:
         neo4j_client: Any,
         log_api_error: Callable[..., None],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            await_call: 函数输入参数。
+            neo4j_client: 函数输入参数。
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._await_call = await_call
         self._neo4j_client = neo4j_client
         self._log_api_error = log_api_error

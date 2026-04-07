@@ -127,6 +127,15 @@ class A2AEventStreamService:
         get_a2a: Any,
         stream_events_factory: Optional[Any] = None,
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            get_a2a: 函数输入参数。
+            stream_events_factory: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._get_a2a = get_a2a
         self._stream_events_factory = stream_events_factory
 
@@ -243,6 +252,8 @@ class A2AEventStreamService:
                 tool_observations = tool_observations_obj if isinstance(tool_observations_obj, list) else []
                 evidence_summary_obj = extract_a2a_artifact(task_payload, "evidence_summary")
                 evidence_summary = evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
+                telemetry_obj = extract_a2a_artifact(task_payload, "telemetry")
+                telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
                 if state == "completed" and final_text:
                     yield {"type": "reply", "msg": final_text, "task_id": task_id}
                 yield {
@@ -254,6 +265,7 @@ class A2AEventStreamService:
                     "processing_steps": processing_steps,
                     "tool_observations": tool_observations,
                     "evidence_summary": evidence_summary,
+                    "telemetry": telemetry,
                 }
                 break
 

@@ -14,6 +14,8 @@ from app.backend.repositories.database import fetch_all, fetch_one, execute, ins
 
 
 class SessionManager:
+    """封装会话表的创建、查询、更新与删除操作。"""
+
     @staticmethod
     async def create_session(user_id: str, title: str = "新会话") -> dict:
         """创建资源。
@@ -190,6 +192,8 @@ class SessionManager:
 
 
 class MessageManager:
+    """封装会话消息的写入、查询与回滚操作。"""
+
     @staticmethod
     async def add_message(session_id: str, role: str, content: str, think_content: str = "") -> dict:
         """向会话追加一条消息并更新时间。

@@ -15,6 +15,18 @@ def run_gate(
     max_backtrack: int,
     is_degraded: bool,
 ) -> dict[str, Any]:
+    """运行gate相关信息并返回结果。
+    
+    Args:
+        traces: 函数输入参数。
+        classification: 函数输入参数。
+        backtrack_count: 函数输入参数。
+        max_backtrack: 函数输入参数。
+        is_degraded: 函数输入参数。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     return evaluate_and_gate(
         traces=traces,
         classification=classification,

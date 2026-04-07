@@ -20,6 +20,16 @@ class AdminRuntimeService:
         build_a2a_runtime_snapshot: Callable[..., Awaitable[dict[str, Any]]],
         get_a2a: Callable[[], Any],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            measure_event_loop_lag: 函数输入参数。
+            build_a2a_runtime_snapshot: 函数输入参数。
+            get_a2a: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._measure_event_loop_lag = measure_event_loop_lag
         self._build_a2a_runtime_snapshot = build_a2a_runtime_snapshot
         self._get_a2a = get_a2a

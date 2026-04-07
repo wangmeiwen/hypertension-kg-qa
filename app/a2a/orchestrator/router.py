@@ -11,9 +11,22 @@ def select_agent(
     failed_routes: list[dict],
     last_result: dict,
 ) -> str:
+    """执行select_agent流程并返回结果。
+    
+    Args:
+        task: 当前处理任务。
+        coverage_map: 子任务覆盖度映射。
+        failed_routes: 函数输入参数。
+        last_result: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
     task_id = str(task.subtask_id)
     coverage = coverage_map.get(task_id) if isinstance(coverage_map, dict) else {}
     status = str((coverage or {}).get("coverage_status") or "")
+    _ = failed_routes
+    _ = last_result
 
     # 主路径默认遵从 decompose/planner 已确定的 target_agent。
     preferred = "rag" if str(task.target_agent or "kg") == "rag" else "kg"
@@ -24,21 +37,4 @@ def select_agent(
 
     if status == "strong":
         return preferred
-
-    last_no_signal = bool((last_result or {}).get("no_signal"))
-    last_agent = str((last_result or {}).get("target_agent") or "")
-    if last_no_signal and last_agent in {"kg", "rag"} and last_agent == preferred:
-        return "rag" if last_agent == "kg" else "kg"
-
-    recent_fail = False
-    for row in failed_routes[-5:]:
-        if not isinstance(row, dict):
-            continue
-        if str(row.get("subtask_id") or "") != task_id:
-            continue
-        if str(row.get("agent") or "") == preferred:
-            recent_fail = True
-            break
-    if recent_fail:
-        return "rag" if preferred == "kg" else "kg"
     return preferred

@@ -6,6 +6,8 @@ import json
 import logging
 from typing import Any
 
+import httpx
+
 from app.a2a.agent.llm_client import LLMClient
 from app.common.config import Config
 
@@ -34,6 +36,14 @@ _OUTCOME_HINTS = (
 
 
 def _dedup_keep_order(rows: list[str]) -> list[str]:
+    """执行dedup_keep_order流程并返回结果。
+    
+    Args:
+        rows: 输入数据列表。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     output: list[str] = []
     seen: set[str] = set()
     for item in rows:
@@ -46,12 +56,29 @@ def _dedup_keep_order(rows: list[str]) -> list[str]:
 
 
 def _normalize_tokens(raw: Any) -> list[str]:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        raw: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     if not isinstance(raw, list):
         return []
     return [str(item or "").strip().lower() for item in raw if str(item or "").strip()]
 
 
 def _contains_any(text: str, tokens: list[str]) -> bool:
+    """执行contains_any流程并返回结果。
+    
+    Args:
+        text: 输入文本。
+        tokens: 函数输入参数。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     if not tokens:
         return False
     lowered = str(text or "").lower()
@@ -59,6 +86,14 @@ def _contains_any(text: str, tokens: list[str]) -> bool:
 
 
 def _extract_row_text(row: dict[str, Any]) -> str:
+    """提取并返回关键信息。
+    
+    Args:
+        row: 输入数据项。
+    
+    Returns:
+        str: 文本结果。
+    """
     if not isinstance(row, dict):
         return ""
 
@@ -86,6 +121,14 @@ def _extract_row_text(row: dict[str, Any]) -> str:
 
 
 def _extract_row_citation(row: dict[str, Any]) -> str:
+    """提取并返回关键信息。
+    
+    Args:
+        row: 输入数据项。
+    
+    Returns:
+        str: 文本结果。
+    """
     if not isinstance(row, dict):
         return ""
 
@@ -108,6 +151,18 @@ def _build_row_score(
     entity_tokens: list[str],
     missing_tokens: list[str],
 ) -> tuple[float, bool]:
+    """构建并返回目标数据。
+    
+    Args:
+        text: 输入文本。
+        source: 函数输入参数。
+        must_cover_tokens: 函数输入参数。
+        entity_tokens: 函数输入参数。
+        missing_tokens: 函数输入参数。
+    
+    Returns:
+        tuple[float, bool]: 执行结果。
+    """
     score = 0.0
     lower_text = str(text or "").lower()
 
@@ -146,6 +201,18 @@ def pack_final_answer_evidence(
     resolved_query: dict[str, Any],
     max_per_subtask: int = 5,
 ) -> dict[str, Any]:
+    """执行pack_final_answer_evidence流程并返回结果。
+    
+    Args:
+        evidence_bundle: 融合后的证据集合。
+        gate_result: 门控评估结果。
+        coverage_map: 子任务覆盖度映射。
+        resolved_query: 问题改写后的结构化数据。
+        max_per_subtask: 函数输入参数。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     kg_rows = evidence_bundle.get("kg_evidence") if isinstance(evidence_bundle.get("kg_evidence"), list) else []
     rag_rows = evidence_bundle.get("rag_evidence") if isinstance(evidence_bundle.get("rag_evidence"), list) else []
 
@@ -165,6 +232,15 @@ def pack_final_answer_evidence(
     scored_rows: list[dict[str, Any]] = []
 
     def _consume_rows(rows: list[dict[str, Any]], source: str) -> None:
+        """执行consume_rows流程并返回结果。
+        
+        Args:
+            rows: 输入数据列表。
+            source: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -261,6 +337,16 @@ def _build_writer_messages(
     answer_mode: str,
     packed_evidence: dict[str, Any],
 ) -> list[dict[str, str]]:
+    """构建并返回目标数据。
+    
+    Args:
+        question: 用户输入问题文本。
+        answer_mode: 函数输入参数。
+        packed_evidence: 函数输入参数。
+    
+    Returns:
+        list[dict[str, str]]: 处理后的列表结果。
+    """
     system_prompt = (
         "你是医疗问答终答写作器。"
         "只能基于给定证据回答，不得编造未支持结论。"
@@ -297,6 +383,16 @@ def build_degraded_answer(
     answer_mode: str,
     packed_evidence: dict[str, Any],
 ) -> str:
+    """构建degraded_answer相关信息并返回结果。
+    
+    Args:
+        question: 用户输入问题文本。
+        answer_mode: 函数输入参数。
+        packed_evidence: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
     supported_points = packed_evidence.get("supported_points") if isinstance(packed_evidence.get("supported_points"), list) else []
     indirect_points = packed_evidence.get("indirect_points") if isinstance(packed_evidence.get("indirect_points"), list) else []
     missing_points = packed_evidence.get("missing_points") if isinstance(packed_evidence.get("missing_points"), list) else []
@@ -341,6 +437,15 @@ class AnswerWriter:
     """终答写作器。"""
 
     def __init__(self, llm_client: LLMClient | None = None, conf: Config | None = None) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            llm_client: LLM 客户端实例。
+            conf: 配置对象。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._conf = conf if conf is not None else Config()
         self._client = llm_client if llm_client is not None else LLMClient(self._conf)
 
@@ -355,6 +460,20 @@ class AnswerWriter:
         resolved_query: dict[str, Any],
         processing_steps: list[str],
     ) -> dict[str, Any]:
+        """执行generate流程并返回结果。
+        
+        Args:
+            question: 用户输入问题文本。
+            answer_mode: 函数输入参数。
+            evidence_bundle: 融合后的证据集合。
+            gate_result: 门控评估结果。
+            coverage_map: 子任务覆盖度映射。
+            resolved_query: 问题改写后的结构化数据。
+            processing_steps: 函数输入参数。
+        
+        Returns:
+            dict[str, Any]: 结构化结果数据。
+        """
         packed_evidence = pack_final_answer_evidence(
             evidence_bundle=evidence_bundle,
             gate_result=gate_result,
@@ -396,7 +515,17 @@ class AnswerWriter:
                 "packed_evidence": packed_evidence,
                 "processing_steps": processing_steps,
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            httpx.HTTPError,
+            TimeoutError,
+        ) as exc:
             logger.warning(
                 "answer_writer_fallback %s",
                 json.dumps(
@@ -441,6 +570,21 @@ async def generate_final_answer_async(
     processing_steps: list[str],
     llm_client: LLMClient | None = None,
 ) -> dict[str, Any]:
+    """执行generate_final_answer_async流程并返回结果。
+    
+    Args:
+        question: 用户输入问题文本。
+        answer_mode: 函数输入参数。
+        evidence_bundle: 融合后的证据集合。
+        gate_result: 门控评估结果。
+        coverage_map: 子任务覆盖度映射。
+        resolved_query: 问题改写后的结构化数据。
+        processing_steps: 函数输入参数。
+        llm_client: LLM 客户端实例。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     writer = AnswerWriter(llm_client=llm_client)
     return await writer.generate(
         question=question,

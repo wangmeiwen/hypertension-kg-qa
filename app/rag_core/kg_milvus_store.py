@@ -51,6 +51,8 @@ except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, 
 
 
 class KgMilvusStore:
+    """封装知识图谱实体关系的向量存储、检索与聚合能力。"""
+
     _CLIENT_LOCK = Lock()
     _EMBEDDER_LOCK = Lock()
     _CLIENT_CACHE: Dict[str, MilvusClient] = {}

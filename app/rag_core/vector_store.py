@@ -90,6 +90,8 @@ def _generate_uuid_int64_id() -> int:
 
 # 定义 VectorStore 类，封装向量存储和检索功能
 class VectorStore:
+    """封装通用文档向量存储、混合检索与重排序流程。"""
+
     _MODEL_LOCK = Lock()
     _CLIENT_LOCK = Lock()
     _EMBEDDING_FUNCTION_CACHE: dict[str, BGEM3EmbeddingFunction] = {}
@@ -548,10 +550,12 @@ class VectorStore:
                 parent_docs = self._get_unique_parent_docs(sub_chunks)
                 if len(parent_docs) < 2:
                     return parent_docs[:conf.CANDIDATE_M]
-                pairs = [[query, doc.page_content] for doc in parent_docs]
+                rerank_cap = max(2, int(conf.CANDIDATE_M))
+                rerank_docs = parent_docs[:rerank_cap]
+                pairs = [[query, doc.page_content] for doc in rerank_docs]
                 with log_duration("milvus.rerank", pairs=len(pairs)):
                     scores = self.reranker.predict(pairs)
-                ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
+                ranked_parent_docs = [doc for _, doc in sorted(zip(scores, rerank_docs), reverse=True)]
                 return ranked_parent_docs[:conf.CANDIDATE_M]
 
             # 使用 RRF 算法：分别执行两次检索，然后融合结果
@@ -600,16 +604,18 @@ class VectorStore:
             # 如果有父文档，进行重排序
             if parent_docs:
                 # 创建查询与文档内容的配对列表
-                pairs = [[query, doc.page_content] for doc in parent_docs]
+                rerank_cap = max(2, int(conf.CANDIDATE_M))
+                rerank_docs = parent_docs[:rerank_cap]
+                pairs = [[query, doc.page_content] for doc in rerank_docs]
                 # 使用 BGE-Reranker 计算每个配对的得分
                 with log_duration("milvus.rerank", pairs=len(pairs)):
                     try:
                         scores = self.reranker.predict(pairs)
                         # 根据得分从高到低排序文档
-                        ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
+                        ranked_parent_docs = [doc for _, doc in sorted(zip(scores, rerank_docs), reverse=True)]
                     except Exception as e:
                         logger.warning(f"重排序失败: {e}")
-                        ranked_parent_docs = parent_docs
+                        ranked_parent_docs = rerank_docs
             else:
                 ranked_parent_docs = []
 

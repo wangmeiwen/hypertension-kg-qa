@@ -24,6 +24,11 @@ def create_admin_sessions_router(service: AdminSessionsService) -> APIRouter:
         """获取指定会话消息。"""
         return await service.admin_get_session_messages(session_id=session_id)
 
+    @router.get("/admin/sessions/{session_id}/observability")
+    async def admin_get_session_observability(session_id: str) -> dict[str, Any]:
+        """获取指定会话的按轮次观测详情。"""
+        return await service.admin_get_session_observability(session_id=session_id)
+
     @router.get("/admin/sessions/{session_id}/memory")
     async def admin_get_session_memory(session_id: str) -> dict[str, Any]:
         """获取指定会话记忆快照。"""

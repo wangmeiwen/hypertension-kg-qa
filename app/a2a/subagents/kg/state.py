@@ -10,6 +10,8 @@ from typing import Any, TypedDict
 
 
 class KgSubAgentState(TypedDict, total=False):
+    """定义 KG 子代理执行链路的状态数据结构。"""
+
     input_question: str
     subtask_id: int
     constraints: dict[str, Any]

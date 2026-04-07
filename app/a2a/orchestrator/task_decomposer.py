@@ -46,6 +46,14 @@ _EFFICACY_HINTS = ("efficacy", "effect", "outcome", "benefit", "疗效", "结局
 
 
 def _unique(values: list[str]) -> list[str]:
+    """执行unique流程并返回结果。
+    
+    Args:
+        values: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     rows: list[str] = []
     seen: set[str] = set()
     for item in values:
@@ -58,6 +66,14 @@ def _unique(values: list[str]) -> list[str]:
 
 
 def _is_source_cover_point(point: str) -> bool:
+    """判断条件是否成立。
+    
+    Args:
+        point: 函数输入参数。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     token = str(point or "").strip().lower()
     if not token:
         return False
@@ -65,6 +81,14 @@ def _is_source_cover_point(point: str) -> bool:
 
 
 def _question_semantic(question: str) -> str:
+    """执行question_semantic流程并返回结果。
+    
+    Args:
+        question: 用户输入问题文本。
+    
+    Returns:
+        str: 文本结果。
+    """
     token = str(question or "").strip().lower()
     if not token:
         return ""
@@ -76,6 +100,15 @@ def _question_semantic(question: str) -> str:
 
 
 def _pick_semantic_cover_points(question: str, points: list[str]) -> list[str]:
+    """执行pick_semantic_cover_points流程并返回结果。
+    
+    Args:
+        question: 用户输入问题文本。
+        points: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     semantic = _question_semantic(question)
     if semantic == "safety":
         safety_points = [point for point in points if any(hint in str(point).lower() for hint in _SAFETY_HINTS)]
@@ -91,6 +124,16 @@ def _pick_semantic_cover_points(question: str, points: list[str]) -> list[str]:
 
 
 def _resolve_task_specific_must_cover(subquery: str, target_agent: str, must_cover: list[str]) -> tuple[list[str], bool]:
+    """解析并确定task_specific_must_cover相关信息并返回结果。
+    
+    Args:
+        subquery: 函数输入参数。
+        target_agent: 函数输入参数。
+        must_cover: 函数输入参数。
+    
+    Returns:
+        tuple[list[str], bool]: 执行结果。
+    """
     if not must_cover:
         return ["answer"], False
 
@@ -123,6 +166,16 @@ def _resolve_task_specific_must_cover(subquery: str, target_agent: str, must_cov
 
 
 def _sanitize_list(value: Any, max_items: int = 8, max_len: int = 200) -> list[str]:
+    """清洗输入并返回可用结果。
+    
+    Args:
+        value: 待处理输入值。
+        max_items: 函数输入参数。
+        max_len: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     if not isinstance(value, list):
         return []
     rows: list[str] = []
@@ -137,44 +190,99 @@ def _sanitize_list(value: Any, max_items: int = 8, max_len: int = 200) -> list[s
 
 
 def _normalize_preferred_sources(value: Any) -> list[str]:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        value: 待处理输入值。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     rows: list[str] = []
-    for item in _sanitize_list(value, max_items=2, max_len=8):
+    for item in _sanitize_list(value, max_items=3, max_len=32):
         source = str(item or "").strip().lower()
-        if source in {"kg", "rag"} and source not in rows:
+        if source in {"memory", "kg", "rag", "direct", "assistant_capability"} and source not in rows:
             rows.append(source)
     if not rows:
         rows = ["kg"]
     return rows
 
 
+def _normalize_question_mode(value: Any) -> str:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        value: 待处理输入值。
+    
+    Returns:
+        str: 文本结果。
+    """
+    token = str(value or "").strip()
+    if token in {
+        "repeat_medical_question",
+        "memory_lookup",
+        "assistant_capability",
+        "generic_direct",
+        "medical_new_question",
+        "medical_gap_followup",
+    }:
+        return token
+    return "medical_new_question"
+
+
 def _is_source_query(text: str) -> bool:
+    """判断条件是否成立。
+    
+    Args:
+        text: 输入文本。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     token = str(text or "")
     return any(hint in token for hint in _SOURCE_HINTS)
 
 
 def _is_relation_query(text: str) -> bool:
+    """判断条件是否成立。
+    
+    Args:
+        text: 输入文本。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     token = str(text or "")
     return any(hint in token for hint in _RELATION_HINTS)
 
 
 def _pick_target_agent(subquery: str, intent: str, preferred_sources: list[str]) -> str:
-    if _is_source_query(subquery) or intent == "source_locating":
-        return "rag"
-
-    has_kg = "kg" in preferred_sources
-    has_rag = "rag" in preferred_sources
-
-    if has_kg and not has_rag:
-        return "kg"
-    if has_rag and not has_kg:
-        return "rag"
-
-    if _is_relation_query(subquery):
-        return "kg"
+    """执行pick_target_agent流程并返回结果。
+    
+    Args:
+        subquery: 函数输入参数。
+        intent: 函数输入参数。
+        preferred_sources: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
+    _ = subquery
+    _ = intent
+    _ = preferred_sources
+    # 主流程固定首轮走 KG，RAG 仅在补检索判定后按条件开启。
     return "kg"
 
 
 def _normalize_intent(intent: str) -> str:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        intent: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
     token = str(intent or "").strip().lower()
     if token in _SUPPORTED_INTENTS:
         return token
@@ -190,6 +298,15 @@ def _normalize_intent(intent: str) -> str:
 
 
 def _build_evidence_type(target_agent: str, intent: str) -> list[str]:
+    """构建并返回目标数据。
+    
+    Args:
+        target_agent: 函数输入参数。
+        intent: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     if target_agent == "rag":
         return ["text_quote"]
     if intent in {"comparison", "evidence_verification"}:
@@ -198,6 +315,15 @@ def _build_evidence_type(target_agent: str, intent: str) -> list[str]:
 
 
 def _priority(intent: str, index: int) -> int:
+    """执行priority流程并返回结果。
+    
+    Args:
+        intent: 函数输入参数。
+        index: 函数输入参数。
+    
+    Returns:
+        int: 数值结果。
+    """
     base = 60
     if intent == "comparison":
         base = 90
@@ -211,9 +337,22 @@ def _priority(intent: str, index: int) -> int:
 
 
 def decompose_to_tasks(resolved_query: dict[str, Any], constraints: SubAgentConstraints) -> list[SubTask]:
+    """执行decompose_to_tasks流程并返回结果。
+    
+    Args:
+        resolved_query: 问题改写后的结构化数据。
+        constraints: 函数输入参数。
+    
+    Returns:
+        list[SubTask]: 处理后的列表结果。
+    """
     source = resolved_query if isinstance(resolved_query, dict) else {}
     standalone_question = str(source.get("standalone_question") or "").strip()
     intent = _normalize_intent(str(source.get("intent") or "direct_answer"))
+    question_mode = _normalize_question_mode(source.get("question_mode"))
+
+    if question_mode in {"memory_lookup", "assistant_capability", "generic_direct", "repeat_medical_question"}:
+        return []
 
     subqueries = _sanitize_list(source.get("subqueries"), max_items=8, max_len=240)
     if not subqueries and standalone_question:
@@ -259,6 +398,14 @@ def decompose_to_tasks(resolved_query: dict[str, Any], constraints: SubAgentCons
 
 
 def build_classification(tasks: list[SubTask]) -> dict[str, Any]:
+    """构建classification相关信息并返回结果。
+    
+    Args:
+        tasks: 任务列表。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     if not tasks:
         return {"primary_type": "SIMPLE", "types": ["SIMPLE"], "hop_count": 0, "subqueries": []}
 

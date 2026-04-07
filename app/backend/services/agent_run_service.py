@@ -27,6 +27,15 @@ class AgentRunService:
         get_a2a: Any,
         log_api_error: Any,
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            get_a2a: 函数输入参数。
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._get_a2a = get_a2a
         self._log_api_error = log_api_error
 

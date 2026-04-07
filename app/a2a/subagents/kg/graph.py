@@ -29,6 +29,8 @@ except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, 
 
 
 class _FallbackGraphRunner:
+    """在 LangGraph 不可用时串行执行 KG 子图节点。"""
+
     def __init__(self, tool_gateway: MCPToolGateway):
         """初始化 _FallbackGraphRunner 实例。
         

@@ -7,8 +7,10 @@
 - LLMClient: LLM 调用客户端
 """
 
-import json
 import asyncio
+import hashlib
+import json
+import logging
 
 import time
 
@@ -22,7 +24,43 @@ from app.common.config import Config
 from app.common.langsmith_tracing import set_trace_metadata, traceable
 from app.common.feature_flags import get_feature_flag
 
-from app.common.session_logger import get_session_id, log_llm_call
+from app.common.session_logger import get_request_id, get_session_id, log_llm_call
+
+
+logger = logging.getLogger(__name__)
+
+
+def _hash_payload(payload: Any) -> str:
+    try:
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        text = str(payload)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _compact_payload(payload: Any, max_chars: int = 300) -> str:
+    try:
+        text = json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(payload)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "...[truncated]"
+
+
+def _log_server_llm_event(event: str, payload: dict[str, Any]) -> None:
+    logger.info(
+        "llm_server_event %s",
+        json.dumps(
+            {
+                "event": str(event or ""),
+                "request_id": get_request_id(),
+                "session_id": get_session_id(),
+                **payload,
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 class LLMResponse:
@@ -73,6 +111,7 @@ class LLMResponse:
 
 
 class LLMClient:
+    """统一封装文本与视觉模型调用能力。"""
 
     def __init__(self, conf: Config | None = None):
         """初始化 LLM 客户端并准备调用端点与请求头。
@@ -186,6 +225,17 @@ class LLMClient:
             "temperature": temperature,
         }
 
+        _log_server_llm_event(
+            "llm_request_start",
+            {
+                "model": self.conf.MODEL_NAME,
+                "temperature": float(temperature),
+                "message_count": len(messages),
+                "messages_compact": _compact_payload(messages),
+                "messages_hash": _hash_payload(messages),
+            },
+        )
+
         started = time.perf_counter()
 
         try:
@@ -209,7 +259,21 @@ class LLMClient:
             AttributeError,
             OSError,
             ImportError,
+            requests.RequestException,
+            TimeoutError,
         ) as exc:
+
+            _log_server_llm_event(
+                "llm_request_error",
+                {
+                    "model": self.conf.MODEL_NAME,
+                    "temperature": float(temperature),
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "messages_hash": _hash_payload(messages),
+                },
+            )
 
             log_llm_call(
                 session_id=get_session_id(),
@@ -290,6 +354,21 @@ class LLMClient:
             finish_reason=finish_reason,
         )
 
+        _log_server_llm_event(
+            "llm_request_success",
+            {
+                "model": self.conf.MODEL_NAME,
+                "temperature": float(temperature),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                "prompt_tokens": int(prompt_tokens),
+                "completion_tokens": int(completion_tokens),
+                "total_tokens": int(total_tokens),
+                "finish_reason": str(finish_reason or ""),
+                "response_compact": _compact_payload(content),
+                "response_hash": _hash_payload(content),
+            },
+        )
+
         return LLMResponse(
             content=content,
             prompt_tokens=prompt_tokens,
@@ -325,6 +404,17 @@ class LLMClient:
             "temperature": temperature,
         }
 
+        _log_server_llm_event(
+            "llm_request_start",
+            {
+                "model": self.conf.MODEL_NAME,
+                "temperature": float(temperature),
+                "message_count": len(messages),
+                "messages_compact": _compact_payload(messages),
+                "messages_hash": _hash_payload(messages),
+            },
+        )
+
         started = time.perf_counter()
 
         try:
@@ -347,7 +437,20 @@ class LLMClient:
             OSError,
             ImportError,
             httpx.HTTPError,
+            TimeoutError,
         ) as exc:
+
+            _log_server_llm_event(
+                "llm_request_error",
+                {
+                    "model": self.conf.MODEL_NAME,
+                    "temperature": float(temperature),
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "messages_hash": _hash_payload(messages),
+                },
+            )
 
             log_llm_call(
                 session_id=get_session_id(),
@@ -420,6 +523,21 @@ class LLMClient:
             total_tokens=total_tokens,
             latency_ms=(time.perf_counter() - started) * 1000,
             finish_reason=finish_reason,
+        )
+
+        _log_server_llm_event(
+            "llm_request_success",
+            {
+                "model": self.conf.MODEL_NAME,
+                "temperature": float(temperature),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                "prompt_tokens": int(prompt_tokens),
+                "completion_tokens": int(completion_tokens),
+                "total_tokens": int(total_tokens),
+                "finish_reason": str(finish_reason or ""),
+                "response_compact": _compact_payload(content),
+                "response_hash": _hash_payload(content),
+            },
         )
 
         return LLMResponse(

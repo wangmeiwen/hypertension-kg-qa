@@ -58,7 +58,8 @@ def build_rag_payload(
     args = arguments if isinstance(arguments, dict) else {}
     terms = _normalize_query_terms(query_terms)
     refine_terms = _normalize_refine_terms(args)
-    top_k = int(args.get("top_k") or conf.RAG_SEARCH_TOP_K_DEFAULT)
+    # 主控策略固定使用保守 top_k，避免外部参数放大单轮召回。
+    top_k = int(conf.RAG_SEARCH_TOP_K_DEFAULT)
     top_k = max(1, min(top_k, conf.RAG_SEARCH_TOP_K_MAX))
     payload = {
         "query": _compose_query(str(args.get("query") or q).strip(), terms, refine_terms),

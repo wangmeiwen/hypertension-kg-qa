@@ -122,6 +122,8 @@ RelationType = Literal[
 # 实体 / 关系 / 输出结构
 # 
 class Entity(BaseModel):
+    """定义知识图谱中的标准化实体结构。"""
+
     name: str
     type: EntityType
     canonical_name: Optional[str] = None
@@ -129,6 +131,8 @@ class Entity(BaseModel):
 
 
 class Relation(BaseModel):
+    """定义知识图谱中的实体关系结构。"""
+
     subject: str
     subject_type: EntityType
     relation: RelationType
@@ -138,6 +142,8 @@ class Relation(BaseModel):
 
 
 class HypertensionKnowledgeGraph(BaseModel):
+    """定义高血压知识图谱抽取结果的聚合结构。"""
+
     entities: List[Entity] = Field(default_factory=list)
     relations: List[Relation] = Field(default_factory=list)
 

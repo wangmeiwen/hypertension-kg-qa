@@ -21,6 +21,14 @@ _INTENT_VERIFY_HINTS = ("verify", "verification", "evidence", "核实", "验证"
 
 
 def _normalize_intent(intent: str) -> str:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        intent: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
     token = str(intent or "").strip().lower()
     if token in _SUPPORTED_INTENTS:
         return token
@@ -38,6 +46,14 @@ def _normalize_intent(intent: str) -> str:
 
 
 def _unique(values: list[str]) -> list[str]:
+    """执行unique流程并返回结果。
+    
+    Args:
+        values: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     rows: list[str] = []
     seen: set[str] = set()
     for item in values:
@@ -50,6 +66,14 @@ def _unique(values: list[str]) -> list[str]:
 
 
 def plan_task(task: SubTask) -> SubTask:
+    """规划task相关信息并返回结果。
+    
+    Args:
+        task: 当前处理任务。
+    
+    Returns:
+        SubTask: 执行结果。
+    """
     raw_intent = str(task.intent or "")
     intent = _normalize_intent(raw_intent)
     if intent != raw_intent:

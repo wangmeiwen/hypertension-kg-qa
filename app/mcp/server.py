@@ -13,6 +13,8 @@ from typing import Any, Callable
 
 @dataclass
 class MCPTool:
+    """描述单个 MCP 工具的元信息与调用处理器。"""
+
     name: str
     description: str
     input_schema: dict[str, Any]
@@ -22,6 +24,8 @@ class MCPTool:
 
 
 class MCPServer:
+    """负责 MCP 工具注册、解析、重试与执行调度。"""
+
     def __init__(self):
         """初始化 MCP 工具调度服务。
 

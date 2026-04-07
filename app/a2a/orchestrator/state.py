@@ -10,6 +10,8 @@ from typing import Any, TypedDict
 
 
 class OrchestratorState(TypedDict, total=False):
+    """定义主控编排图在各节点间传递的状态载荷。"""
+
     input_text: str
     original_input_text: str
     resolved_query: dict[str, Any]
@@ -45,5 +47,10 @@ class OrchestratorState(TypedDict, total=False):
     evidence_gaps: list[str]
     classification: dict[str, Any]
     subtask_decisions: dict[str, dict[str, Any]]
+    response_mode: str
+    memory_supported_points: list[str]
+    memory_missing_points: list[str]
+    memory_coverage_ratio: float
+    memory_route_reason: str
     final_output: dict[str, Any]
     serial_guard: Any

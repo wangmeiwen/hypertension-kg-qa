@@ -25,6 +25,18 @@ class A2ADispatchService:
         get_a2a_evaluator: Callable[[], A2AService],
         log_api_error: Callable[..., None],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            get_a2a: 函数输入参数。
+            get_a2a_graph: 函数输入参数。
+            get_a2a_retrieval: 函数输入参数。
+            get_a2a_evaluator: 函数输入参数。
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._service_map: dict[str, Callable[[], A2AService]] = {
             "orchestrator": get_a2a,
             "graph": get_a2a_graph,
@@ -34,6 +46,14 @@ class A2ADispatchService:
         self._log_api_error = log_api_error
 
     def _get_service(self, service_kind: str) -> A2AService:
+        """获取并返回目标数据。
+        
+        Args:
+            service_kind: 函数输入参数。
+        
+        Returns:
+            A2AService: 执行结果。
+        """
         getter = self._service_map.get(service_kind)
         if getter is None:
             raise ValueError(f"unknown_service_kind:{service_kind}")
@@ -159,6 +179,14 @@ class A2ADispatchService:
                 safe_cursor = 0
 
         async def event_stream():
+            """执行event_stream流程并返回结果。
+            
+            Args:
+                无。
+            
+            Returns:
+                Any: 执行结果。
+            """
             nonlocal safe_cursor
             started_at = time.time()
             while True:

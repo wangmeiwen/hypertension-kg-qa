@@ -7,10 +7,11 @@ from app.a2a.orchestrator.task_decomposer import decompose_to_tasks
 
 
 class TestTaskDecomposerFromResolvedQuery(unittest.TestCase):
-    def test_should_route_source_question_to_rag(self) -> None:
+    def test_should_keep_kg_first_for_source_question(self) -> None:
         resolved_query = {
             "standalone_question": "老年高血压患者 ACEI 和 ARB 联用是否推荐，原文依据是什么？",
             "intent": "evidence_verification",
+            "question_mode": "medical_new_question",
             "subqueries": [
                 "老年高血压患者 ACEI 和 ARB 联用是否推荐",
                 "相关指南原文依据是什么",
@@ -28,7 +29,7 @@ class TestTaskDecomposerFromResolvedQuery(unittest.TestCase):
 
         self.assertEqual(len(tasks), 2)
         self.assertEqual(tasks[0].target_agent, "kg")
-        self.assertEqual(tasks[1].target_agent, "rag")
+        self.assertEqual(tasks[1].target_agent, "kg")
         self.assertIn("target_population", tasks[0].must_cover)
         self.assertIn("老年高血压", tasks[0].entities)
 
@@ -36,6 +37,7 @@ class TestTaskDecomposerFromResolvedQuery(unittest.TestCase):
         resolved_query = {
             "standalone_question": "那老年人呢",
             "intent": "direct_answer",
+            "question_mode": "medical_new_question",
             "subqueries": [],
             "must_cover": [],
             "entities": [],
@@ -52,10 +54,11 @@ class TestTaskDecomposerFromResolvedQuery(unittest.TestCase):
         self.assertEqual(tasks[0].question, "那老年人呢")
         self.assertEqual(tasks[0].target_agent, "kg")
 
-    def test_should_route_source_like_subquery_to_rag_with_kg_only_preference(self) -> None:
+    def test_should_keep_kg_first_for_source_like_subquery_with_kg_preference(self) -> None:
         resolved_query = {
             "standalone_question": "ACEI/ARB 联合用药依据是什么",
             "intent": "evidence_verification",
+            "question_mode": "medical_new_question",
             "subqueries": ["相关指南原文依据是什么"],
             "must_cover": ["recommendation", "evidence_source"],
             "entities": ["ACEI", "ARB"],
@@ -69,8 +72,26 @@ class TestTaskDecomposerFromResolvedQuery(unittest.TestCase):
         )
 
         self.assertEqual(len(tasks), 1)
-        self.assertEqual(tasks[0].target_agent, "rag")
-        self.assertEqual(tasks[0].tool_name, "rag_search")
+        self.assertEqual(tasks[0].target_agent, "kg")
+        self.assertEqual(tasks[0].tool_name, "kg_entity_relation_search")
+
+    def test_non_medical_question_mode_should_skip_task_decompose(self) -> None:
+        resolved_query = {
+            "standalone_question": "你能做什么",
+            "intent": "direct_answer",
+            "question_mode": "assistant_capability",
+            "subqueries": ["你能做什么"],
+            "must_cover": ["answer"],
+            "entities": [],
+            "filters": [],
+            "preferred_sources": ["assistant_capability"],
+            "carry_over_context": [],
+        }
+        tasks = decompose_to_tasks(
+            resolved_query,
+            SubAgentConstraints(allow_extra_retrieval=False, max_tool_calls=1),
+        )
+        self.assertEqual(tasks, [])
 
 
 if __name__ == "__main__":

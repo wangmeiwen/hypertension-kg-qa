@@ -20,6 +20,19 @@ class GraphAdminService:
         sanitize_graph_properties: Callable[[Any], dict[str, Any]],
         log_api_error: Callable[..., None],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            await_call: 函数输入参数。
+            neo4j_client: 函数输入参数。
+            get_shared_kg_milvus_store: 函数输入参数。
+            validate_cypher_identifier: 函数输入参数。
+            sanitize_graph_properties: 函数输入参数。
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._await_call = await_call
         self._neo4j_client = neo4j_client
         self._get_shared_kg_milvus_store = get_shared_kg_milvus_store
@@ -323,6 +336,15 @@ class GraphAdminService:
         chunk_limit = 20000
 
         def split_text_by_sentence(text: str, limit: int = 20000) -> list[str]:
+            """拆分text_by_sentence相关信息并返回结果。
+            
+            Args:
+                text: 输入文本。
+                limit: 函数输入参数。
+            
+            Returns:
+                list[str]: 处理后的列表结果。
+            """
             chunks: list[str] = []
             remaining = (text or "").strip()
             sentence_ends = ["。", ".", "!", "！", "?", "？"]
@@ -345,6 +367,16 @@ class GraphAdminService:
             return chunks
 
         def extract_text_fallback(file_bytes: bytes, raw_filename: str, raw_suffix: str) -> str:
+            """执行extract_text_fallback流程并返回结果。
+            
+            Args:
+                file_bytes: 函数输入参数。
+                raw_filename: 函数输入参数。
+                raw_suffix: 函数输入参数。
+            
+            Returns:
+                str: 文本结果。
+            """
             _ = raw_filename
             if raw_suffix == ".pdf":
                 import fitz

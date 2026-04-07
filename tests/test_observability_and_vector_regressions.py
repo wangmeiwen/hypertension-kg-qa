@@ -398,6 +398,78 @@ class TestObservabilityAndVectorRegressions(unittest.TestCase):
         self.assertIn("memory_refresh_failed", logged_stages)
         self.assertNotIn("generate_data_with_session_exception", logged_stages)
 
+    def test_memory_refresh_should_use_turn_memory_projection_only(self) -> None:
+        captured_turn_artifacts: dict[str, Any] = {}
+
+        class _FakeMessageManager:
+            @staticmethod
+            async def add_message(*args, **kwargs):
+                _ = args
+                _ = kwargs
+                return {"id": 303}
+
+        class _FakeMemoryService:
+            async def refresh_after_turn(self, *args, **kwargs):
+                _ = args
+                turn_artifacts_obj = kwargs.get("turn_artifacts") if isinstance(kwargs.get("turn_artifacts"), dict) else None
+                if turn_artifacts_obj is None and len(args) >= 3 and isinstance(args[2], dict):
+                    turn_artifacts_obj = args[2]
+                if isinstance(turn_artifacts_obj, dict):
+                    captured_turn_artifacts.update(turn_artifacts_obj)
+                await asyncio.sleep(0)
+
+        async def _await_call(func, *args, **kwargs):
+            result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        async def _fake_generate_events(**kwargs):
+            _ = kwargs
+            yield {"type": "reply", "msg": "结论：可回答。\n证据支持点：A。\n不确定性与适用边界：B。"}
+            yield {
+                "type": "done",
+                "status": "done",
+                "msg": "结论：可回答。",
+                "processing_steps": ["step1", "step2"],
+                "tool_observations": [{"raw": "long payload"}],
+                "evidence_summary": {"missing_points": ["outcome"], "high_risk_tokens": ["高风险"]},
+            }
+
+        class _FakeEventStreamService:
+            async def iter_a2a_stream_events(self, **kwargs: Any):
+                async for msg in _fake_generate_events(**kwargs):
+                    yield msg
+
+        service = SessionStreamService(
+            await_call=_await_call,
+            get_session_memory_service=lambda: _FakeMemoryService(),
+            log_api_error=lambda *args, **kwargs: None,
+            event_stream_service=_FakeEventStreamService(),
+            message_manager=_FakeMessageManager,
+        )
+
+        async def _run_case() -> None:
+            generator = service.generate_data_with_session_lines(
+                input_text="比较复方和单药",
+                user_id="u1",
+                session_id="s1",
+                request_id="req1",
+                resolved_query={"entities": ["ACEI", "CCB"], "must_cover": ["疗效", "安全"]},
+            )
+            async for _ in generator:
+                pass
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        asyncio.run(_run_case())
+        projection_obj = captured_turn_artifacts.get("turn_memory_projection")
+        projection = projection_obj if isinstance(projection_obj, dict) else {}
+        self.assertIn("assistant_reply_digest", projection)
+        self.assertIn("question_scope", projection)
+        self.assertNotIn("tool_observations", captured_turn_artifacts)
+        self.assertEqual(str(captured_turn_artifacts.get("projection_mode") or ""), "turn_memory_projection_v1")
+
     def test_done_emitted_persist_failure_should_retry_in_finally_without_error_done(self) -> None:
         logged_stages = []
 

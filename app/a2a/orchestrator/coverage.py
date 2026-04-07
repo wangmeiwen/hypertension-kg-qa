@@ -28,6 +28,14 @@ _OUTCOME_POINT_HINTS = (
 
 
 def _evidence_text(row: dict[str, Any]) -> str:
+    """执行evidence_text流程并返回结果。
+    
+    Args:
+        row: 输入数据项。
+    
+    Returns:
+        str: 文本结果。
+    """
     if not isinstance(row, dict):
         return ""
     entity = row.get("entity") if isinstance(row.get("entity"), dict) else {}
@@ -50,6 +58,14 @@ def _evidence_text(row: dict[str, Any]) -> str:
 
 
 def _is_source_point(point: str) -> bool:
+    """判断条件是否成立。
+    
+    Args:
+        point: 函数输入参数。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     token = str(point or "").strip().lower()
     if not token:
         return False
@@ -57,6 +73,14 @@ def _is_source_point(point: str) -> bool:
 
 
 def _is_outcome_point(point: str) -> bool:
+    """判断条件是否成立。
+    
+    Args:
+        point: 函数输入参数。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     token = str(point or "").strip().lower()
     if not token:
         return False
@@ -64,6 +88,14 @@ def _is_outcome_point(point: str) -> bool:
 
 
 def _clean_tokens(values: list[str]) -> list[str]:
+    """执行clean_tokens流程并返回结果。
+    
+    Args:
+        values: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     rows: list[str] = []
     for value in values:
         token = str(value or "").strip()
@@ -74,12 +106,30 @@ def _clean_tokens(values: list[str]) -> list[str]:
 
 
 def _contains_any(text: str, tokens: list[str]) -> bool:
+    """执行contains_any流程并返回结果。
+    
+    Args:
+        text: 输入文本。
+        tokens: 函数输入参数。
+    
+    Returns:
+        bool: 是否满足条件。
+    """
     if not tokens:
         return False
     return any(token and token in text for token in tokens)
 
 
 def _resolve_expected_points(task: SubTask, must_cover: list[str]) -> list[str]:
+    """解析并确定expected_points相关信息并返回结果。
+    
+    Args:
+        task: 当前处理任务。
+        must_cover: 函数输入参数。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     required = set(task.evidence_type_required)
     if "relation" in required and "text_quote" not in required:
         return [point for point in must_cover if not _is_source_point(point)]
@@ -87,6 +137,15 @@ def _resolve_expected_points(task: SubTask, must_cover: list[str]) -> list[str]:
 
 
 def evaluate_task_coverage(task: SubTask, evidence_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """执行evaluate_task_coverage流程并返回结果。
+    
+    Args:
+        task: 当前处理任务。
+        evidence_rows: 函数输入参数。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     must_cover = [str(item or "").strip() for item in task.must_cover if str(item or "").strip()]
     expected_points = _resolve_expected_points(task, must_cover)
     texts = [_evidence_text(row) for row in evidence_rows if _evidence_text(row)]

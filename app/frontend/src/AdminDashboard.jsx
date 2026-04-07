@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import {
   getAdminSessions,
   getAdminSessionMessages,
+  getAdminSessionObservability,
   deleteAdminSession,
   clearAdminSessionMessages,
   getAdminStats,
@@ -20,6 +21,10 @@ export default function AdminDashboard({ onLogout }) {
   const [error, setError] = useState("");
   const [selectedSession, setSelectedSession] = useState(null);
   const [sessionMessages, setSessionMessages] = useState([]);
+  const [sessionObservability, setSessionObservability] = useState([]);
+  const [selectedTurnId, setSelectedTurnId] = useState("");
+  const [selectedFlowEvent, setSelectedFlowEvent] = useState(null);
+  const [expandedTextMap, setExpandedTextMap] = useState({});
   const [showDetail, setShowDetail] = useState(false);
 
   // 标签页状态
@@ -29,7 +34,6 @@ export default function AdminDashboard({ onLogout }) {
   const [agentObsSummary, setAgentObsSummary] = useState(null);
   const [agentObsRuns, setAgentObsRuns] = useState([]);
   const [agentObsLoading, setAgentObsLoading] = useState(false);
-  const [selectedObsRun, setSelectedObsRun] = useState(null);
 
   // 服务 readiness 状态
   const [readinessData, setReadinessData] = useState(null);
@@ -110,9 +114,16 @@ export default function AdminDashboard({ onLogout }) {
 
   const handleViewSession = async (session) => {
     try {
-      const data = await getAdminSessionMessages(session.id);
-      setSelectedSession(data.session);
-      setSessionMessages(data.messages);
+      const [messageData, observabilityData] = await Promise.all([
+        getAdminSessionMessages(session.id),
+        getAdminSessionObservability(session.id)
+      ]);
+      setSelectedSession(messageData.session);
+      setSessionMessages(messageData.messages);
+      setSessionObservability(observabilityData.turns || []);
+      setSelectedTurnId(observabilityData.turns?.[0]?.turn_id || "");
+      setSelectedFlowEvent(null);
+      setExpandedTextMap({});
       setShowDetail(true);
     } catch (err) {
       setError(err.message);
@@ -152,23 +163,60 @@ export default function AdminDashboard({ onLogout }) {
     return new Date(timestamp).toLocaleString("zh-CN");
   };
 
+  const formatEventTime = (timestamp) => {
+    if (!timestamp) return "-";
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleTimeString("zh-CN", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  };
+
   const truncateText = (text, maxLength = 50) => {
     if (!text) return "";
     return text.length > maxLength ? text.slice(0, maxLength) + "..." : text;
   };
 
-  const formatJson = (value) => {
-    if (value === undefined) return "undefined";
-    if (value === null) return "null";
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return String(value);
-    }
+  const selectedTurn = sessionObservability.find((turn) => turn.turn_id === selectedTurnId) || sessionObservability[0] || null;
+  const flowLaneNames = ["主控编排", "图谱代理", "检索代理", "评估代理", "外部资源"];
+
+  const toggleExpandedText = (key) => {
+    setExpandedTextMap((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const openObsRunDetail = (run) => setSelectedObsRun(run);
-  const closeObsRunDetail = () => setSelectedObsRun(null);
+  const renderExpandableText = (text, key, maxLength = 160) => {
+    const value = String(text || "");
+    if (!value) {
+      return <span className="empty-inline">暂无内容</span>;
+    }
+    const expanded = Boolean(expandedTextMap[key]);
+    const shouldTruncate = value.length > maxLength;
+    const displayText = expanded || !shouldTruncate ? value : `${value.slice(0, maxLength)}...`;
+    return (
+      <div className="expandable-text-block">
+        <div className="expandable-text-content">{displayText}</div>
+        {shouldTruncate && (
+          <button className="expand-toggle-btn" onClick={() => toggleExpandedText(key)}>
+            {expanded ? "收起" : "展开全文"}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderListLines = (items, prefix) => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return <div className="empty-messages">该阶段没有可用观测数据</div>;
+    }
+    return items.map((item, index) => (
+      <div key={`${prefix}-${index}`} className="human-readable-line">
+        {typeof item === "string" ? item : item?.detail || item?.title || "-"}
+      </div>
+    ));
+  };
 
   const formatErrorTypes = (errors) => {
     if (!errors || Object.keys(errors).length === 0) {
@@ -177,23 +225,52 @@ export default function AdminDashboard({ onLogout }) {
     return Object.entries(errors).map(([k, v]) => `${k}:${v}`).join(" | ");
   };
 
-  const getToolObservations = (run) => {
-    const observations = run?.tool_observations || [];
-    if (!Array.isArray(observations)) {
-      return [];
-    }
-    return observations.filter((item) => {
-      if (!item || typeof item !== "object") {
-        return false;
+  const agentObsSessions = Object.values(
+    agentObsRuns.reduce((acc, run) => {
+      const sessionId = String(run?.session_id || "").trim();
+      if (!sessionId) {
+        return acc;
       }
-      const action = String(item.action || "").trim();
-      const hasToolName = Boolean(item.tool_name || item.requested_tool_name);
-      if (!hasToolName) {
-        return false;
+      const timestamp = String(run?.timestamp || "");
+      if (!acc[sessionId]) {
+        acc[sessionId] = {
+          session_id: sessionId,
+          latest_timestamp: timestamp,
+          turn_count: 0,
+          total_llm_calls: 0,
+          total_attempted_tool_actions: 0,
+          total_blocked_tool_actions: 0,
+          total_tool_calls: 0,
+          total_tokens: 0,
+        };
       }
-      return ["call_tool", "preload_graph_nodes", "hyde_call_tool", "subquery_parallel_call", "subquery_dependent_call"].includes(action);
-    });
-  };
+      const row = acc[sessionId];
+      row.turn_count += 1;
+      row.total_llm_calls += Number(run?.llm_calls || 0);
+      row.total_attempted_tool_actions += Number(run?.attempted_tool_actions ?? run?.tool_calls ?? 0);
+      row.total_blocked_tool_actions += Number(run?.blocked_tool_actions || 0);
+      row.total_tool_calls += Number(run?.tool_calls || 0);
+      row.total_tokens += Number(run?.total_tokens || 0);
+      if (!row.latest_timestamp || timestamp > row.latest_timestamp) {
+        row.latest_timestamp = timestamp;
+      }
+      return acc;
+    }, {})
+  ).sort((a, b) => String(b.latest_timestamp || "").localeCompare(String(a.latest_timestamp || "")));
+
+  const renderDetailField = (label, value, key) => (
+    <div className="event-detail-field" key={key}>
+      <div className="event-detail-label">{label}</div>
+      {renderExpandableText(value, key, 280)}
+    </div>
+  );
+
+  const renderSessionMetaItem = (label, value) => (
+    <div className="session-meta-item" key={label}>
+      <div className="session-meta-label">{label}</div>
+      <div className="session-meta-value">{value || "-"}</div>
+    </div>
+  );
 
   const readinessLevel = readinessData?.level ?? "unavailable";
   const readinessLevelText = {
@@ -347,7 +424,7 @@ export default function AdminDashboard({ onLogout }) {
           )}
 
           <div className="token-stats-table-section">
-            <h3>最近运行记录</h3>
+            <h3>最近活跃会话</h3>
             <div className="sessions-table-wrapper">
               <table className="sessions-table token-table">
                 <thead>
@@ -355,52 +432,42 @@ export default function AdminDashboard({ onLogout }) {
                     <th>#</th>
                     <th>时间</th>
                     <th>会话ID</th>
-                    <th>耗时(ms)</th>
-                    <th>LLM调用</th>
-                    <th>工具尝试</th>
+                    <th>轮次数</th>
+                    <th>累计LLM调用</th>
+                    <th>累计工具尝试</th>
                     <th>策略拦截</th>
-                    <th>已执行工具调用</th>
-                    <th>执行成功率</th>
-                    <th>尝试成功率</th>
-                    <th>总Tokens</th>
-                    <th>策略错误</th>
-                    <th>执行错误</th>
+                    <th>累计已执行工具</th>
+                    <th>累计Tokens</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {agentObsRuns.map((run) => (
-                    <tr key={run.rank}>
-                      <td>{run.rank}</td>
-                      <td>{formatTime(run.timestamp)}</td>
-                      <td className="user-id" title={run.session_id || ""}>{run.session_id ? `${run.session_id.slice(0, 12)}...` : "-"}</td>
-                      <td>{run.duration_ms.toFixed(2)}</td>
-                      <td>{run.llm_calls}</td>
-                      <td>{run.attempted_tool_actions ?? run.tool_calls}</td>
-                      <td>{run.blocked_tool_actions ?? 0}</td>
-                      <td>{run.tool_calls}</td>
-                      <td>{((run.execution_tool_success_rate ?? run.tool_success_rate) * 100).toFixed(1)}%</td>
-                      <td>{((run.attempted_action_success_rate ?? run.tool_success_rate) * 100).toFixed(1)}%</td>
-                      <td>{run.total_tokens?.toLocaleString()}</td>
-                      <td className="error-types-cell">
-                        {formatErrorTypes(run.strategy_error_types)}
+                  {agentObsSessions.map((sessionEntry, index) => (
+                    <tr key={sessionEntry.session_id}>
+                      <td>{index + 1}</td>
+                      <td>{formatTime(sessionEntry.latest_timestamp)}</td>
+                      <td className="user-id" title={sessionEntry.session_id || ""}>
+                        {sessionEntry.session_id ? `${sessionEntry.session_id.slice(0, 12)}...` : "-"}
                       </td>
-                      <td className="error-types-cell">
-                        {formatErrorTypes(run.execution_error_types)}
-                      </td>
+                      <td>{sessionEntry.turn_count}</td>
+                      <td>{sessionEntry.total_llm_calls}</td>
+                      <td>{sessionEntry.total_attempted_tool_actions}</td>
+                      <td>{sessionEntry.total_blocked_tool_actions}</td>
+                      <td>{sessionEntry.total_tool_calls}</td>
+                      <td>{sessionEntry.total_tokens.toLocaleString()}</td>
                       <td>
                         <button
                           className="view-detail-btn"
-                          onClick={() => openObsRunDetail(run)}
+                          onClick={() => handleViewSession({ id: sessionEntry.session_id })}
                         >
-                          查看详情
+                          查看会话流转
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {agentObsRuns.length === 0 && !agentObsLoading && (
+              {agentObsSessions.length === 0 && !agentObsLoading && (
                 <div className="empty-data">暂无 Agent 观测数据，请先运行几次问答。</div>
               )}
             </div>
@@ -508,97 +575,172 @@ export default function AdminDashboard({ onLogout }) {
         </div>
       )}
 
-      {selectedObsRun && (
-        <div className="modal-overlay" onClick={closeObsRunDetail}>
-          <div className="modal session-detail-modal obs-detail-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>运行详情 #{selectedObsRun.rank}</h3>
-              <button className="close-btn" onClick={closeObsRunDetail}>×</button>
-            </div>
-
-            <div className="session-info">
-              <p><strong>时间:</strong> {formatTime(selectedObsRun.timestamp)}</p>
-              <p><strong>会话ID:</strong> {selectedObsRun.session_id || "-"}</p>
-              <p><strong>耗时:</strong> {selectedObsRun.duration_ms.toFixed(2)} ms</p>
-              <p><strong>LLM调用:</strong> {selectedObsRun.llm_calls}</p>
-              <p><strong>工具尝试:</strong> {selectedObsRun.attempted_tool_actions ?? selectedObsRun.tool_calls}</p>
-              <p><strong>策略拦截:</strong> {selectedObsRun.blocked_tool_actions ?? 0}</p>
-              <p><strong>已执行工具调用:</strong> {selectedObsRun.tool_calls}</p>
-              <p><strong>执行成功率:</strong> {((selectedObsRun.execution_tool_success_rate ?? selectedObsRun.tool_success_rate) * 100).toFixed(1)}%</p>
-              <p><strong>尝试成功率:</strong> {((selectedObsRun.attempted_action_success_rate ?? selectedObsRun.tool_success_rate) * 100).toFixed(1)}%</p>
-              <p><strong>总Tokens:</strong> {selectedObsRun.total_tokens?.toLocaleString()}</p>
-              <p><strong>策略错误:</strong> {formatErrorTypes(selectedObsRun.strategy_error_types)}</p>
-              <p><strong>执行错误:</strong> {formatErrorTypes(selectedObsRun.execution_error_types)}</p>
-            </div>
-
-            <div className="messages-list obs-run-detail-list">
-              <h4>完整工具调用过程</h4>
-              {getToolObservations(selectedObsRun).length === 0 && (
-                <div className="empty-messages">该次运行暂无工具调用详情（通常是旧日志数据）。</div>
-              )}
-
-              {getToolObservations(selectedObsRun).map((item, index) => (
-                <details key={index} className="tool-trace-item-detail" open={index === 0}>
-                  <summary>
-                    第{item.turn || index + 1}轮 · 工具 {item.tool_name || item.requested_tool_name || "-"}
-                    {item.used_fallback ? "（已自动切换）" : ""}
-                  </summary>
-                  <div className="tool-detail-section">
-                    <h4>工具名称</h4>
-                    <pre className="tool-code">{formatJson({ requested_tool_name: item.requested_tool_name, actual_tool_name: item.tool_name })}</pre>
-                  </div>
-                  <div className="tool-detail-section">
-                    <h4>参数</h4>
-                    <pre className="tool-code">{formatJson(item.arguments)}</pre>
-                  </div>
-                  <div className="tool-detail-section">
-                    <h4>返回</h4>
-                    <pre className="tool-code">{formatJson(item.result)}</pre>
-                  </div>
-                </details>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 会话详情弹窗 */}
       {showDetail && selectedSession && (
         <div className="modal-overlay" onClick={() => setShowDetail(false)}>
-          <div className="modal session-detail-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal session-detail-modal session-observability-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>会话详情</h3>
               <button className="close-btn" onClick={() => setShowDetail(false)}>×</button>
             </div>
-            <div className="session-info">
-              <p><strong>会话ID:</strong> {selectedSession.id}</p>
-              <p><strong>用户ID:</strong> {selectedSession.user_id}</p>
-              <p><strong>标题:</strong> {selectedSession.title}</p>
-              <p><strong>创建时间:</strong> {formatTime(selectedSession.created_at)}</p>
-              <p><strong>更新时间:</strong> {formatTime(selectedSession.updated_at)}</p>
+            <div className="session-info session-meta-grid">
+              {[
+                ["会话ID", selectedSession.id],
+                ["用户ID", selectedSession.user_id],
+                ["标题", selectedSession.title],
+                ["创建时间", formatTime(selectedSession.created_at)],
+                ["更新时间", formatTime(selectedSession.updated_at)],
+              ].map(([label, value]) => renderSessionMetaItem(label, value))}
             </div>
-            <div className="messages-list">
-              <h4>消息记录 ({sessionMessages.length} 条)</h4>
-              {sessionMessages.map((msg) => (
-                <div key={msg.id} className={`message-item ${msg.role}`}>
-                  <div className="message-header">
-                    <span className="message-role">
-                      {msg.role === "user" ? "用户" : "助手"}
-                    </span>
-                    <span className="message-time">{formatTime(msg.created_at)}</span>
-                  </div>
-                  <div className="message-content">{msg.content}</div>
-                  {msg.think_content && (
-                    <details className="think-content">
-                      <summary>思考过程</summary>
-                      <pre>{msg.think_content}</pre>
-                    </details>
+            <div className="session-observability-layout">
+              <section className="turn-detail-section">
+                <h4>按轮查看</h4>
+                <div className="session-turn-list session-turn-list-top">
+                  {sessionObservability.length === 0 && (
+                    <div className="empty-messages">该会话暂无按轮观测数据</div>
                   )}
+                  {sessionObservability.map((turn) => (
+                    <button
+                      key={turn.turn_id}
+                      className={`session-turn-item ${selectedTurn?.turn_id === turn.turn_id ? "active" : ""}`}
+                      onClick={() => {
+                        setSelectedTurnId(turn.turn_id);
+                        setSelectedFlowEvent(null);
+                      }}
+                    >
+                      <div className="session-turn-question">{truncateText(turn.question, 120)}</div>
+                      <div className="session-turn-meta">
+                        <span>{formatEventTime(turn.started_at)}</span>
+                        <span>{turn.status || "done"}</span>
+                      </div>
+                      <div className="session-turn-action">查看本轮流转</div>
+                    </button>
+                  ))}
                 </div>
-              ))}
-              {sessionMessages.length === 0 && (
-                <div className="empty-messages">该会话暂无消息</div>
-              )}
+              </section>
+              <div className="session-turn-detail">
+                {!selectedTurn && (
+                  <div className="empty-messages">该会话暂无消息</div>
+                )}
+                {selectedTurn && (
+                  <>
+                    <section className="turn-detail-section">
+                      <h4>本轮问题</h4>
+                      <div className="turn-question-card flow-summary-card">
+                        <div className="turn-question-header">
+                          <div className="turn-question-time">开始时间：{formatEventTime(selectedTurn.started_at)}</div>
+                          <div className="turn-question-token">本轮 Tokens：{Number(selectedTurn.total_tokens || 0).toLocaleString()}</div>
+                        </div>
+                        {renderExpandableText(selectedTurn.question, `turn-question-${selectedTurn.turn_id}`, 220)}
+                        <div className="turn-answer-digest">
+                          <strong>回答摘要：</strong>
+                          {renderExpandableText(selectedTurn.answer_digest, `turn-answer-${selectedTurn.turn_id}`, 220)}
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="turn-detail-section">
+                      <h4>会话记忆与主控判定</h4>
+                      <div className="human-readable-card-grid flow-summary-grid">
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">会话目标</div>
+                          {renderExpandableText(selectedTurn.memory_before?.conversation_goal, `goal-${selectedTurn.turn_id}`, 180)}
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">已确认事实</div>
+                          {renderListLines(selectedTurn.memory_before?.confirmed_facts, `facts-${selectedTurn.turn_id}`)}
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">已回答要点</div>
+                          {renderListLines(selectedTurn.memory_before?.answered_points, `answered-${selectedTurn.turn_id}`)}
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">未闭合问题</div>
+                          {renderListLines(selectedTurn.memory_before?.open_questions, `open-${selectedTurn.turn_id}`)}
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">响应模式</div>
+                          <div className="human-readable-line">{selectedTurn.orchestrator_decision?.response_mode || "-"}</div>
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">回答模式</div>
+                          <div className="human-readable-line">{selectedTurn.orchestrator_decision?.answer_mode || "-"}</div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="turn-detail-section">
+                      <h4>会话流转泳道图</h4>
+                      <div className="flow-board">
+                        <div className="flow-board-header">
+                          <div className="flow-header-cell flow-time-header">时间</div>
+                          {flowLaneNames.map((laneName) => (
+                            <div key={laneName} className="flow-header-cell flow-lane-header">
+                              {laneName}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flow-board-body">
+                          {(selectedTurn.flow_events || []).length === 0 && (
+                            <div className="empty-messages">该轮没有可用的流转事件</div>
+                          )}
+                          {(selectedTurn.flow_events || []).map((event, index) => (
+                            <div key={event.event_id || `${selectedTurn.turn_id}-event-${index}`} className="flow-event-row">
+                              <div className="flow-time-cell">{formatEventTime(event.event_time)}</div>
+                              {flowLaneNames.map((laneName) => (
+                                <div key={`${event.event_id || index}-${laneName}`} className={`flow-lane-cell ${laneName === event.lane ? "active" : "empty"}`}>
+                                  {laneName === event.lane ? (
+                                    <button
+                                      className="flow-event-node"
+                                      onClick={() => setSelectedFlowEvent(event)}
+                                    >
+                                      <div className="flow-event-stage">{event.stage || laneName}</div>
+                                      <div className="flow-event-title">{event.title || "过程事件"}</div>
+                                      <div className="flow-event-summary">{event.summary || "该事件暂无摘要"}</div>
+                                      <div className="flow-event-actor">{event.actor || laneName}</div>
+                                      <div className="flow-event-link">查看详情</div>
+                                    </button>
+                                  ) : (
+                                    <div className="flow-event-placeholder"> </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {selectedFlowEvent && (
+        <div className="modal-overlay" onClick={() => setSelectedFlowEvent(null)}>
+          <div className="modal flow-event-detail-modal event-detail-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{selectedFlowEvent.title || "事件详情"}</h3>
+              <button className="close-btn" onClick={() => setSelectedFlowEvent(null)}>×</button>
+            </div>
+            <div className="event-detail-meta">
+              <span><strong>发生时间：</strong>{formatEventTime(selectedFlowEvent.event_time)}</span>
+              <span><strong>所属泳道：</strong>{selectedFlowEvent.lane || "-"}</span>
+              <span><strong>阶段：</strong>{selectedFlowEvent.stage || "-"}</span>
+              <span><strong>执行方：</strong>{selectedFlowEvent.actor || "-"}</span>
+            </div>
+            <div className="event-detail-summary">
+              <div className="event-detail-section-title">摘要</div>
+              {renderExpandableText(selectedFlowEvent.summary, `flow-summary-${selectedFlowEvent.event_id}`, 240)}
+            </div>
+            <div className="event-detail-grid">
+              {renderDetailField("输入内容", selectedFlowEvent.detail?.["输入内容"], `detail-input-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("输出内容", selectedFlowEvent.detail?.["输出内容"], `detail-output-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("输出承接方", selectedFlowEvent.detail?.["输出承接方"], `detail-handoff-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("最终返回", selectedFlowEvent.detail?.["最终返回"], `detail-return-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("状态", selectedFlowEvent.detail?.["状态"], `detail-status-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("补充说明", selectedFlowEvent.detail?.["补充说明"], `detail-note-${selectedFlowEvent.event_id}`)}
             </div>
           </div>
         </div>

@@ -10,6 +10,8 @@ from app.backend.repositories.database import fetch_all, fetch_one, execute, ins
 
 
 class OcrDocumentManager:
+    """封装 OCR 文档元数据与分页内容的持久化操作。"""
+
     @staticmethod
     async def create_document(
         user_id: str,
@@ -243,6 +245,8 @@ class OcrDocumentManager:
 
 
 class OcrTokenUsageManager:
+    """封装 OCR 处理过程的 token 使用记录与统计查询。"""
+
     @staticmethod
     async def record_usage(
         document_id: str,

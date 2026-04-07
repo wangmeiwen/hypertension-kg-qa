@@ -80,7 +80,8 @@ def build_kg_query_payload(
     cypher = str(args.get("cypher") or "").strip()
     keyword = _append_refine_terms(str(args.get("keyword") or fallback_query).strip(), refine_terms)
     list_all_nodes = bool(args.get("list_all_nodes"))
-    limit = int(args.get("limit") or conf.KG_RETRIEVAL_TOP_K_DEFAULT)
+    # 主控策略固定使用保守 limit，避免外部参数放大单轮召回。
+    limit = int(conf.KG_RETRIEVAL_TOP_K_DEFAULT)
     limit = max(1, min(limit, conf.KG_RETRIEVAL_TOP_K_MAX))
     payload = {
         "keyword": keyword,
@@ -112,7 +113,8 @@ def build_kg_entity_relation_payload(
     terms = _normalize_query_terms(query_terms)
     refine_terms = _normalize_refine_terms(args)
     fallback_query = _fallback_query_from_terms(q, terms)
-    top_k = int(args.get("top_k") or args.get("limit") or conf.KG_RETRIEVAL_TOP_K_DEFAULT)
+    # 主控策略固定使用保守 top_k，避免外部参数放大单轮召回。
+    top_k = int(conf.KG_RETRIEVAL_TOP_K_DEFAULT)
     top_k = max(1, min(top_k, conf.KG_RETRIEVAL_TOP_K_MAX))
     payload = {
         "query": _append_refine_terms(str(args.get("query") or fallback_query).strip(), refine_terms),

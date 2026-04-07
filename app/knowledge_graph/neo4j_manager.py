@@ -27,6 +27,8 @@ if env_path.exists():
 
 
 class Neo4jClient:
+    """封装 Neo4j 异步连接与 Cypher 执行能力。"""
+
     def __init__(self, uri: str, user: str, password: str):
         """初始化 Neo4j 异步客户端。
 

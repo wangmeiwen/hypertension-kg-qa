@@ -18,6 +18,8 @@ from app.common.config import Config
 class OrchestratorExecutor:
     """执行主代理 LangGraph。"""
 
+    _SUPPLEMENT_MAX_ROUNDS_FIXED = 2
+
     def __init__(self, subagent_client: SubAgentClientFactory):
         """初始化 OrchestratorExecutor 实例。
         
@@ -45,8 +47,8 @@ class OrchestratorExecutor:
         return self._clamp_positive(default_calls, 1, max_calls)
 
     def _resolve_supplement_max_rounds(self, max_turns: int) -> int:
-        configured = int(self.conf.A2A_ORCHESTRATOR_SUPPLEMENT_MAX_ROUNDS)
-        return self._clamp_positive(configured, 1, max_turns)
+        # 补检索轮数按策略固定，避免运行时配置漂移。
+        return self._clamp_positive(self._SUPPLEMENT_MAX_ROUNDS_FIXED, 1, max_turns)
 
     async def run(
         self,
@@ -151,6 +153,10 @@ class OrchestratorExecutor:
                 "max_turns": safe_max_turns,
                 "supplement_max_rounds": safe_supplement_max_rounds,
                 "subagent_max_tool_calls": safe_subagent_max_tool_calls,
+                "response_mode": str(output.get("response_mode") or ""),
+                "classification": output.get("classification") if isinstance(output.get("classification"), dict) else {},
+                "answerability": output.get("answerability") if isinstance(output.get("answerability"), dict) else {},
+                "gate_result": output.get("gate_result") if isinstance(output.get("gate_result"), dict) else {},
             },
             "evidence_summary": evidence_summary,
         }

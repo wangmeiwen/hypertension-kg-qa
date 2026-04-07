@@ -1,8 +1,10 @@
 """session_memory_llm 解析单元测试。"""
 
+import asyncio
+import json
 import unittest
 
-from app.backend.services.session_memory_llm import _extract_json_object
+from app.backend.services.session_memory_llm import SessionMemoryLLM, _extract_json_object
 
 
 class TestSessionMemoryLLM(unittest.TestCase):
@@ -31,6 +33,86 @@ class TestSessionMemoryLLM(unittest.TestCase):
         text = "```json\n{invalid_json}\n```"
         data = _extract_json_object(text)
         self.assertEqual(data, {})
+
+    def test_resolve_query_should_use_recent_messages_digest_only(self) -> None:
+        class _FakeClient:
+            def __init__(self) -> None:
+                self.last_messages = []
+
+            async def chat_with_tokens_async(self, **kwargs):
+                self.last_messages = kwargs.get("messages") if isinstance(kwargs.get("messages"), list) else []
+
+                class _Resp:
+                    content = json.dumps(
+                        {
+                            "standalone_question": "Q",
+                            "intent": "direct_answer",
+                            "subqueries": ["Q"],
+                            "must_cover": ["answer"],
+                            "entities": [],
+                            "filters": [],
+                            "preferred_sources": ["kg"],
+                            "carry_over_context": [],
+                        },
+                        ensure_ascii=False,
+                    )
+
+                return _Resp()
+
+        async def _run_case() -> dict:
+            client = _FakeClient()
+            llm = SessionMemoryLLM(llm_client=client)
+            result = await llm.resolve_query(
+                input_text="那老年人呢",
+                recent_messages_digest=["用户：ACEI 怎么用", "助手：已回答"],
+                summary={},
+                retrieval_summary={},
+                session_id="s1",
+            )
+            payload_text = str(((client.last_messages[1] if len(client.last_messages) > 1 else {}).get("content") or ""))
+            payload = json.loads(payload_text)
+            return {"result": result, "payload": payload}
+
+        case = asyncio.run(_run_case())
+        payload = case.get("payload") if isinstance(case.get("payload"), dict) else {}
+        self.assertIn("recent_messages_digest", payload)
+        self.assertNotIn("recent_messages", payload)
+
+    def test_summarize_turn_should_send_turn_memory_projection_only(self) -> None:
+        class _FakeClient:
+            def __init__(self) -> None:
+                self.last_messages = []
+
+            async def chat_with_tokens_async(self, **kwargs):
+                self.last_messages = kwargs.get("messages") if isinstance(kwargs.get("messages"), list) else []
+
+                class _Resp:
+                    content = json.dumps(
+                        {
+                            "summary": {"version": 1, "last_message_id": 1},
+                            "retrieval_summary": {"version": 1, "last_message_id": 1},
+                        },
+                        ensure_ascii=False,
+                    )
+
+                return _Resp()
+
+        async def _run_case() -> dict:
+            client = _FakeClient()
+            llm = SessionMemoryLLM(llm_client=client)
+            await llm.summarize_turn(
+                previous_summary={"version": 1, "last_message_id": 1},
+                previous_retrieval_summary={"version": 1, "last_message_id": 1},
+                messages_delta=[{"id": 1, "role": "assistant", "content": "回答"}],
+                turn_memory_projection={"answered_points": ["结论"], "question_scope": "medical_qa"},
+                session_id="s1",
+            )
+            payload_text = str(((client.last_messages[1] if len(client.last_messages) > 1 else {}).get("content") or ""))
+            return json.loads(payload_text)
+
+        payload = asyncio.run(_run_case())
+        self.assertIn("turn_memory_projection", payload)
+        self.assertNotIn("turn_artifacts", payload)
 
 
 if __name__ == "__main__":

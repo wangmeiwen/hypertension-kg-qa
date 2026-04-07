@@ -25,6 +25,17 @@ class ReadinessService:
         log_api_error: Callable[..., None],
         await_call: Callable[..., Awaitable[Any]],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            get_mcp: 函数输入参数。
+            mysql_initialized_resolver: 函数输入参数。
+            log_api_error: 函数输入参数。
+            await_call: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._get_mcp = get_mcp
         self._mysql_initialized_resolver = mysql_initialized_resolver
         self._log_api_error = log_api_error

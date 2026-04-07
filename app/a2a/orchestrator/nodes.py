@@ -12,15 +12,31 @@ from app.a2a.orchestrator.answer_writer import generate_final_answer_async
 from app.a2a.orchestrator.coverage import evaluate_task_coverage
 from app.a2a.orchestrator.evidence_store import merge_task_evidence
 from app.a2a.orchestrator.gating_adapter import run_gate
+from app.a2a.orchestrator.memory_router import route_by_memory_capability
+from app.a2a.orchestrator.memory_writer import (
+    build_assistant_capability_answer,
+    build_generic_direct_answer,
+    build_memory_answer_text,
+)
 from app.a2a.orchestrator.retrieval_planner import plan_task
 from app.a2a.orchestrator.router import select_agent
 from app.a2a.orchestrator.scheduler import pick_next_task
 from app.a2a.orchestrator.state import OrchestratorState
 from app.a2a.orchestrator.supplement_decider import decide_supplement
 from app.a2a.orchestrator.task_decomposer import build_classification, decompose_to_tasks
+from app.backend.services.memory_answer_service import MemoryAnswerService
 
 
 def _append_step(state: OrchestratorState, text: str) -> None:
+    """执行append_step流程并返回结果。
+    
+    Args:
+        state: 编排状态对象。
+        text: 输入文本。
+    
+    Returns:
+        None: 无返回值。
+    """
     rows_obj = state.get("processing_steps")
     rows = rows_obj if isinstance(rows_obj, list) else []
     rows.append(str(text or ""))
@@ -28,6 +44,17 @@ def _append_step(state: OrchestratorState, text: str) -> None:
 
 
 def _append_event(state: OrchestratorState, event: str, detail: str, metadata: dict[str, Any] | None = None) -> None:
+    """执行append_event流程并返回结果。
+    
+    Args:
+        state: 编排状态对象。
+        event: 函数输入参数。
+        detail: 函数输入参数。
+        metadata: 函数输入参数。
+    
+    Returns:
+        None: 无返回值。
+    """
     rows_obj = state.get("reflection_events")
     rows = rows_obj if isinstance(rows_obj, list) else []
     rows.append(
@@ -41,6 +68,14 @@ def _append_event(state: OrchestratorState, event: str, detail: str, metadata: d
 
 
 def _unique(rows: list[str]) -> list[str]:
+    """执行unique流程并返回结果。
+    
+    Args:
+        rows: 输入数据列表。
+    
+    Returns:
+        list[str]: 处理后的列表结果。
+    """
     output: list[str] = []
     seen: set[str] = set()
     for item in rows:
@@ -86,9 +121,26 @@ _INTENT_ALIASES = {
 _INTENT_COMPARISON_HINTS = ("compare", "comparison", "vs", "versus", "比较", "对比", "相比", "差异", "优于", "劣于")
 _INTENT_SOURCE_HINTS = ("source", "citation", "quote", "原文", "出处", "来源", "文献", "引用")
 _INTENT_VERIFY_HINTS = ("verify", "verification", "evidence", "核实", "验证", "求证", "证据")
+_ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "assistant_capability"}
+_ALLOWED_QUESTION_MODES = {
+    "repeat_medical_question",
+    "memory_lookup",
+    "assistant_capability",
+    "generic_direct",
+    "medical_new_question",
+    "medical_gap_followup",
+}
 
 
 def _normalize_intent(intent: str) -> str:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        intent: 函数输入参数。
+    
+    Returns:
+        str: 文本结果。
+    """
     token = str(intent or "").strip().lower()
     if token in _SUPPORTED_INTENTS:
         return token
@@ -104,6 +156,14 @@ def _normalize_intent(intent: str) -> str:
 
 
 def _normalize_tool_result_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """规范化输入并返回标准化结果。
+    
+    Args:
+        row: 输入数据项。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     result_obj = row.get("result")
     result = result_obj if isinstance(result_obj, dict) else {}
     meta_obj = row.get("meta")
@@ -117,6 +177,15 @@ def _normalize_tool_result_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_gate_traces_from_tool_results(task: SubTask, tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """构建并返回目标数据。
+    
+    Args:
+        task: 当前处理任务。
+        tool_results: 函数输入参数。
+    
+    Returns:
+        list[dict[str, Any]]: 处理后的列表结果。
+    """
     traces: list[dict[str, Any]] = []
     for row in tool_results:
         if not isinstance(row, dict):
@@ -136,6 +205,14 @@ def _build_gate_traces_from_tool_results(task: SubTask, tool_results: list[dict[
 
 
 def _coerce_observations_to_gate_traces(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """执行coerce_observations_to_gate_traces流程并返回结果。
+    
+    Args:
+        observations: 函数输入参数。
+    
+    Returns:
+        list[dict[str, Any]]: 处理后的列表结果。
+    """
     traces: list[dict[str, Any]] = []
     for row in observations:
         if not isinstance(row, dict):
@@ -156,6 +233,14 @@ def _coerce_observations_to_gate_traces(observations: list[dict[str, Any]]) -> l
 
 
 async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
     state["retrieval_round"] = int(state.get("retrieval_round") or 0)
     state["pending_subtasks"] = state.get("pending_subtasks") if isinstance(state.get("pending_subtasks"), list) else []
     state["tool_observations"] = state.get("tool_observations") if isinstance(state.get("tool_observations"), list) else []
@@ -178,6 +263,11 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["evidence_gaps"] = state.get("evidence_gaps") if isinstance(state.get("evidence_gaps"), list) else []
     state["classification"] = state.get("classification") if isinstance(state.get("classification"), dict) else {}
     state["subtask_decisions"] = state.get("subtask_decisions") if isinstance(state.get("subtask_decisions"), dict) else {}
+    state["response_mode"] = str(state.get("response_mode") or "").strip() or "medical_retrieval"
+    state["memory_supported_points"] = state.get("memory_supported_points") if isinstance(state.get("memory_supported_points"), list) else []
+    state["memory_missing_points"] = state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else []
+    state["memory_coverage_ratio"] = float(state.get("memory_coverage_ratio") or 0.0)
+    state["memory_route_reason"] = str(state.get("memory_route_reason") or "").strip()
 
     resolved_query_obj = state.get("resolved_query")
     resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
@@ -197,9 +287,12 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
         if isinstance(preferred_sources_obj, list)
         else []
     )
-    preferred_sources = [item for item in preferred_sources if item in {"kg", "rag"}]
+    preferred_sources = [item for item in preferred_sources if item in _ALLOWED_PREFERRED_SOURCES]
     if not preferred_sources:
         preferred_sources = ["kg"]
+
+    raw_question_mode = str(resolved_query.get("question_mode") or "").strip()
+    question_mode = raw_question_mode if raw_question_mode in _ALLOWED_QUESTION_MODES else "medical_new_question"
 
     raw_intent = str(resolved_query.get("intent") or "direct_answer").strip()
     normalized_intent = _normalize_intent(raw_intent)
@@ -207,6 +300,7 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["resolved_query"] = {
         "standalone_question": standalone_question,
         "intent": normalized_intent,
+        "question_mode": question_mode,
         "subqueries": subqueries,
         "must_cover": [str(item or "").strip() for item in (resolved_query.get("must_cover") if isinstance(resolved_query.get("must_cover"), list) else []) if str(item or "").strip()],
         "entities": [str(item or "").strip() for item in (resolved_query.get("entities") if isinstance(resolved_query.get("entities"), list) else []) if str(item or "").strip()],
@@ -235,11 +329,36 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
 
 
 async def node_decompose_and_plan(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
+    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
+    if response_mode not in {"medical_retrieval", "memory_augmented_medical"}:
+        return state
     if state.get("pending_subtasks"):
         return state
 
     resolved_query_obj = state.get("resolved_query")
     resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
+    if response_mode == "memory_augmented_medical":
+        memory_missing_points = [
+            str(item or "").strip()
+            for item in (state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else [])
+            if str(item or "").strip()
+        ]
+        if memory_missing_points:
+            standalone_question = str(resolved_query.get("standalone_question") or state.get("input_text") or "").strip()
+            resolved_query = {
+                **resolved_query,
+                "question_mode": "medical_gap_followup",
+                "must_cover": memory_missing_points[:5],
+                "subqueries": [f"{standalone_question}，补充回答：{point}" for point in memory_missing_points[:3]],
+            }
     max_tool_calls = max(1, int(state.get("subagent_max_tool_calls") or 1))
     constraints = SubAgentConstraints(allow_extra_retrieval=False, max_tool_calls=max_tool_calls)
 
@@ -258,7 +377,60 @@ async def node_decompose_and_plan(state: OrchestratorState) -> OrchestratorState
     return state
 
 
+async def node_route_by_memory_capability(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
+    resolved_query = state.get("resolved_query") if isinstance(state.get("resolved_query"), dict) else {}
+    memory_context = state.get("memory_context") if isinstance(state.get("memory_context"), dict) else {}
+    route = route_by_memory_capability(
+        question=str(state.get("input_text") or ""),
+        resolved_query=resolved_query,
+        memory_context=memory_context,
+    )
+    state["response_mode"] = str(route.get("response_mode") or "medical_retrieval")
+    state["memory_supported_points"] = route.get("memory_supported_points") if isinstance(route.get("memory_supported_points"), list) else []
+    state["memory_missing_points"] = route.get("memory_missing_points") if isinstance(route.get("memory_missing_points"), list) else []
+    state["memory_coverage_ratio"] = float(route.get("memory_coverage_ratio") or 0.0)
+    state["memory_route_reason"] = str(route.get("reason") or "")
+
+    classification = state.get("classification") if isinstance(state.get("classification"), dict) else {}
+    state["classification"] = {
+        **classification,
+        "response_mode": state["response_mode"],
+        "memory_coverage_ratio": state["memory_coverage_ratio"],
+    }
+
+    _append_step(
+        state,
+        f"记忆优先路由完成 mode={state['response_mode']} reason={state['memory_route_reason']}",
+    )
+    _append_event(
+        state,
+        "memory_route_done",
+        str(state["memory_route_reason"] or ""),
+        {
+            "response_mode": state["response_mode"],
+            "memory_coverage_ratio": state["memory_coverage_ratio"],
+        },
+    )
+    return state
+
+
 async def node_pick_next_subtask(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
     pending_raw = state.get("pending_subtasks")
     pending_rows = pending_raw if isinstance(pending_raw, list) else []
     pending_tasks: list[SubTask] = []
@@ -288,6 +460,15 @@ async def node_call_subagent_serial(
     state: OrchestratorState,
     subagent_client: SubAgentClientFactory,
 ) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+        subagent_client: 函数输入参数。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
     current_raw = state.get("current_subtask")
     if not isinstance(current_raw, dict) or not current_raw:
         state["last_subagent_result"] = {}
@@ -359,6 +540,14 @@ async def node_call_subagent_serial(
 
 
 async def node_merge_evidence(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
     current_raw = state.get("current_subtask")
     result_raw = state.get("last_subagent_result")
     if not isinstance(current_raw, dict) or not isinstance(result_raw, dict):
@@ -433,6 +622,14 @@ async def node_merge_evidence(state: OrchestratorState) -> OrchestratorState:
 
 
 async def node_decide_supplement(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
     current_raw = state.get("current_subtask")
     result_raw = state.get("last_subagent_result")
     if not isinstance(current_raw, dict) or not isinstance(result_raw, dict):
@@ -499,6 +696,35 @@ async def node_decide_supplement(state: OrchestratorState) -> OrchestratorState:
 
 
 async def node_assess_answerability(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
+    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
+    if response_mode in {"memory_answer", "assistant_capability", "generic_direct"}:
+        state["gate_result"] = {
+            "memory_supported_points": state.get("memory_supported_points") if isinstance(state.get("memory_supported_points"), list) else [],
+            "memory_missing_points": state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else [],
+            "coverage_intervention": float(state.get("memory_coverage_ratio") or 0.0),
+        }
+        state["answerability"] = {
+            "answer_mode": "direct",
+            "gate_passed": True,
+            "should_backtrack": False,
+            "confidence_cap": 0.86 if response_mode == "memory_answer" else 0.78,
+            "missing_points": state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else [],
+            "direct_support": True,
+            "evidence_count": 0,
+            "final_evidence_count": 0,
+            "reason": f"{response_mode}_short_circuit",
+        }
+        _append_step(state, f"记忆优先终答直出 mode={response_mode}")
+        return state
+
     observations = state.get("tool_observations") if isinstance(state.get("tool_observations"), list) else []
     traces = _coerce_observations_to_gate_traces(observations)
     state["tool_observations"] = traces
@@ -516,6 +742,13 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
         max_backtrack=max(1, int(state.get("max_turns") or 1)),
         is_degraded=is_degraded,
     )
+    if response_mode == "memory_augmented_medical":
+        gate_result["memory_supported_points"] = (
+            state.get("memory_supported_points") if isinstance(state.get("memory_supported_points"), list) else []
+        )
+        gate_result["memory_missing_points"] = (
+            state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else []
+        )
     state["gate_result"] = gate_result
 
     answerability = assess_answerability(
@@ -530,6 +763,15 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
 
 
 async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorState:
+    """执行编排节点逻辑并更新状态。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
+    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
     answerability = state.get("answerability") if isinstance(state.get("answerability"), dict) else {}
     answer_mode = str(answerability.get("answer_mode") or "none").strip() or "none"
 
@@ -538,7 +780,55 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
         for item in (state.get("processing_steps") if isinstance(state.get("processing_steps"), list) else [])
     ]
 
-    if answer_mode == "none":
+    if response_mode == "memory_answer":
+        memory_answer = MemoryAnswerService().answer(
+            question=str(state.get("input_text") or ""),
+            resolved_query=state.get("resolved_query") if isinstance(state.get("resolved_query"), dict) else {},
+            memory_context=state.get("memory_context") if isinstance(state.get("memory_context"), dict) else {},
+        )
+        answer_text = str(memory_answer.get("answer_text") or "").strip()
+        if not answer_text:
+            answer_text = "当前会话记忆里还没有足够信息直接回答这个问题。"
+        writer_result = {
+            "answer_text": build_memory_answer_text(
+                answer_text,
+                support_type=str(memory_answer.get("support_type") or ""),
+                confidence=float(memory_answer.get("confidence") or 0.0),
+            ),
+            "writer_metadata": {
+                "writer_used": "memory",
+                "writer_fallback_reason": "",
+                "prompt_version": "memory_v1",
+                "mode": "memory_answer",
+            },
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    elif response_mode == "assistant_capability":
+        writer_result = {
+            "answer_text": build_assistant_capability_answer(),
+            "writer_metadata": {
+                "writer_used": "direct",
+                "writer_fallback_reason": "",
+                "prompt_version": "memory_v1",
+                "mode": "assistant_capability",
+            },
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    elif response_mode == "generic_direct":
+        writer_result = {
+            "answer_text": build_generic_direct_answer(
+                str(state.get("input_text") or ""),
+                state.get("memory_context") if isinstance(state.get("memory_context"), dict) else {},
+            ),
+            "writer_metadata": {
+                "writer_used": "direct",
+                "writer_fallback_reason": "",
+                "prompt_version": "memory_v1",
+                "mode": "generic_direct",
+            },
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    elif answer_mode == "none":
         writer_result = {
             "answer_text": _INSUFFICIENT_MESSAGE,
             "writer_metadata": {

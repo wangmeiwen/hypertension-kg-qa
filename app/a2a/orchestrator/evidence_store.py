@@ -6,6 +6,14 @@ from typing import Any
 
 
 def _init_store(store: dict[str, Any] | None = None) -> dict[str, Any]:
+    """执行init_store流程并返回结果。
+    
+    Args:
+        store: 函数输入参数。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     if isinstance(store, dict):
         base = dict(store)
     else:
@@ -30,6 +38,18 @@ def merge_task_evidence(
     evidence_rows: list[dict[str, Any]],
     coverage: dict[str, Any],
 ) -> dict[str, Any]:
+    """合并task_evidence相关信息并返回结果。
+    
+    Args:
+        store: 函数输入参数。
+        subtask_id: 对象标识。
+        agent_type: 函数输入参数。
+        evidence_rows: 函数输入参数。
+        coverage: 函数输入参数。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     state = _init_store(store)
     task_key = str(subtask_id)
 

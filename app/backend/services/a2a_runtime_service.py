@@ -27,6 +27,15 @@ class A2ARuntimeService:
         runtime_container: BackendRuntimeContainer,
         log_api_error: Callable[..., None],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            runtime_container: 函数输入参数。
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._runtime = runtime_container
         self._log_api_error = log_api_error
 
@@ -376,7 +385,7 @@ class A2ARuntimeService:
             is_degraded=is_degraded,
         )
         gate_passed = bool(gate_result.get("gate_passed"))
-        note = "证据门控通过，可终答" if gate_passed else "证据仍不足或需补检索"
+        note = "证据门控通过，可终答" if gate_passed else "证据未达到终答阈值，需继续补检索"
         if progress_callback is not None:
             progress_callback(
                 {
@@ -516,6 +525,14 @@ class A2ARuntimeService:
         sorted_lags = sorted(lags_ms)
 
         def pct(p: float) -> float:
+            """执行pct流程并返回结果。
+            
+            Args:
+                p: 计算参数。
+            
+            Returns:
+                float: 数值结果。
+            """
             if not sorted_lags:
                 return 0.0
             if len(sorted_lags) == 1:

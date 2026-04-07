@@ -14,6 +14,7 @@ from app.a2a.orchestrator.nodes import (
     node_merge_evidence,
     node_parse_input,
     node_pick_next_subtask,
+    node_route_by_memory_capability,
 )
 from app.a2a.orchestrator.state import OrchestratorState
 
@@ -28,13 +29,35 @@ except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, 
 
 
 class _FallbackGraphRunner:
+    """在 LangGraph 不可用时串行执行主控编排节点。"""
+
     def __init__(self, subagent_client: SubAgentClientFactory):
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            subagent_client: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self.subagent_client = subagent_client
 
     async def ainvoke(self, state: OrchestratorState) -> OrchestratorState:
+        """执行ainvoke流程并返回结果。
+        
+        Args:
+            state: 编排状态对象。
+        
+        Returns:
+            OrchestratorState: 执行结果。
+        """
         state = await node_parse_input(state)
-        state = await node_decompose_and_plan(state)
+        state = await node_route_by_memory_capability(state)
+        if str(state.get("response_mode") or "medical_retrieval") in {"medical_retrieval", "memory_augmented_medical"}:
+            state = await node_decompose_and_plan(state)
         while True:
+            if str(state.get("response_mode") or "medical_retrieval") not in {"medical_retrieval", "memory_augmented_medical"}:
+                break
             state = await node_pick_next_subtask(state)
             current = state.get("current_subtask") if isinstance(state.get("current_subtask"), dict) else {}
             if not current:
@@ -54,11 +77,42 @@ class _FallbackGraphRunner:
 
 
 def route_after_pick(state: OrchestratorState) -> str:
+    """根据当前状态计算下一步路由。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        str: 文本结果。
+    """
     current = state.get("current_subtask") if isinstance(state.get("current_subtask"), dict) else {}
     return "call_subagent_serial" if current else "assess_answerability"
 
 
+def route_after_memory_route(state: OrchestratorState) -> str:
+    """根据当前状态计算下一步路由。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        str: 文本结果。
+    """
+    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
+    if response_mode in {"medical_retrieval", "memory_augmented_medical"}:
+        return "decompose_and_plan"
+    return "assess_answerability"
+
+
 def _get_current_subtask_decision(state: OrchestratorState) -> dict[str, Any]:
+    """获取并返回目标数据。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        dict[str, Any]: 结构化结果数据。
+    """
     current = state.get("current_subtask") if isinstance(state.get("current_subtask"), dict) else {}
     subtask_id = str(current.get("subtask_id") or "").strip()
     rows = state.get("subtask_decisions") if isinstance(state.get("subtask_decisions"), dict) else {}
@@ -67,6 +121,14 @@ def _get_current_subtask_decision(state: OrchestratorState) -> dict[str, Any]:
 
 
 def route_after_supplement_decision(state: OrchestratorState) -> str:
+    """根据当前状态计算下一步路由。
+    
+    Args:
+        state: 编排状态对象。
+    
+    Returns:
+        str: 文本结果。
+    """
     decision = _get_current_subtask_decision(state)
     pending = state.get("pending_subtasks") if isinstance(state.get("pending_subtasks"), list) else []
     if bool(decision.get("need_supplement")):
@@ -77,14 +139,31 @@ def route_after_supplement_decision(state: OrchestratorState) -> str:
 
 
 def build_orchestrator_graph(subagent_client: SubAgentClientFactory) -> Any:
+    """构建orchestrator_graph相关信息并返回结果。
+    
+    Args:
+        subagent_client: 函数输入参数。
+    
+    Returns:
+        Any: 执行结果。
+    """
     if not _LANGGRAPH_AVAILABLE:
         return None
 
     async def _call_subagent_serial(state: OrchestratorState) -> OrchestratorState:
+        """执行call_subagent_serial流程并返回结果。
+        
+        Args:
+            state: 编排状态对象。
+        
+        Returns:
+            OrchestratorState: 执行结果。
+        """
         return await node_call_subagent_serial(state, subagent_client)
 
     builder = StateGraph(OrchestratorState)
     builder.add_node("parse_input", node_parse_input)
+    builder.add_node("route_by_memory_capability", node_route_by_memory_capability)
     builder.add_node("decompose_and_plan", node_decompose_and_plan)
     builder.add_node("pick_next_subtask", node_pick_next_subtask)
     builder.add_node("call_subagent_serial", _call_subagent_serial)
@@ -94,7 +173,15 @@ def build_orchestrator_graph(subagent_client: SubAgentClientFactory) -> Any:
     builder.add_node("compose_final_answer", node_compose_final_answer)
 
     builder.set_entry_point("parse_input")
-    builder.add_edge("parse_input", "decompose_and_plan")
+    builder.add_edge("parse_input", "route_by_memory_capability")
+    builder.add_conditional_edges(
+        "route_by_memory_capability",
+        route_after_memory_route,
+        {
+            "decompose_and_plan": "decompose_and_plan",
+            "assess_answerability": "assess_answerability",
+        },
+    )
     builder.add_edge("decompose_and_plan", "pick_next_subtask")
 
     builder.add_conditional_edges(
@@ -123,6 +210,14 @@ def build_orchestrator_graph(subagent_client: SubAgentClientFactory) -> Any:
 
 
 def compile_orchestrator_graph(subagent_client: SubAgentClientFactory) -> Any:
+    """执行compile_orchestrator_graph流程并返回结果。
+    
+    Args:
+        subagent_client: 函数输入参数。
+    
+    Returns:
+        Any: 执行结果。
+    """
     graph = build_orchestrator_graph(subagent_client)
     if graph is None:
         return _FallbackGraphRunner(subagent_client)
@@ -130,6 +225,15 @@ def compile_orchestrator_graph(subagent_client: SubAgentClientFactory) -> Any:
 
 
 async def run_orchestrator_graph(compiled_graph: Any, state: OrchestratorState) -> OrchestratorState:
+    """运行orchestrator_graph相关信息并返回结果。
+    
+    Args:
+        compiled_graph: 函数输入参数。
+        state: 编排状态对象。
+    
+    Returns:
+        OrchestratorState: 执行结果。
+    """
     ainvoke: Callable[[OrchestratorState], Awaitable[OrchestratorState]] = getattr(compiled_graph, "ainvoke")
     output_keys = list(
         dict.fromkeys(

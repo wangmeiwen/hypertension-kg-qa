@@ -20,6 +20,8 @@ from app.rag_core.vector_store import VectorStore, conf
 
 
 class EntityVectorStore(VectorStore):
+    """提供实体粒度向量写入与相似检索能力。"""
+
     def __init__(self, collection_name="entity_collection", host=conf.MILVUS_HOST, port=conf.MILVUS_PORT, database=conf.MILVUS_DATABASE_NAME):
         """
         初始化实体向量存储。

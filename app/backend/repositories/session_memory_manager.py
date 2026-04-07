@@ -10,6 +10,8 @@ from app.backend.repositories.database import fetch_one, execute
 
 
 class SessionMemoryManager:
+    """封装会话摘要与检索摘要的持久化读写操作。"""
+
     @staticmethod
     async def get_summary(session_id: str) -> str:
         """读取会话主摘要文本。

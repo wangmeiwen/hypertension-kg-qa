@@ -15,6 +15,8 @@ conf = Config()
 
 
 class DatabaseManager:
+    """封装 Neo4j 与 Milvus 的连通性健康检查流程。"""
+
     def __init__(self):
         """初始化数据库健康检查器。
 

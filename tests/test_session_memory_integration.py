@@ -10,6 +10,7 @@ from unittest.mock import patch
 import httpx
 
 from app.backend.services.session_memory_llm import SessionMemoryLLM
+from app.backend.services.memory_answer_service import MemoryAnswerService
 from app.backend.services.session_memory_service import SessionMemoryService
 
 
@@ -35,6 +36,7 @@ class _IntegrationLLM:
         return {
             "standalone_question": standalone_question,
             "intent": "follow_up" if carry_over_context else "direct_answer",
+            "question_mode": "medical_new_question",
             "subqueries": [standalone_question],
             "must_cover": ["answer"],
             "entities": ["高血压"],
@@ -329,7 +331,7 @@ class TestSessionMemoryIntegration(unittest.TestCase):
                     previous_summary={"version": 1, "last_message_id": 1},
                     previous_retrieval_summary={"version": 1, "last_message_id": 1},
                     messages_delta=[],
-                    turn_artifacts={},
+                    turn_memory_projection={},
                     session_id="s-log-1",
                     assistant_message_id=88,
                 )
@@ -355,7 +357,7 @@ class TestSessionMemoryIntegration(unittest.TestCase):
             result = self._run(
                 llm.resolve_query(
                     input_text="那老年人呢",
-                    recent_messages=[],
+                    recent_messages_digest=[],
                     summary={},
                     retrieval_summary={},
                     session_id="s-log-2",
@@ -370,6 +372,152 @@ class TestSessionMemoryIntegration(unittest.TestCase):
         self.assertEqual(str(payload.get("session_id") or ""), "s-log-2")
         self.assertEqual(int(payload.get("assistant_message_id") or 0), 0)
         self.assertEqual(str(payload.get("error_type") or ""), "TimeoutError")
+
+    def test_capability_question_should_deweight_previous_medical_memory(self) -> None:
+        session_id = "s-topic-shift"
+
+        user_1 = self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        self._run(self.service.build_runtime_context(session_id, "ACEI 和 ARB 联用推荐吗", user_1))
+        assistant_1 = self._add_message(session_id, "assistant", "一般不推荐 ACEI 与 ARB 联用。")
+        self._run(self.service.refresh_after_turn(session_id, assistant_1, {}))
+
+        user_2 = self._add_message(session_id, "user", "你能做什么")
+        payload = self._run(self.service.build_runtime_context(session_id, "你能做什么", user_2))
+
+        resolved = payload.get("resolved_query") if isinstance(payload.get("resolved_query"), dict) else {}
+        memory_context = payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}
+        metadata = memory_context.get("metadata") if isinstance(memory_context.get("metadata"), dict) else {}
+        topic_shift = memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}
+        summary_obj = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
+
+        self.assertEqual(resolved.get("preferred_sources"), ["assistant_capability"])
+        self.assertEqual(str(resolved.get("question_mode") or ""), "assistant_capability")
+        self.assertEqual(str(metadata.get("memory_mode") or ""), "fast_path")
+        self.assertFalse(bool(topic_shift.get("topic_shift_detected")))
+        self.assertIn("ACEI", " ".join(summary_obj.get("confirmed_facts", [])))
+
+    def test_repeat_medical_question_should_prefer_memory_route(self) -> None:
+        session_id = "s-repeat-route"
+
+        user_1 = self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        self._run(self.service.build_runtime_context(session_id, "ACEI 和 ARB 联用推荐吗", user_1))
+        assistant_1 = self._add_message(session_id, "assistant", "一般不推荐 ACEI 与 ARB 联用。")
+        self._run(
+            self.service.refresh_after_turn(
+                session_id,
+                assistant_1,
+                {
+                    "turn_memory_projection": {
+                        "answered_points": ["一般不推荐 ACEI 与 ARB 联用"],
+                        "evidence_gaps": [],
+                        "focus_entities": ["ACEI", "ARB"],
+                        "covered_topics": ["联合用药推荐"],
+                        "risk_notes": [],
+                        "assistant_reply_digest": "一般不推荐 ACEI 与 ARB 联用。",
+                        "question_scope": "medical_qa",
+                    }
+                },
+            )
+        )
+
+        user_2 = self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        payload = self._run(self.service.build_runtime_context(session_id, "ACEI 和 ARB 联用推荐吗", user_2))
+
+        resolved = payload.get("resolved_query") if isinstance(payload.get("resolved_query"), dict) else {}
+        metadata = (
+            (payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}).get("metadata")
+            if isinstance((payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}).get("metadata"), dict)
+            else {}
+        )
+        self.assertEqual(resolved.get("preferred_sources"), ["memory"])
+        self.assertEqual(str(resolved.get("question_mode") or ""), "repeat_medical_question")
+        self.assertTrue(bool(metadata.get("repeat_question_detected")))
+
+    def test_name_lookup_should_use_fast_path_without_resolve_query(self) -> None:
+        session_id = "s-fast-name"
+        self._add_message(session_id, "user", "请记住我的名字是小王")
+
+        with patch.object(self.service, "ensure_memory_current", side_effect=RuntimeError("should_not_call")), patch.object(
+            self.service.llm,
+            "resolve_query",
+            side_effect=RuntimeError("should_not_call"),
+        ):
+            payload = self._run(self.service.build_runtime_context(session_id, "我叫什么名字", 1))
+
+        resolved = payload.get("resolved_query") if isinstance(payload.get("resolved_query"), dict) else {}
+        memory_context = payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}
+        metadata = memory_context.get("metadata") if isinstance(memory_context.get("metadata"), dict) else {}
+        self.assertEqual(resolved.get("preferred_sources"), ["memory"])
+        self.assertEqual(str(resolved.get("question_mode") or ""), "memory_lookup")
+        self.assertEqual(str(metadata.get("memory_mode") or ""), "fast_path")
+
+    def test_name_lookup_should_not_be_polluted_by_answered_points(self) -> None:
+        session_id = "s-name-priority"
+        self.memory_store[session_id] = {
+            "summary": self.service._sanitize_summary(
+                {
+                    "conversation_goal": "高龄老年高血压控制目标",
+                    "confirmed_facts": [],
+                    "answered_points": ["80岁及以上高龄老年高血压患者血压控制目标建议为<150/90mmHg"],
+                    "open_questions": [],
+                    "risk_notes": [],
+                }
+            ),
+            "retrieval_summary": self.service._sanitize_retrieval_summary({}),
+            "updated_at": datetime.now(),
+        }
+        self._add_message(session_id, "user", "请记住我的名字是小王")
+        payload = self._run(self.service.build_runtime_context(session_id, "我叫什么名字", 1))
+        resolved = payload.get("resolved_query") if isinstance(payload.get("resolved_query"), dict) else {}
+        answer = MemoryAnswerService().answer(
+            question="我叫什么名字",
+            resolved_query=resolved,
+            memory_context=payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {},
+        )
+        self.assertIn("小王", str(answer.get("answer_text") or ""))
+        self.assertNotIn("150/90", str(answer.get("answer_text") or ""))
+
+    def test_administrative_question_should_soft_shift_previous_medical_memory(self) -> None:
+        session_id = "s-soft-shift"
+
+        user_1 = self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        self._run(self.service.build_runtime_context(session_id, "ACEI 和 ARB 联用推荐吗", user_1))
+        assistant_1 = self._add_message(session_id, "assistant", "一般不推荐 ACEI 与 ARB 联用。")
+        self._run(self.service.refresh_after_turn(session_id, assistant_1, {}))
+
+        user_2 = self._add_message(session_id, "user", "后台会话列表怎么看")
+        payload = self._run(self.service.build_runtime_context(session_id, "后台会话列表怎么看", user_2))
+
+        memory_context = payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}
+        resolved = payload.get("resolved_query") if isinstance(payload.get("resolved_query"), dict) else {}
+        metadata = memory_context.get("metadata") if isinstance(memory_context.get("metadata"), dict) else {}
+        topic_shift = memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}
+        summary_obj = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
+
+        self.assertEqual(resolved.get("preferred_sources"), ["direct"])
+        self.assertEqual(str(resolved.get("question_mode") or ""), "generic_direct")
+        self.assertEqual(str(metadata.get("memory_mode") or ""), "fast_path")
+        self.assertFalse(bool(topic_shift.get("topic_shift_detected")))
+        self.assertIn("ACEI", " ".join(summary_obj.get("confirmed_facts", [])))
+
+    def test_short_followup_should_not_soft_shift_medical_context(self) -> None:
+        session_id = "s-short-followup"
+
+        user_1 = self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        self._run(self.service.build_runtime_context(session_id, "ACEI 和 ARB 联用推荐吗", user_1))
+        assistant_1 = self._add_message(session_id, "assistant", "一般不推荐 ACEI 与 ARB 联用。")
+        self._run(self.service.refresh_after_turn(session_id, assistant_1, {}))
+
+        user_2 = self._add_message(session_id, "user", "这个怎么选")
+        payload = self._run(self.service.build_runtime_context(session_id, "这个怎么选", user_2))
+
+        memory_context = payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}
+        topic_shift = memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}
+        summary_obj = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
+
+        self.assertFalse(bool(topic_shift.get("topic_shift_detected")))
+        self.assertEqual(str(topic_shift.get("reason") or ""), "short_followup_whitelisted")
+        self.assertIn("ACEI", " ".join(summary_obj.get("confirmed_facts", [])))
 
 
 if __name__ == "__main__":

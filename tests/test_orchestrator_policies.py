@@ -8,8 +8,8 @@ from app.a2a.orchestrator.supplement_decider import decide_supplement
 
 
 class TestOrchestratorPolicies(unittest.TestCase):
-    def test_no_signal_should_reroute_to_rag(self) -> None:
-        """无信号时应触发跨代理补检索。"""
+    def test_no_signal_first_round_should_refine_instead_of_reroute(self) -> None:
+        """首轮无信号应先 query_refine，不直接跨代理。"""
         task = SubTask(
             subtask_id=1,
             target_agent="kg",
@@ -28,8 +28,9 @@ class TestOrchestratorPolicies(unittest.TestCase):
             last_no_signal=True,
         )
         self.assertTrue(decision.need_supplement)
-        self.assertEqual(decision.next_agent, "rag")
-        self.assertEqual(decision.reason, "no_signal_reroute")
+        self.assertEqual(decision.supplement_type, "query_refine")
+        self.assertEqual(decision.next_agent, "kg")
+        self.assertEqual(decision.reason, "coverage_gap_refine")
 
     def test_final_answer_should_not_dump_raw_dict(self) -> None:
         """最终答案不应直接泄露原始字典字符串。"""
@@ -57,9 +58,10 @@ class TestOrchestratorPolicies(unittest.TestCase):
         )
         self.assertIn("结论：", answer.answer)
         self.assertNotIn("{'doc_id'", answer.answer)
+        self.assertIn("免责声明：", answer.answer)
 
-    def test_low_value_partial_should_reroute_on_second_round(self) -> None:
-        """comparison 在 partial + 低价值信号时第二轮应触发 reroute。"""
+    def test_low_value_partial_should_escalate_to_rag_on_second_round(self) -> None:
+        """comparison 在第二轮 low-signal 条件下应触发 KG->RAG 升级。"""
         task = SubTask(
             subtask_id=1,
             target_agent="kg",
@@ -87,7 +89,7 @@ class TestOrchestratorPolicies(unittest.TestCase):
         self.assertTrue(decision.need_supplement)
         self.assertEqual(decision.supplement_type, "reroute")
         self.assertEqual(decision.next_agent, "rag")
-        self.assertEqual(decision.reason, "low_value_signal_reroute")
+        self.assertEqual(decision.reason, "kg_to_rag_escalation")
 
 
 if __name__ == "__main__":

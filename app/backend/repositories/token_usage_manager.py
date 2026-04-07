@@ -8,6 +8,8 @@ from app.backend.repositories.database import fetch_all, fetch_one, insert_and_g
 
 
 class TokenUsageManager:
+    """封装会话维度的 token 使用记录与统计查询。"""
+
     @staticmethod
     async def record_usage(
         session_id: str,

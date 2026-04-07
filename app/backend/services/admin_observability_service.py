@@ -11,17 +11,35 @@ class AdminObservabilityService:
     """封装管理员可观测性与运行明细。"""
 
     def __init__(self, log_api_error: Any) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._log_api_error = log_api_error
+
+    @staticmethod
+    def _project_root() -> Path:
+        """执行project_root流程并返回结果。
+        
+        Args:
+            无。
+        
+        Returns:
+            Path: 执行结果。
+        """
+        return Path(__file__).resolve().parents[3]
 
     def _read_perf_event_logs(self, event_name: str, limit: int = 200) -> list[dict[str, Any]]:
         """从 logs/perf.log 读取性能事件。"""
-        project_root = Path(__file__).resolve().parents[3]
-        log_dir = project_root / "logs"
+        log_dir = self._project_root() / "logs"
         candidate_paths = [
             log_dir / "perf.log",
             log_dir / "perf.log.1",
             log_dir / "perf.log.2",
-            Path("logs") / "perf.log",
         ]
 
         lines: list[str] = []
@@ -62,9 +80,109 @@ class AdminObservabilityService:
                 break
         return events
 
+    def _read_turn_logs(self, limit: int = 200) -> list[dict[str, Any]]:
+        """读取 turn 级观测日志。"""
+        turns_root = self._project_root() / "logs" / "sessions"
+        if not turns_root.exists():
+            return []
+        turn_rows: dict[str, dict[str, Any]] = {}
+        memory_updates: dict[str, dict[str, Any]] = {}
+        rows: list[dict[str, Any]] = []
+        for turn_file in turns_root.glob("*/turns/*.jsonl"):
+            try:
+                for line in turn_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if not line.strip():
+                        continue
+                    payload = json.loads(line)
+                    if not isinstance(payload, dict):
+                        continue
+                    record_type = str(payload.get("record_type") or "")
+                    if record_type == "turn_observability":
+                        turn_id = str(payload.get("turn_id") or "")
+                        if turn_id:
+                            turn_rows[turn_id] = payload
+                        else:
+                            rows.append(payload)
+                    elif record_type == "turn_memory_update":
+                        turn_id = str(payload.get("turn_id") or "")
+                        if turn_id:
+                            memory_updates[turn_id] = payload
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+                self._log_api_error("_read_turn_logs", "read_file", exc, path=str(turn_file))
+                continue
+        for turn_id, payload in turn_rows.items():
+            memory_update = memory_updates.get(turn_id) if isinstance(memory_updates.get(turn_id), dict) else {}
+            if memory_update:
+                payload = {
+                    **payload,
+                    "llm_calls": max(int(payload.get("llm_calls") or 0), int(memory_update.get("llm_calls") or 0)),
+                    "total_tokens": max(int(payload.get("total_tokens") or 0), int(memory_update.get("total_tokens") or 0)),
+                    "error_types": (
+                        {
+                            **(payload.get("error_types") if isinstance(payload.get("error_types"), dict) else {}),
+                            **(memory_update.get("error_types") if isinstance(memory_update.get("error_types"), dict) else {}),
+                        }
+                    ),
+                }
+            rows.append(payload)
+        rows.sort(key=lambda item: str(item.get("finished_at") or item.get("timestamp") or ""), reverse=True)
+        return rows[:limit]
+
+    @staticmethod
+    def _to_float_metric(value: Any) -> float:
+        """执行to_float_metric流程并返回结果。
+        
+        Args:
+            value: 待处理输入值。
+        
+        Returns:
+            float: 数值结果。
+        """
+        if isinstance(value, bool):
+            return float(int(value))
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return 0.0
+        return 0.0
+
+    @staticmethod
+    def _to_int_metric(value: Any) -> int:
+        """执行to_int_metric流程并返回结果。
+        
+        Args:
+            value: 待处理输入值。
+        
+        Returns:
+            int: 数值结果。
+        """
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(float(value))
+            except ValueError:
+                return 0
+        return 0
+
     @staticmethod
     def _split_error_types(event: dict[str, Any], strategy_error_keys: set[str]) -> tuple[dict[str, int], dict[str, int]]:
-        """拆分策略与执行错误。"""
+        """拆分error_types相关信息并返回结果。
+        
+        Args:
+            event: 函数输入参数。
+            strategy_error_keys: 函数输入参数。
+        
+        Returns:
+            tuple[dict[str, int], dict[str, int]]: 执行结果。
+        """
         strategy_errors = event.get("strategy_error_types") or {}
         execution_errors = event.get("execution_error_types") or {}
         if isinstance(strategy_errors, dict) and isinstance(execution_errors, dict):
@@ -86,40 +204,60 @@ class AdminObservabilityService:
                     execution_fallback[error_key] = execution_fallback.get(error_key, 0) + error_count
         return strategy_fallback, execution_fallback
 
-    @staticmethod
-    def _to_float_metric(value: Any) -> float:
-        """统一浮点指标转换。"""
-        if isinstance(value, bool):
-            return float(int(value))
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            try:
-                return float(value)
-            except ValueError:
-                return 0.0
-        return 0.0
-
-    @staticmethod
-    def _to_int_metric(value: Any) -> int:
-        """统一整型指标转换。"""
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str):
-            try:
-                return int(float(value))
-            except ValueError:
-                return 0
-        return 0
+    def _normalize_run_row(self, event: dict[str, Any], rank: int) -> dict[str, Any]:
+        """规范化输入并返回标准化结果。
+        
+        Args:
+            event: 函数输入参数。
+            rank: 函数输入参数。
+        
+        Returns:
+            dict[str, Any]: 结构化结果数据。
+        """
+        strategy_error_keys = {
+            "planner_error",
+            "planner_upstream_error",
+            "tool_not_allowed",
+            "tool_temporarily_avoided",
+            "duplicate_tool_call_blocked",
+            "loop_guard_stop",
+            "job_cancelled",
+            "final_summarize_error",
+        }
+        strategy_errors, execution_errors = self._split_error_types(event, strategy_error_keys)
+        timestamp = (
+            str(event.get("finished_at") or "")
+            or str(event.get("timestamp") or "")
+            or str(event.get("started_at") or "")
+        )
+        return {
+            "rank": rank,
+            "timestamp": timestamp,
+            "session_id": str(event.get("session_id") or ""),
+            "user_id": str(event.get("user_id") or ""),
+            "duration_ms": self._to_float_metric(event.get("duration_ms")),
+            "llm_calls": self._to_int_metric(event.get("llm_calls")),
+            "attempted_tool_actions": self._to_int_metric(event.get("attempted_tool_actions") if event.get("attempted_tool_actions") is not None else event.get("tool_calls")),
+            "blocked_tool_actions": self._to_int_metric(event.get("blocked_tool_actions")),
+            "tool_calls": self._to_int_metric(event.get("tool_calls")),
+            "execution_tool_success_rate": self._to_float_metric(event.get("execution_tool_success_rate") if event.get("execution_tool_success_rate") is not None else event.get("tool_success_rate")),
+            "attempted_action_success_rate": self._to_float_metric(event.get("attempted_action_success_rate") if event.get("attempted_action_success_rate") is not None else event.get("tool_success_rate")),
+            "tool_success_rate": self._to_float_metric(event.get("tool_success_rate")),
+            "total_tokens": self._to_int_metric(event.get("total_tokens")),
+            "error_types": event.get("error_types") if isinstance(event.get("error_types"), dict) else {},
+            "strategy_error_types": strategy_errors,
+            "execution_error_types": execution_errors,
+            "tool_observations": event.get("tool_observations") if isinstance(event.get("tool_observations"), list) else [],
+            "reflection_events": event.get("reflection_events") if isinstance(event.get("reflection_events"), list) else [],
+            "turn_metrics": event.get("turn_metrics") if isinstance(event.get("turn_metrics"), list) else [],
+            "processing_steps": event.get("processing_steps") if isinstance(event.get("processing_steps"), list) else [],
+        }
 
     async def admin_agent_observability_summary(self, limit: int = 200) -> dict[str, Any]:
         """获取 Agent 可观测性汇总。"""
         safe_limit = max(10, min(limit, 2000))
-        events = self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
+        primary_events = self._read_turn_logs(limit=safe_limit)
+        events = primary_events or self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
         if not events:
             return {
                 "ok": True,
@@ -168,7 +306,6 @@ class AdminObservabilityService:
             execution_rate_value = event.get("execution_tool_success_rate") if event.get("execution_tool_success_rate") is not None else event.get("tool_success_rate")
             attempted_rate_value = event.get("attempted_action_success_rate") if event.get("attempted_action_success_rate") is not None else event.get("tool_success_rate")
             attempted_actions_value = event.get("attempted_tool_actions") if event.get("attempted_tool_actions") is not None else event.get("tool_calls")
-
             total_duration += self._to_float_metric(event.get("duration_ms"))
             total_success_rate += self._to_float_metric(event.get("tool_success_rate"))
             total_execution_success_rate += self._to_float_metric(execution_rate_value)
@@ -213,44 +350,7 @@ class AdminObservabilityService:
     async def admin_agent_observability_runs(self, limit: int = 50) -> dict[str, Any]:
         """获取 Agent 近期运行明细。"""
         safe_limit = max(1, min(limit, 200))
-        events = self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
-        strategy_error_keys = {
-            "planner_error",
-            "planner_upstream_error",
-            "tool_not_allowed",
-            "tool_temporarily_avoided",
-            "duplicate_tool_call_blocked",
-            "loop_guard_stop",
-            "job_cancelled",
-            "final_summarize_error",
-        }
-
-        rows: list[dict[str, Any]] = []
-        for index, event in enumerate(events):
-            strategy_errors, execution_errors = self._split_error_types(event, strategy_error_keys)
-            rows.append(
-                {
-                    "rank": index + 1,
-                    "timestamp": str(event.get("timestamp") or ""),
-                    "session_id": str(event.get("session_id") or ""),
-                    "user_id": str(event.get("user_id") or ""),
-                    "duration_ms": self._to_float_metric(event.get("duration_ms")),
-                    "llm_calls": self._to_int_metric(event.get("llm_calls")),
-                    "attempted_tool_actions": self._to_int_metric(event.get("attempted_tool_actions") if event.get("attempted_tool_actions") is not None else event.get("tool_calls")),
-                    "blocked_tool_actions": self._to_int_metric(event.get("blocked_tool_actions")),
-                    "tool_calls": self._to_int_metric(event.get("tool_calls")),
-                    "execution_tool_success_rate": self._to_float_metric(event.get("execution_tool_success_rate") if event.get("execution_tool_success_rate") is not None else event.get("tool_success_rate")),
-                    "attempted_action_success_rate": self._to_float_metric(event.get("attempted_action_success_rate") if event.get("attempted_action_success_rate") is not None else event.get("tool_success_rate")),
-                    "tool_success_rate": self._to_float_metric(event.get("tool_success_rate")),
-                    "total_tokens": self._to_int_metric(event.get("total_tokens")),
-                    "error_types": event.get("error_types") or {},
-                    "strategy_error_types": strategy_errors,
-                    "execution_error_types": execution_errors,
-                    "tool_observations": event.get("tool_observations") if isinstance(event.get("tool_observations"), list) else [],
-                    "reflection_events": event.get("reflection_events") if isinstance(event.get("reflection_events"), list) else [],
-                    "turn_metrics": event.get("turn_metrics") if isinstance(event.get("turn_metrics"), list) else [],
-                    "processing_steps": event.get("processing_steps") if isinstance(event.get("processing_steps"), list) else [],
-                }
-            )
-
+        primary_events = self._read_turn_logs(limit=safe_limit)
+        events = primary_events or self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
+        rows = [self._normalize_run_row(event, index + 1) for index, event in enumerate(events)]
         return {"ok": True, "data": rows, "count": len(rows)}

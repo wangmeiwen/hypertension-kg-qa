@@ -58,16 +58,44 @@ def create_a2a_router(
 
     @router.post("/a2a/rpc")
     async def a2a_rpc(data: dict, request: Request) -> JSONResponse:
+        """执行a2a_rpc流程并返回结果。
+        
+        Args:
+            data: 函数输入参数。
+            request: 函数输入参数。
+        
+        Returns:
+            JSONResponse: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("orchestrator", data, trace_id, "/a2a/rpc")
 
     @router.get("/a2a/tasks")
     async def a2a_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+        """执行a2a_list_tasks流程并返回结果。
+        
+        Args:
+            request: 函数输入参数。
+            context_id: 对象标识。
+            limit: 函数输入参数。
+        
+        Returns:
+            dict[str, Any]: 结构化结果数据。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("orchestrator", trace_id, "/a2a/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/tasks/{task_id}")
     async def a2a_get_task(task_id: str, request: Request) -> Any:
+        """执行a2a_get_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("orchestrator", task_id, trace_id, "/a2a/tasks/{task_id}")
 
@@ -79,6 +107,18 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
+        """执行a2a_task_events流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            cursor: 函数输入参数。
+            poll_ms: 函数输入参数。
+            timeout_seconds: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
             "orchestrator",
@@ -97,6 +137,16 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
+        """执行a2a_cancel_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            data: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(
             "orchestrator",
@@ -108,16 +158,44 @@ def create_a2a_router(
 
     @router.post("/a2a/graph/rpc")
     async def a2a_graph_rpc(data: dict, request: Request) -> JSONResponse:
+        """执行a2a_graph_rpc流程并返回结果。
+        
+        Args:
+            data: 函数输入参数。
+            request: 函数输入参数。
+        
+        Returns:
+            JSONResponse: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("graph", data, trace_id, "/a2a/graph/rpc")
 
     @router.get("/a2a/graph/tasks")
     async def a2a_graph_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+        """执行a2a_graph_list_tasks流程并返回结果。
+        
+        Args:
+            request: 函数输入参数。
+            context_id: 对象标识。
+            limit: 函数输入参数。
+        
+        Returns:
+            dict[str, Any]: 结构化结果数据。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("graph", trace_id, "/a2a/graph/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/graph/tasks/{task_id}")
     async def a2a_graph_get_task(task_id: str, request: Request) -> Any:
+        """执行a2a_graph_get_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("graph", task_id, trace_id, "/a2a/graph/tasks/{task_id}")
 
@@ -129,6 +207,18 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
+        """执行a2a_graph_task_events流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            cursor: 函数输入参数。
+            poll_ms: 函数输入参数。
+            timeout_seconds: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
             "graph",
@@ -147,6 +237,16 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
+        """执行a2a_graph_cancel_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            data: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(
             "graph",
@@ -158,16 +258,44 @@ def create_a2a_router(
 
     @router.post("/a2a/retrieval/rpc")
     async def a2a_retrieval_rpc(data: dict, request: Request) -> JSONResponse:
+        """执行a2a_retrieval_rpc流程并返回结果。
+        
+        Args:
+            data: 函数输入参数。
+            request: 函数输入参数。
+        
+        Returns:
+            JSONResponse: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("retrieval", data, trace_id, "/a2a/retrieval/rpc")
 
     @router.get("/a2a/retrieval/tasks")
     async def a2a_retrieval_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+        """执行a2a_retrieval_list_tasks流程并返回结果。
+        
+        Args:
+            request: 函数输入参数。
+            context_id: 对象标识。
+            limit: 函数输入参数。
+        
+        Returns:
+            dict[str, Any]: 结构化结果数据。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("retrieval", trace_id, "/a2a/retrieval/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/retrieval/tasks/{task_id}")
     async def a2a_retrieval_get_task(task_id: str, request: Request) -> Any:
+        """执行a2a_retrieval_get_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("retrieval", task_id, trace_id, "/a2a/retrieval/tasks/{task_id}")
 
@@ -179,6 +307,18 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
+        """执行a2a_retrieval_task_events流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            cursor: 函数输入参数。
+            poll_ms: 函数输入参数。
+            timeout_seconds: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
             "retrieval",
@@ -197,6 +337,16 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
+        """执行a2a_retrieval_cancel_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            data: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(
             "retrieval",
@@ -208,16 +358,44 @@ def create_a2a_router(
 
     @router.post("/a2a/evaluator/rpc")
     async def a2a_evaluator_rpc(data: dict, request: Request) -> JSONResponse:
+        """执行a2a_evaluator_rpc流程并返回结果。
+        
+        Args:
+            data: 函数输入参数。
+            request: 函数输入参数。
+        
+        Returns:
+            JSONResponse: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("evaluator", data, trace_id, "/a2a/evaluator/rpc")
 
     @router.get("/a2a/evaluator/tasks")
     async def a2a_evaluator_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+        """执行a2a_evaluator_list_tasks流程并返回结果。
+        
+        Args:
+            request: 函数输入参数。
+            context_id: 对象标识。
+            limit: 函数输入参数。
+        
+        Returns:
+            dict[str, Any]: 结构化结果数据。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("evaluator", trace_id, "/a2a/evaluator/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/evaluator/tasks/{task_id}")
     async def a2a_evaluator_get_task(task_id: str, request: Request) -> Any:
+        """执行a2a_evaluator_get_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("evaluator", task_id, trace_id, "/a2a/evaluator/tasks/{task_id}")
 
@@ -229,6 +407,18 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
+        """执行a2a_evaluator_task_events流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            cursor: 函数输入参数。
+            poll_ms: 函数输入参数。
+            timeout_seconds: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
             "evaluator",
@@ -247,6 +437,16 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
+        """执行a2a_evaluator_cancel_task流程并返回结果。
+        
+        Args:
+            task_id: 对象标识。
+            request: 函数输入参数。
+            data: 函数输入参数。
+        
+        Returns:
+            Any: 执行结果。
+        """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(
             "evaluator",

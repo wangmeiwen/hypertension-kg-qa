@@ -22,6 +22,16 @@ class StartupRuntimeService:
         a2a_runtime: A2ARuntimeService,
         log_api_error: Callable[..., None],
     ) -> None:
+        """初始化实例并注入运行依赖。
+        
+        Args:
+            runtime_container: 函数输入参数。
+            a2a_runtime: 函数输入参数。
+            log_api_error: 函数输入参数。
+        
+        Returns:
+            None: 无返回值。
+        """
         self._runtime = runtime_container
         self._a2a_runtime = a2a_runtime
         self._log_api_error = log_api_error

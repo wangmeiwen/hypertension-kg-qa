@@ -63,6 +63,8 @@ load_dotenv(dotenv_path=env_path, override=True)
 
 
 class Config:
+    """集中承载项目运行时配置并提供统一访问入口。"""
+
     def __init__(self):
         """加载并组织项目运行所需配置项。
 
@@ -111,20 +113,20 @@ class Config:
         self.ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "your-api-key")
 
         # 检索参数
-        self.RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "5"))
-        self.CANDIDATE_M = int(os.getenv("CANDIDATE_M", "10"))
+        self.RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "4"))
+        self.CANDIDATE_M = int(os.getenv("CANDIDATE_M", "6"))
         self.RRF_K = int(os.getenv("RRF_K", "60"))
-        self.RAG_SEARCH_TOP_K_DEFAULT = int(os.getenv("RAG_SEARCH_TOP_K_DEFAULT", "5"))
-        self.RAG_SEARCH_TOP_K_MAX = int(os.getenv("RAG_SEARCH_TOP_K_MAX", "20"))
+        self.RAG_SEARCH_TOP_K_DEFAULT = int(os.getenv("RAG_SEARCH_TOP_K_DEFAULT", "4"))
+        self.RAG_SEARCH_TOP_K_MAX = int(os.getenv("RAG_SEARCH_TOP_K_MAX", "8"))
         self.MILVUS_SEARCH_NPROBE = int(os.getenv("MILVUS_SEARCH_NPROBE", "10"))
-        self.RAG_DENSE_RECALL_MULTIPLIER = int(os.getenv("RAG_DENSE_RECALL_MULTIPLIER", "2"))
-        self.RAG_SPARSE_RECALL_MULTIPLIER = int(os.getenv("RAG_SPARSE_RECALL_MULTIPLIER", "2"))
+        self.RAG_DENSE_RECALL_MULTIPLIER = int(os.getenv("RAG_DENSE_RECALL_MULTIPLIER", "1"))
+        self.RAG_SPARSE_RECALL_MULTIPLIER = int(os.getenv("RAG_SPARSE_RECALL_MULTIPLIER", "1"))
 
         # 图谱召回参数
-        self.KG_RETRIEVAL_TOP_K_DEFAULT = int(os.getenv("KG_RETRIEVAL_TOP_K_DEFAULT", "10"))
-        self.KG_RETRIEVAL_TOP_K_MAX = int(os.getenv("KG_RETRIEVAL_TOP_K_MAX", "50"))
+        self.KG_RETRIEVAL_TOP_K_DEFAULT = int(os.getenv("KG_RETRIEVAL_TOP_K_DEFAULT", "8"))
+        self.KG_RETRIEVAL_TOP_K_MAX = int(os.getenv("KG_RETRIEVAL_TOP_K_MAX", "20"))
         self.KG_RETRIEVAL_LEXICAL_WEIGHT_DEFAULT = float(os.getenv("KG_RETRIEVAL_LEXICAL_WEIGHT_DEFAULT", "0.35"))
-        self.KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT = int(os.getenv("KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT", "30"))
+        self.KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT = int(os.getenv("KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT", "20"))
         self.KG_RETRIEVAL_EXPANSION_LIMIT_MAX = int(os.getenv("KG_RETRIEVAL_EXPANSION_LIMIT_MAX", "100"))
         self.KG_RETRIEVAL_PRIMARY_LIMIT_MIN = int(os.getenv("KG_RETRIEVAL_PRIMARY_LIMIT_MIN", "10"))
         self.KG_RETRIEVAL_PRIMARY_LIMIT_MULTIPLIER = int(os.getenv("KG_RETRIEVAL_PRIMARY_LIMIT_MULTIPLIER", "4"))

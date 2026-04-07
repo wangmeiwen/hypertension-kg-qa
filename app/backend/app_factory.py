@@ -77,19 +77,51 @@ def create_app() -> FastAPI:
 
         @staticmethod
         def _resolve() -> Any:
+            """执行resolve流程并返回结果。
+            
+            Args:
+                无。
+            
+            Returns:
+                Any: 执行结果。
+            """
             from app.knowledge_graph.neo4j_manager import neo4j_client
 
             return neo4j_client
 
         def __getattr__(self, name: str) -> Any:
+            """执行getattr流程并返回结果。
+            
+            Args:
+                name: 函数输入参数。
+            
+            Returns:
+                Any: 执行结果。
+            """
             return getattr(self._resolve(), name)
 
     def _get_shared_vector_store_lazy() -> Any:
+        """获取并返回目标数据。
+        
+        Args:
+            无。
+        
+        Returns:
+            Any: 执行结果。
+        """
         from app.rag_core.runtime_resources import get_shared_vector_store
 
         return get_shared_vector_store()
 
     def _get_shared_kg_milvus_store_lazy() -> Any:
+        """获取并返回目标数据。
+        
+        Args:
+            无。
+        
+        Returns:
+            Any: 执行结果。
+        """
         from app.rag_core.runtime_resources import get_shared_kg_milvus_store
 
         return get_shared_kg_milvus_store()

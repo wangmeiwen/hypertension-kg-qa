@@ -345,6 +345,15 @@ export async function getAdminSessionMessages(sessionId) {
   return data;
 }
 
+export async function getAdminSessionObservability(sessionId) {
+  const response = await adminFetch(`${BASE_URL}/admin/sessions/${sessionId}/observability`);
+  const data = await response.json();
+  if (!data?.ok) {
+    throw new Error(data?.error || "获取会话观测详情失败");
+  }
+  return data;
+}
+
 export async function deleteAdminSession(sessionId) {
   const response = await adminFetch(`${BASE_URL}/admin/sessions/${sessionId}`, {
     method: "DELETE"
