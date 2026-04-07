@@ -4,6 +4,7 @@ import {
   getGraphRelationshipTypes,
   getGraphNodes,
   getGraphNode,
+  fetchGraph,
   createGraphNode,
   updateGraphNode,
   deleteGraphNode,
@@ -14,6 +15,7 @@ import {
   embedGraphToMilvus,
   getGraphEmbedStatus
 } from "./api";
+import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "./KnowledgeGraphCanvas";
 
 export default function GraphManager() {
   // 状态管理
@@ -25,6 +27,10 @@ export default function GraphManager() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [graphPreview, setGraphPreview] = useState({ nodes: [], links: [] });
+  const [graphPreviewLoading, setGraphPreviewLoading] = useState(false);
+  const [graphLimit, setGraphLimit] = useState(DEFAULT_GRAPH_LIMIT);
+  const [selectedPreviewNode, setSelectedPreviewNode] = useState(null);
 
   // 筛选条件
   const [selectedLabel, setSelectedLabel] = useState("");
@@ -61,6 +67,7 @@ export default function GraphManager() {
     loadLabels();
     loadRelTypes();
     loadNodes();
+    loadGraphPreview("", DEFAULT_GRAPH_LIMIT);
   }, []);
 
   // 加载节点标签
@@ -103,10 +110,25 @@ export default function GraphManager() {
     }
   }
 
+  async function loadGraphPreview(nextKeyword = searchKeyword, nextLimit = graphLimit) {
+    setGraphPreviewLoading(true);
+    try {
+      const data = await fetchGraph(nextKeyword, nextLimit);
+      setGraphPreview({ nodes: data.nodes || [], links: data.links || [] });
+      setSelectedPreviewNode(null);
+    } catch (err) {
+      setError(err.message);
+      setGraphPreview({ nodes: [], links: [] });
+    } finally {
+      setGraphPreviewLoading(false);
+    }
+  }
+
   // 筛选条件变化时重新加载
   useEffect(() => {
     setCurrentPage(0);
     loadNodes();
+    loadGraphPreview(searchKeyword, graphLimit);
   }, [selectedLabel, searchKeyword]);
 
   // 页码变化时重新加载
@@ -137,6 +159,7 @@ export default function GraphManager() {
       setShowNodeModal(false);
       setNodeForm({ label: "", properties: {} });
       loadNodes();
+      loadGraphPreview(searchKeyword, graphLimit);
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
       setError(err.message);
@@ -155,6 +178,7 @@ export default function GraphManager() {
       setShowNodeModal(false);
       setEditingNode(null);
       loadNodes();
+      loadGraphPreview(searchKeyword, graphLimit);
       if (selectedNode && selectedNode.node.id === editingNode.id) {
         handleViewNode(editingNode.id);
       }
@@ -177,6 +201,7 @@ export default function GraphManager() {
       setSuccess("节点删除成功");
       setSelectedNode(null);
       loadNodes();
+      loadGraphPreview(searchKeyword, graphLimit);
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
       setError(err.message);
@@ -202,6 +227,7 @@ export default function GraphManager() {
       if (selectedNode) {
         handleViewNode(selectedNode.node.id);
       }
+      loadGraphPreview(searchKeyword, graphLimit);
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
       setError(err.message);
@@ -222,6 +248,7 @@ export default function GraphManager() {
       if (selectedNode) {
         handleViewNode(selectedNode.node.id);
       }
+      loadGraphPreview(searchKeyword, graphLimit);
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
       setError(err.message);
@@ -319,6 +346,7 @@ export default function GraphManager() {
       setImportResult(result);
       setSuccess("文件抽取并写入图谱成功");
       await Promise.all([loadLabels(), loadRelTypes(), loadNodes()]);
+      await loadGraphPreview(searchKeyword, graphLimit);
       setTimeout(() => setSuccess(""), 5000);
     } catch (err) {
       setError(err.message);
@@ -384,6 +412,12 @@ export default function GraphManager() {
 
   const totalPages = Math.ceil(totalNodes / pageSize);
 
+  function handleGraphLimitChange(event) {
+    const nextLimit = Number(event.target.value);
+    setGraphLimit(nextLimit);
+    loadGraphPreview(searchKeyword, nextLimit);
+  }
+
   return (
     <div className="graph-manager">
       {/* 消息提示 */}
@@ -446,6 +480,47 @@ export default function GraphManager() {
             文件抽取入图谱
           </button>
         </div>
+      </div>
+
+      <div className="graph-preview-section">
+        <div className="panel-header graph-preview-header">
+          <div>
+            <h3>图谱预览</h3>
+            <p>复用当前搜索词和标签筛选，默认展示多个分散关系簇，避免全量节点挤在一起。</p>
+          </div>
+          <div className="graph-preview-controls">
+            <select
+              value={graphLimit}
+              onChange={handleGraphLimitChange}
+              className="graph-select"
+              disabled={graphPreviewLoading}
+              aria-label="后台图谱预览返回数量"
+            >
+              {GRAPH_LIMIT_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option} 条
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => loadGraphPreview(searchKeyword, graphLimit)}
+              className="btn btn-secondary"
+              disabled={graphPreviewLoading}
+            >
+              {graphPreviewLoading ? "加载中..." : "刷新预览"}
+            </button>
+          </div>
+        </div>
+        <KnowledgeGraphCanvas
+          graph={graphPreview}
+          className="kgCanvasCompact"
+          labelFilter={selectedLabel}
+          selectedNodeId={selectedPreviewNode?.id}
+          onNodeSelect={(node) => setSelectedPreviewNode(node)}
+          onOpenDetail={(entityId) => handleViewNode(entityId)}
+          emptyText={graphPreviewLoading ? "图谱加载中..." : "暂无可预览的图谱数据"}
+        />
       </div>
 
       {/* 主内容区 */}
