@@ -75,3 +75,4 @@ htmlcov/
 /docker/milvus/
 /tests/langsmith/
 /tests/
+/docs/
