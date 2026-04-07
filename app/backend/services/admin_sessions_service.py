@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import shutil
 from typing import Any, Awaitable, Callable
 
-from app.backend.repositories.database import MessageManager, SessionManager, SessionMemoryManager
+from app.backend.repositories.database import MessageManager, SessionManager
 
 
 class AdminSessionsService:
@@ -60,6 +61,37 @@ class AdminSessionsService:
             allowed.append(ch if (ch.isalnum() or ch in {"-", "_"}) else "_")
         cleaned = "".join(allowed).strip("_")
         return cleaned or fallback
+
+    @staticmethod
+    def _is_relative_to(child: Path, parent: Path) -> bool:
+        """判断 child 是否在 parent 目录内，兼容较旧 Python 版本。"""
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    async def _clear_session_memory(self, session_id: str) -> tuple[bool, str]:
+        """清理会话记忆；失败不阻断消息/会话删除。"""
+        try:
+            await self._await_call(self._get_session_memory_service().clear_memory, session_id)
+            return True, ""
+        except Exception as exc:  # pragma: no cover - error type is surfaced to API response
+            return False, type(exc).__name__
+
+    def _delete_session_log_artifacts(self, session_id: str) -> tuple[bool, str]:
+        """删除单个会话的日志 JSON/JSONL 目录，限制在 logs/sessions 内。"""
+        try:
+            logs_root = (self._project_root() / "logs" / "sessions").resolve()
+            target_dir = (logs_root / self._safe_log_id(session_id)).resolve()
+            if target_dir == logs_root or not self._is_relative_to(target_dir, logs_root):
+                return False, "unsafe_log_path"
+            if not target_dir.exists():
+                return True, ""
+            shutil.rmtree(target_dir)
+            return True, ""
+        except Exception as exc:  # pragma: no cover - filesystem failures depend on OS state
+            return False, type(exc).__name__
 
     @staticmethod
     def _normalize_response_mode_for_display(value: Any) -> str:
@@ -663,14 +695,38 @@ class AdminSessionsService:
         removed_count = len(existing_messages)
         if removed_count > 0:
             await self._await_call(MessageManager.delete_messages, session_id)
-        await self._await_call(SessionMemoryManager.clear_summary, session_id)
+        memory_cleared, memory_error_type = await self._clear_session_memory(session_id)
+        log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
         await self._await_call(SessionManager.update_session_time, session_id)
 
-        return {"ok": True, "message": "会话历史记录已清空", "removed_count": removed_count}
+        response: dict[str, Any] = {
+            "ok": True,
+            "message": "会话历史记录已清空",
+            "removed_count": removed_count,
+            "memory_cleared": memory_cleared,
+            "log_artifacts_deleted": log_artifacts_deleted,
+        }
+        if memory_error_type:
+            response["memory_error_type"] = memory_error_type
+        if log_artifacts_error_type:
+            response["log_artifacts_error_type"] = log_artifacts_error_type
+        return response
 
     async def admin_delete_session(self, session_id: str) -> dict[str, Any]:
         """删除会话。"""
+        memory_cleared, memory_error_type = await self._clear_session_memory(session_id)
         success = await self._await_call(SessionManager.delete_session, session_id)
         if success:
-            return {"ok": True, "message": "会话已删除"}
+            log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
+            response: dict[str, Any] = {
+                "ok": True,
+                "message": "会话已删除",
+                "memory_cleared": memory_cleared,
+                "log_artifacts_deleted": log_artifacts_deleted,
+            }
+            if memory_error_type:
+                response["memory_error_type"] = memory_error_type
+            if log_artifacts_error_type:
+                response["log_artifacts_error_type"] = log_artifacts_error_type
+            return response
         return {"ok": False, "error": "删除失败或会话不存在"}
