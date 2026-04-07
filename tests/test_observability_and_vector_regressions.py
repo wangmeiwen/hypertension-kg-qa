@@ -11,9 +11,12 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
+from app.a2a.orchestrator.nodes import node_route_by_memory_capability
 from app.backend.middleware.request_timing import request_timing_middleware
+from app.backend.repositories.database import MessageManager, SessionManager
 from app.backend.routers.query_chat import create_query_chat_router
 from app.backend.services.session_stream_service import SessionStreamService
+from app.backend.services.sessions_history_service import SessionsHistoryService
 from app.common.session_logger import log_api_call
 
 
@@ -319,6 +322,149 @@ class TestObservabilityAndVectorRegressions(unittest.TestCase):
         indices = [stage_events.index(stage) for stage in required_order]
         self.assertEqual(indices, sorted(indices))
 
+    def test_session_stream_should_emit_session_and_persisted_metadata(self) -> None:
+        class _FakeMessageManager:
+            @staticmethod
+            async def add_message(*args, **kwargs):
+                _ = args
+                _ = kwargs
+                return {"id": 222}
+
+        class _FakeMemoryService:
+            async def refresh_after_turn(self, *args, **kwargs):
+                _ = args
+                _ = kwargs
+                await asyncio.sleep(0)
+                return {}
+
+        async def _await_call(func, *args, **kwargs):
+            result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        class _FakeEventStreamService:
+            async def iter_a2a_stream_events(self, **kwargs: Any):
+                _ = kwargs
+                yield {"type": "reply", "msg": "回答"}
+                yield {"type": "done", "status": "done", "msg": "回答"}
+
+        service = SessionStreamService(
+            await_call=_await_call,
+            get_session_memory_service=lambda: _FakeMemoryService(),
+            log_api_error=lambda *args, **kwargs: None,
+            event_stream_service=_FakeEventStreamService(),
+            message_manager=_FakeMessageManager,
+        )
+
+        async def _run_case() -> list[dict[str, Any]]:
+            rows = []
+            generator = service.generate_data_with_session_lines(
+                input_text="问题",
+                user_id="u1",
+                session_id="s1",
+                user_message_id=111,
+                request_id="req1",
+            )
+            async for line in generator:
+                rows.append(json.loads(line))
+            await asyncio.sleep(0)
+            return rows
+
+        outputs = asyncio.run(_run_case())
+        self.assertEqual(str(outputs[0].get("type") or ""), "session")
+        self.assertEqual(str(outputs[0].get("session_id") or ""), "s1")
+        self.assertEqual(int(outputs[0].get("user_message_id") or 0), 111)
+
+        persisted_rows = [row for row in outputs if str(row.get("type") or "") == "persisted"]
+        self.assertEqual(len(persisted_rows), 1)
+        self.assertEqual(int(persisted_rows[0].get("assistant_message_id") or 0), 222)
+        self.assertEqual(int(persisted_rows[0].get("user_message_id") or 0), 111)
+        self.assertLess(
+            [str(row.get("type") or "") for row in outputs].index("done"),
+            [str(row.get("type") or "") for row in outputs].index("persisted"),
+        )
+
+    def test_rollback_to_question_should_clear_and_rebuild_memory(self) -> None:
+        calls: list[str] = []
+
+        class _FakeMemoryService:
+            async def clear_memory(self, session_id: str) -> None:
+                calls.append(f"clear:{session_id}")
+
+            async def rebuild_from_messages(self, session_id: str) -> dict[str, Any]:
+                calls.append(f"rebuild:{session_id}")
+                return {"summary": {"last_message_id": 1}}
+
+        async def _await_call(func, *args, **kwargs):
+            result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        service = SessionsHistoryService(
+            await_call=_await_call,
+            is_session_owner=lambda _session_id, _user_id: True,
+            get_a2a=lambda: None,
+            get_session_memory_service=lambda: _FakeMemoryService(),
+            upload_dir=Path("."),
+            log_api_error=lambda *args, **kwargs: None,
+        )
+
+        with patch.object(SessionManager, "get_session", return_value={"id": "s1", "user_id": "u1"}), patch.object(
+            MessageManager,
+            "rollback_to_question",
+            return_value={"ok": True, "removed_count": 2, "question": "高血压常见症状有哪些？"},
+        ):
+            result = asyncio.run(service.rollback_to_question("s1", {"user_id": "u1", "message_id": 11}))
+
+        self.assertTrue(bool(result.get("ok")))
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        self.assertEqual(int(data.get("removed_count") or 0), 2)
+        self.assertTrue(bool(data.get("memory_cleared")))
+        self.assertTrue(bool(data.get("memory_rebuilt")))
+        self.assertEqual(calls, ["clear:s1", "rebuild:s1"])
+
+    def test_rollback_memory_rebuild_failure_should_not_fail_rollback(self) -> None:
+        logged_stages: list[str] = []
+
+        class _FakeMemoryService:
+            async def clear_memory(self, session_id: str) -> None:
+                _ = session_id
+
+            async def rebuild_from_messages(self, session_id: str) -> dict[str, Any]:
+                _ = session_id
+                raise RuntimeError("rebuild_failed")
+
+        async def _await_call(func, *args, **kwargs):
+            result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        service = SessionsHistoryService(
+            await_call=_await_call,
+            is_session_owner=lambda _session_id, _user_id: True,
+            get_a2a=lambda: None,
+            get_session_memory_service=lambda: _FakeMemoryService(),
+            upload_dir=Path("."),
+            log_api_error=lambda _endpoint, stage, _exc, **_kwargs: logged_stages.append(stage),
+        )
+
+        with patch.object(SessionManager, "get_session", return_value={"id": "s1", "user_id": "u1"}), patch.object(
+            MessageManager,
+            "rollback_last_question",
+            return_value={"ok": True, "removed_count": 2, "question": "高血压常见症状有哪些？"},
+        ):
+            result = asyncio.run(service.rollback_last_question("s1", {"user_id": "u1"}))
+
+        self.assertTrue(bool(result.get("ok")))
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        self.assertTrue(bool(data.get("memory_cleared")))
+        self.assertFalse(bool(data.get("memory_rebuilt")))
+        self.assertEqual(str(data.get("memory_error") or ""), "RuntimeError")
+        self.assertIn("rollback_last_question_memory", logged_stages)
+
     def test_memory_refresh_failure_should_not_emit_error_done(self) -> None:
         logged_stages = []
 
@@ -553,6 +699,35 @@ class TestObservabilityAndVectorRegressions(unittest.TestCase):
         self.assertEqual(_FakeMessageManager.call_attempts, 2)
         self.assertIn("assistant_persist_failed_after_done", logged_stages)
         self.assertNotIn("generate_data_with_session_exception", logged_stages)
+
+    def test_memory_answer_route_should_fallback_to_retrieval_when_unavailable(self) -> None:
+        state = {
+            "input_text": "高血压的常见症状有哪些？",
+            "resolved_query": {
+                "preferred_sources": ["memory"],
+                "question_mode": "repeat_medical_question",
+                "must_cover": ["高血压常见症状"],
+            },
+            "memory_context": {
+                "summary": {"answered_points": ["高血压常见症状包括头痛"]},
+                "retrieval_summary": {"covered_topics": ["高血压常见症状"]},
+                "metadata": {"repeat_question_detected": True},
+                "topic_shift_signal": {"question_scope": "medical_qa"},
+            },
+            "classification": {},
+            "processing_steps": [],
+            "reflection_events": [],
+        }
+
+        with patch(
+            "app.a2a.orchestrator.nodes.MemoryAnswerService.answer",
+            return_value={"can_answer": False, "answer_text": "", "support_type": "", "confidence": 0.0},
+        ):
+            result = asyncio.run(node_route_by_memory_capability(state))
+
+        self.assertEqual(str(result.get("response_mode") or ""), "medical_retrieval")
+        self.assertEqual(str(result.get("memory_route_reason") or ""), "memory_answer_unavailable_fallback_retrieval")
+        self.assertEqual(result.get("memory_supported_points"), [])
 
 
 if __name__ == "__main__":

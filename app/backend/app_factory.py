@@ -188,6 +188,7 @@ def create_app() -> FastAPI:
         await_call=_await_call,
         is_session_owner=is_session_owner,
         get_a2a=a2a_runtime_service.get_a2a,
+        get_session_memory_service=a2a_runtime_service.get_session_memory_service,
         upload_dir=backend_config.upload_dir,
         log_api_error=_log_api_error,
     )

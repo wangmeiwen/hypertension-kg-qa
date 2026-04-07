@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import httpx
 
+from app.a2a.orchestrator.memory_router import route_by_memory_capability
 from app.backend.services.session_memory_llm import SessionMemoryLLM
 from app.backend.services.memory_answer_service import MemoryAnswerService
 from app.backend.services.session_memory_service import SessionMemoryService
@@ -272,6 +273,105 @@ class TestSessionMemoryIntegration(unittest.TestCase):
         self.assertIn("ARB", facts_after)
         self.assertEqual(int(snapshot_after.get("summary", {}).get("last_message_id") or 0), assistant_2)
 
+    def test_refresh_after_turn_should_skip_deleted_assistant_message(self) -> None:
+        session_id = "s-refresh-stale"
+
+        self._add_message(session_id, "user", "ACEI 和 ARB 联用推荐吗")
+        assistant_1 = self._add_message(session_id, "assistant", "一般不推荐 ACEI 与 ARB 联用。")
+        self.message_store[session_id] = [
+            row for row in self.message_store.get(session_id, []) if int(row.get("id") or 0) != assistant_1
+        ]
+
+        self._run(self.service.refresh_after_turn(session_id, assistant_1, {}))
+        snapshot_after = self._run(self.service.load_memory(session_id))
+
+        facts_after = " ".join(snapshot_after.get("summary", {}).get("confirmed_facts", []))
+        self.assertNotIn("ACEI", facts_after)
+        self.assertEqual(int(snapshot_after.get("summary", {}).get("last_message_id") or 0), 0)
+
+    def test_stale_memory_should_rebuild_from_remaining_messages(self) -> None:
+        session_id = "s-stale-rebuild"
+        self.memory_store[session_id] = {
+            "summary": self.service._sanitize_summary(
+                {
+                    "last_message_id": 205,
+                    "confirmed_facts": ["事实:ACEI/ARB"],
+                    "answered_points": ["旧结论:ACEI 与 ARB 联用"],
+                }
+            ),
+            "retrieval_summary": self.service._sanitize_retrieval_summary(
+                {
+                    "last_message_id": 205,
+                    "covered_topics": ["旧话题:ACEI 与 ARB 联用"],
+                }
+            ),
+            "updated_at": datetime.now(),
+        }
+        self.message_store[session_id] = [
+            {
+                "id": 206,
+                "role": "user",
+                "content": "ARB 单药在老年患者中怎么选",
+                "think_content": "",
+                "created_at": datetime.now(),
+            }
+        ]
+
+        payload = self._run(self.service.build_runtime_context(session_id, "ARB 单药在老年患者中怎么选", 206))
+        memory_context = payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}
+        summary = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
+        retrieval_summary = (
+            memory_context.get("retrieval_summary") if isinstance(memory_context.get("retrieval_summary"), dict) else {}
+        )
+        combined = " ".join(
+            [
+                *[str(item or "") for item in summary.get("confirmed_facts", [])],
+                *[str(item or "") for item in summary.get("answered_points", [])],
+                *[str(item or "") for item in retrieval_summary.get("covered_topics", [])],
+            ]
+        )
+
+        self.assertNotIn("ACEI", combined)
+        self.assertNotIn("旧结论", combined)
+        self.assertEqual(int(summary.get("last_message_id") or 0), 206)
+        self.assertLessEqual(int(summary.get("last_message_id") or 0), 206)
+
+    def test_fast_path_should_not_use_stale_memory_after_rollback(self) -> None:
+        session_id = "s-fast-stale"
+        self.memory_store[session_id] = {
+            "summary": self.service._sanitize_summary(
+                {
+                    "last_message_id": 205,
+                    "confirmed_facts": ["用户姓名是小王"],
+                    "answered_points": ["高血压常见症状包括头痛头晕"],
+                }
+            ),
+            "retrieval_summary": self.service._sanitize_retrieval_summary({"last_message_id": 205}),
+            "updated_at": datetime.now(),
+        }
+        self.message_store[session_id] = [
+            {
+                "id": 206,
+                "role": "user",
+                "content": "我叫什么名字",
+                "think_content": "",
+                "created_at": datetime.now(),
+            }
+        ]
+
+        payload = self._run(self.service.build_runtime_context(session_id, "我叫什么名字", 206))
+        memory_context = payload.get("memory_context") if isinstance(payload.get("memory_context"), dict) else {}
+        summary = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
+        answer = MemoryAnswerService().answer(
+            question="我叫什么名字",
+            resolved_query=payload.get("resolved_query") if isinstance(payload.get("resolved_query"), dict) else {},
+            memory_context=memory_context,
+        )
+
+        self.assertNotIn("小王", " ".join(str(item or "") for item in summary.get("confirmed_facts", [])))
+        self.assertNotIn("头痛头晕", " ".join(str(item or "") for item in summary.get("answered_points", [])))
+        self.assertNotIn("小王", str(answer.get("answer_text") or ""))
+
     def test_refresh_failure_should_be_compensated_next_turn(self) -> None:
         session_id = "s-compensate"
 
@@ -433,11 +533,30 @@ class TestSessionMemoryIntegration(unittest.TestCase):
         self.assertEqual(str(resolved.get("question_mode") or ""), "repeat_medical_question")
         self.assertTrue(bool(metadata.get("repeat_question_detected")))
 
+    def test_repeat_medical_question_without_memory_support_should_retrieve(self) -> None:
+        route = route_by_memory_capability(
+            question="高血压的常见症状有哪些？",
+            resolved_query={
+                "preferred_sources": ["memory"],
+                "question_mode": "repeat_medical_question",
+                "must_cover": ["高血压常见症状"],
+            },
+            memory_context={
+                "summary": {"answered_points": []},
+                "retrieval_summary": {"covered_topics": []},
+                "metadata": {"repeat_question_detected": False},
+                "topic_shift_signal": {"question_scope": "medical_qa"},
+            },
+        )
+
+        self.assertEqual(str(route.get("response_mode") or ""), "medical_retrieval")
+        self.assertEqual(str(route.get("reason") or ""), "memory_preferred_without_support")
+
     def test_name_lookup_should_use_fast_path_without_resolve_query(self) -> None:
         session_id = "s-fast-name"
         self._add_message(session_id, "user", "请记住我的名字是小王")
 
-        with patch.object(self.service, "ensure_memory_current", side_effect=RuntimeError("should_not_call")), patch.object(
+        with patch.object(
             self.service.llm,
             "resolve_query",
             side_effect=RuntimeError("should_not_call"),

@@ -456,17 +456,56 @@ export default function App() {
     setLoading(true);
     setCurrentJobId("");
     setStoppingJob(false);
-    const userMessage = { role: "user", content: normalizedDisplay, image };
-    const assistantMessage = { role: "assistant", content: "", thinkContent: "" };
+    const turnClientId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userClientId = `${turnClientId}-user`;
+    const assistantClientId = `${turnClientId}-assistant`;
+    const userMessage = { clientId: userClientId, role: "user", content: normalizedDisplay, image };
+    const assistantMessage = { clientId: assistantClientId, role: "assistant", content: "", thinkContent: "" };
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
     let thinkContent = "";
     let replyContent = "";
     let doneStatus = "done";
+    let streamSessionId = currentSessionId;
+    const hydratePendingMessageIds = ({ sessionId = "", userMessageId = 0, assistantMessageId = 0 }) => {
+      const normalizedSessionId = String(sessionId || "").trim();
+      if (normalizedSessionId) {
+        streamSessionId = normalizedSessionId;
+        setCurrentSessionId(normalizedSessionId);
+      }
+      const normalizedUserMessageId = Number(userMessageId || 0);
+      const normalizedAssistantMessageId = Number(assistantMessageId || 0);
+      setMessages((prev) => prev.map((msg) => {
+        if (msg.clientId === userClientId && normalizedUserMessageId > 0) {
+          return { ...msg, id: normalizedUserMessageId };
+        }
+        if (msg.clientId === assistantClientId && normalizedAssistantMessageId > 0) {
+          return { ...msg, id: normalizedAssistantMessageId };
+        }
+        return msg;
+      }));
+    };
     try {
       for await (const chunk of streamProcessWithSession(normalizedQuestion, userId, currentSessionId, imageData, fileName)) {
         if (chunk?.type === "job") {
           setCurrentJobId(String(chunk.job_id || ""));
+          continue;
+        }
+
+        if (chunk?.type === "session") {
+          hydratePendingMessageIds({
+            sessionId: chunk.session_id,
+            userMessageId: chunk.user_message_id,
+          });
+          continue;
+        }
+
+        if (chunk?.type === "persisted") {
+          hydratePendingMessageIds({
+            sessionId: chunk.session_id,
+            userMessageId: chunk.user_message_id,
+            assistantMessageId: chunk.assistant_message_id,
+          });
           continue;
         }
 
@@ -494,8 +533,8 @@ export default function App() {
         });
       }
 
-      if (doneStatus === "cancelled" || doneStatus === "timeout") {
-        await loadSessionMessages(currentSessionId);
+      if ((doneStatus === "cancelled" || doneStatus === "timeout") && streamSessionId) {
+        await loadSessionMessages(streamSessionId);
       }
     } catch (err) {
       setMessages((prev) => {

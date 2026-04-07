@@ -393,6 +393,24 @@ async def node_route_by_memory_capability(state: OrchestratorState) -> Orchestra
         resolved_query=resolved_query,
         memory_context=memory_context,
     )
+    if str(route.get("response_mode") or "") == "memory_answer":
+        memory_answer = MemoryAnswerService().answer(
+            question=str(state.get("input_text") or ""),
+            resolved_query=resolved_query,
+            memory_context=memory_context,
+        )
+        if not bool(memory_answer.get("can_answer")) or not str(memory_answer.get("answer_text") or "").strip():
+            fallback_mode = "generic_direct" if str(resolved_query.get("question_mode") or "") == "memory_lookup" else "medical_retrieval"
+            route = {
+                **route,
+                "response_mode": fallback_mode,
+                "reason": (
+                    "memory_answer_unavailable_fallback_direct"
+                    if fallback_mode == "generic_direct"
+                    else "memory_answer_unavailable_fallback_retrieval"
+                ),
+                "memory_supported_points": [],
+            }
     state["response_mode"] = str(route.get("response_mode") or "medical_retrieval")
     state["memory_supported_points"] = route.get("memory_supported_points") if isinstance(route.get("memory_supported_points"), list) else []
     state["memory_missing_points"] = route.get("memory_missing_points") if isinstance(route.get("memory_missing_points"), list) else []
@@ -863,6 +881,7 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
         answer_text=str(writer_result.get("answer_text") or ""),
         writer_metadata=writer_result.get("writer_metadata") if isinstance(writer_result.get("writer_metadata"), dict) else {},
         writer_token_usage=writer_result.get("token_usage") if isinstance(writer_result.get("token_usage"), dict) else {},
+        writer_packed_evidence=writer_result.get("packed_evidence") if isinstance(writer_result.get("packed_evidence"), dict) else {},
     )
     state["final_output"] = final.model_dump()
     _append_step(state, "主控完成终答组装")

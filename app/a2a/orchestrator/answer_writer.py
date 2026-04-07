@@ -14,7 +14,7 @@ from app.common.config import Config
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_VERSION = "v1"
+_PROMPT_VERSION = "clinician_v2"
 _COMPARATOR_HINTS = ("vs", "versus", "compare", "comparison", "比较", "对比", "相比", "单药", "复方")
 _OUTCOME_HINTS = (
     "outcome",
@@ -348,14 +348,16 @@ def _build_writer_messages(
         list[dict[str, str]]: 处理后的列表结果。
     """
     system_prompt = (
-        "你是医疗问答终答写作器。"
-        "只能基于给定证据回答，不得编造未支持结论。"
-        "输出必须是三段短文，且仅包含以下三段标题："
-        "结论：\n证据支持点：\n不确定性与适用边界：。"
-        "禁止列表化模板。"
-        "若证据为间接支持，必须明确写“现有证据更偏间接/关联支持”。"
-        "涉及靶器官保护但缺少直接比较证据时，需写“可能有潜在优势，但当前证据未直接完成头对头证明”。"
-        "禁止给出超出证据的治疗承诺。"
+        "你是一名循证临床解释者，用温和、自然、像医生说明情况的中文回答用户。"
+        "检索结果用于限定事实边界和可追溯依据；你可以用通用医学知识帮助解释和给出稳妥建议。"
+        "必须清楚区分“检索结果支持的内容”和“一般医学上通常会这样理解/处理的内容”。"
+        "如果检索结果没有直接覆盖用户问的某一点，不要机械拒答；可以说明“我查到的资料没有直接覆盖这一点”，"
+        "再用通用医学知识给出保守解释和下一步建议。"
+        "不要输出系统内部语言，例如数据库、证据包、门控、coverage、comparator、outcome、头对头缺口等。"
+        "不要使用固定审稿模板，不要写成“结论/证据支持点/不确定性与适用边界”三段。"
+        "回答应先直接回应问题，再解释依据和不确定处，最后用“我的建议是”给出安全、非处方化建议。"
+        "不能做个体化诊断或处方承诺；若出现胸痛、呼吸困难、肢体麻木、意识异常等危险信号，应建议及时就医。"
+        "不要自行添加免责声明，系统会在最终答案末尾统一追加固定免责声明。"
     )
 
     user_payload = {
@@ -363,9 +365,14 @@ def _build_writer_messages(
         "answer_mode": str(answer_mode or "").strip(),
         "evidence_pack": packed_evidence,
         "mode_requirements": {
-            "direct": "先给明确结论，再给证据支持点，最后给适用边界或注意事项。",
-            "partial": "先写当前证据支持的部分，再写目前不能直接下结论的部分，并明确缺口属于 comparator/outcome/头对头证据。",
+            "direct": "检索结果能较好支撑回答时，可以更明确地解释；仍需避免个体化诊断或处方。",
+            "partial": "检索结果只覆盖一部分时，先回答能支持的部分，再用一般医学知识补充保守解释，并说明哪些点还不能确定。",
         },
+        "style_requirements": [
+            "使用自然段，可以少量列表，但不要像审稿表或系统报告。",
+            "不要提到数据库、证据包、门控、coverage、comparator、outcome 等内部词。",
+            "结尾给出面向用户的下一步建议。",
+        ],
     }
 
     return [
@@ -407,29 +414,30 @@ def build_degraded_answer(
     risk_text = "；".join([str(item or "").strip() for item in high_risk_notes[:2] if str(item or "").strip()])
 
     if answer_mode == "direct":
-        conclusion = "结论：数据库已检索到可支撑回答的证据，当前可给出受证据约束的结论。"
+        opening = f"关于“{str(question or '').strip()}”，我查到的资料可以支持一个比较明确的回答：{supported_text}。"
     else:
-        conclusion = "结论：数据库已检索到相关证据，当前证据支持的部分可以先回答。"
+        opening = f"关于“{str(question or '').strip()}”，我查到的资料能先支持这部分判断：{supported_text}。"
 
-    support_paragraph = "证据支持点：" + supported_text
+    context_parts = []
     if indirect_text:
-        support_paragraph = support_paragraph + "；现有证据更偏间接/关联支持：" + indirect_text
-
-    boundary_parts = []
+        context_parts.append(f"还有一些内容更适合作为背景参考：{indirect_text}。")
     if missing_text:
-        boundary_parts.append("目前不能直接下结论的部分主要缺少：" + missing_text)
+        context_parts.append(f"不过，我查到的资料没有直接覆盖这些点：{missing_text}，所以这部分不能当成确定结论。")
     else:
-        boundary_parts.append("目前不能直接下结论的部分主要在于缺少直接头对头比较证据。")
-    if risk_text:
-        boundary_parts.append(risk_text)
-    boundary_parts.append("建议结合具体人群、结局指标和对照条件进一步核实。")
+        context_parts.append("如果要把这个结论用于具体个人，还需要结合年龄、既往病史、血压读数、用药和检查结果一起判断。")
 
-    return (
-        conclusion
-        + "\n"
-        + support_paragraph
-        + f"\n不确定性与适用边界：{'；'.join(boundary_parts)}"
-        + (f"（问题：{str(question or '').strip()}）" if str(question or "").strip() else "")
+    recommendation_parts = []
+    if risk_text:
+        recommendation_parts.append(f"需要特别留意：{risk_text}。")
+    recommendation_parts.append("我的建议是：把你的具体血压数值、症状、正在用的药和基础疾病补充清楚，再结合专业医生意见判断下一步。")
+    recommendation_parts.append("如果已经有明显不适，尤其是胸痛、呼吸困难、肢体麻木、意识异常等情况，应及时就医。")
+
+    return "\n\n".join(
+        [
+            opening,
+            " ".join(context_parts),
+            " ".join(recommendation_parts),
+        ]
     )
 
 

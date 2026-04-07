@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import UploadFile
 
-from app.backend.repositories.database import MessageManager, SessionManager, SessionMemoryManager
+from app.backend.repositories.database import MessageManager, SessionManager
 
 
 class SessionsHistoryService:
@@ -19,6 +19,7 @@ class SessionsHistoryService:
         await_call: Callable[..., Awaitable[Any]],
         is_session_owner: Callable[[str, str], Awaitable[bool]],
         get_a2a: Callable[[], Any],
+        get_session_memory_service: Callable[[], Any],
         upload_dir: Path,
         log_api_error: Callable[..., None],
     ) -> None:
@@ -28,6 +29,7 @@ class SessionsHistoryService:
             await_call: 函数输入参数。
             is_session_owner: 函数输入参数。
             get_a2a: 函数输入参数。
+            get_session_memory_service: 函数输入参数。
             upload_dir: 函数输入参数。
             log_api_error: 函数输入参数。
         
@@ -37,8 +39,32 @@ class SessionsHistoryService:
         self._await_call = await_call
         self._is_session_owner = is_session_owner
         self._get_a2a = get_a2a
+        self._get_session_memory_service = get_session_memory_service
         self._upload_dir = upload_dir
         self._log_api_error = log_api_error
+
+    async def _refresh_memory_after_rollback(self, session_id: str, user_id: str, operation: str) -> dict[str, Any]:
+        """回撤消息后按剩余历史重建会话记忆。"""
+        result: dict[str, Any] = {
+            "memory_cleared": False,
+            "memory_rebuilt": False,
+        }
+        try:
+            memory_service = self._get_session_memory_service()
+            await self._await_call(memory_service.clear_memory, session_id)
+            result["memory_cleared"] = True
+            await self._await_call(memory_service.rebuild_from_messages, session_id)
+            result["memory_rebuilt"] = True
+        except Exception as exc:
+            result["memory_error"] = type(exc).__name__
+            self._log_api_error(
+                "/sessions/rollback",
+                operation,
+                exc,
+                session_id=session_id,
+                user_id=user_id,
+            )
+        return result
 
     async def create_session(self, data: dict[str, Any]) -> dict[str, Any]:
         """创建新会话。"""
@@ -141,13 +167,13 @@ class SessionsHistoryService:
         if not bool(rollback_result.get("ok")):
             return {"ok": False, "error": "no_question_to_rollback"}
 
-        await self._await_call(SessionMemoryManager.clear_summary, session_id)
+        memory_result = await self._refresh_memory_after_rollback(session_id, user_id, "rollback_last_question_memory")
         return {
             "ok": True,
             "data": {
                 "removed_count": int(rollback_result.get("removed_count") or 0),
                 "question": str(rollback_result.get("question") or ""),
-                "memory_cleared": True,
+                **memory_result,
             },
         }
 
@@ -169,13 +195,13 @@ class SessionsHistoryService:
         if not bool(rollback_result.get("ok")):
             return {"ok": False, "error": "question_not_found"}
 
-        await self._await_call(SessionMemoryManager.clear_summary, session_id)
+        memory_result = await self._refresh_memory_after_rollback(session_id, user_id, "rollback_to_question_memory")
         return {
             "ok": True,
             "data": {
                 "removed_count": int(rollback_result.get("removed_count") or 0),
                 "question": str(rollback_result.get("question") or ""),
-                "memory_cleared": True,
+                **memory_result,
             },
         }
 

@@ -1022,6 +1022,23 @@ class SessionStreamService:
         request_token = set_request_context(str(request_id or ""))
         ensure_session_meta(str(session_id or ""), str(user_id or ""))
 
+        def build_session_event() -> Dict[str, Any]:
+            """构建会话持久化元数据事件。"""
+            return {
+                "type": "session",
+                "session_id": str(session_id or ""),
+                "user_message_id": int(user_message_id or 0),
+            }
+
+        def build_persisted_event(persisted_assistant_message_id: int) -> Dict[str, Any]:
+            """构建助手消息持久化完成事件。"""
+            return {
+                "type": "persisted",
+                "session_id": str(session_id or ""),
+                "user_message_id": int(user_message_id or 0),
+                "assistant_message_id": int(persisted_assistant_message_id or 0),
+            }
+
         def _turn_log_path() -> Path:
             """执行turn_log_path流程并返回结果。
             
@@ -1234,6 +1251,7 @@ class SessionStreamService:
                 )
 
         try:
+            yield json.dumps(build_session_event(), ensure_ascii=False) + "\n"
             log_session_op(
                 session_id=str(session_id or ""),
                 turn=int(user_message_id or 0),
@@ -1309,6 +1327,7 @@ class SessionStreamService:
                                 )
                                 write_turn_observability_once()
                                 schedule_memory_refresh(persisted_id)
+                                yield json.dumps(build_persisted_event(persisted_id), ensure_ascii=False) + "\n"
                         except Exception as exc:
                             self._log_api_error(
                                 "/process_with_session",

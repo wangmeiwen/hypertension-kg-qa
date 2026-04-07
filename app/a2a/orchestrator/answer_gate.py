@@ -8,10 +8,10 @@ from app.a2a.models import FinalAnswer
 
 
 _INSUFFICIENT_MESSAGE = (
-    "数据库未检索到足够数据支撑回答，根据通识回答为：当前信息无法形成可靠结论，建议补充更具体的问题条件后重试，例如明确人群、指标阈值或治疗场景。"
+    "我目前没有查到足够支持这个问题的资料，不能给出可靠结论。你可以补充具体人群、血压数值、症状或用药情况，我再帮你梳理。"
 )
 
-_MEDICAL_DISCLAIMER = "免责声明：以上内容仅供健康科普参考，不构成个体化医疗诊断或处方建议，请以执业医生面诊意见为准。"
+_MEDICAL_DISCLAIMER = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
 
 
 def _append_medical_disclaimer(answer: str) -> str:
@@ -23,12 +23,16 @@ def _append_medical_disclaimer(answer: str) -> str:
     Returns:
         str: 文本结果。
     """
-    text = str(answer or "").strip()
+    text = str(answer or "").replace(_MEDICAL_DISCLAIMER, "").strip()
+    if text:
+        text = "\n".join(
+            line
+            for line in text.splitlines()
+            if "免责声明" not in line
+        ).strip()
     if not text:
         return _MEDICAL_DISCLAIMER
-    if _MEDICAL_DISCLAIMER in text or "免责声明：" in text:
-        return text
-    return f"{text}\n{_MEDICAL_DISCLAIMER}"
+    return f"{text}\n\n{_MEDICAL_DISCLAIMER}"
 
 
 def assess_answerability(
@@ -105,6 +109,7 @@ def compose_final_answer(
     answer_text: str,
     writer_metadata: dict[str, Any] | None = None,
     writer_token_usage: dict[str, Any] | None = None,
+    writer_packed_evidence: dict[str, Any] | None = None,
 ) -> FinalAnswer:
     """执行compose_final_answer流程并返回结果。
     
@@ -117,6 +122,7 @@ def compose_final_answer(
         answer_text: 终答文本内容。
         writer_metadata: 写作器元数据。
         writer_token_usage: 写作阶段的 token 统计。
+        writer_packed_evidence: 写作器筛选后的证据摘要。
     
     Returns:
         FinalAnswer: 执行结果。
@@ -136,9 +142,8 @@ def compose_final_answer(
             answer = _INSUFFICIENT_MESSAGE
         else:
             answer = (
-                f"结论：问题“{str(question or '').strip()}”已检索到相关证据，但当前生成链路出现异常。\n"
-                "证据支持点：已基于现有证据生成降级回答。\n"
-                "不确定性与适用边界：请结合缺失证据项进行审慎判断。"
+                f"关于“{str(question or '').strip()}”，我查到了一些相关资料，但当前生成回答时出现异常。"
+                "可以先把现有资料作为背景参考，后续建议结合具体病情和专业医生意见进一步判断。"
             )
     answer = _append_medical_disclaimer(answer)
 
@@ -159,6 +164,8 @@ def compose_final_answer(
 
     missing_points_obj = (answerability or {}).get("missing_points")
     missing_points = missing_points_obj if isinstance(missing_points_obj, list) else []
+    packed_evidence = writer_packed_evidence if isinstance(writer_packed_evidence, dict) else {}
+    packed_missing = packed_evidence.get("missing_points") if isinstance(packed_evidence.get("missing_points"), list) else []
 
     evidence_summary = {
         "evidence_count": total,
@@ -173,7 +180,11 @@ def compose_final_answer(
         "prompt_version": prompt_version,
         "direct_comparison_support": bool((answerability or {}).get("direct_support")),
         "coverage_intervention": coverage_intervention,
-        "missing_points": missing_points,
+        "missing_points": packed_missing or missing_points,
+        "supported_points": packed_evidence.get("supported_points") if isinstance(packed_evidence.get("supported_points"), list) else [],
+        "indirect_points": packed_evidence.get("indirect_points") if isinstance(packed_evidence.get("indirect_points"), list) else [],
+        "evidence_citations": packed_evidence.get("evidence_citations") if isinstance(packed_evidence.get("evidence_citations"), list) else [],
+        "selected_evidence_count": int(packed_evidence.get("selected_evidence_count") or 0),
         "high_risk": bool((gate_result or {}).get("high_risk")),
         "high_risk_tokens": (gate_result or {}).get("high_risk_tokens") or [],
         "disambiguation_ambiguous_count": int((gate_result or {}).get("disambiguation_ambiguous_count") or 0),

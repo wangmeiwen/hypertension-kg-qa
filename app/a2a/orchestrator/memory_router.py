@@ -136,6 +136,9 @@ def route_by_memory_capability(
     memory_supported_points = answered_points[:]
     if repeat_candidate and repeat_candidate not in memory_supported_points:
         memory_supported_points = [repeat_candidate, *memory_supported_points]
+    has_memory_answer_signal = bool(memory_supported_points)
+    is_memory_lookup = question_mode == "memory_lookup"
+    is_repeat_medical = question_mode == "repeat_medical_question"
 
     candidate_rows = [*answered_points, *covered_topics]
     coverage_hits = 0
@@ -157,8 +160,15 @@ def route_by_memory_capability(
         response_mode = "assistant_capability"
         reason = "preferred_assistant_capability"
     elif "memory" in preferred_sources or question_mode in {"memory_lookup", "repeat_medical_question"}:
-        response_mode = "memory_answer"
-        reason = "preferred_memory"
+        if is_memory_lookup:
+            response_mode = "memory_answer"
+            reason = "preferred_memory_lookup"
+        elif is_repeat_medical and has_memory_answer_signal and (repeat_detected or coverage_ratio > 0.0):
+            response_mode = "memory_answer"
+            reason = "preferred_memory_with_support"
+        else:
+            response_mode = "medical_retrieval"
+            reason = "memory_preferred_without_support"
     elif repeat_detected and memory_supported_points:
         response_mode = "memory_answer"
         reason = "repeat_question_short_circuit"

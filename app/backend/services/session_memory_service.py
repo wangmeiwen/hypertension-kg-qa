@@ -1151,6 +1151,22 @@ class SessionMemoryService:
         )
         return max(0, self._to_int((row or {}).get("max_id"), 0))
 
+    async def _message_exists(self, session_id: str, message_id: int) -> bool:
+        """判断消息是否仍属于当前会话。"""
+        target_id = max(0, int(message_id or 0))
+        if target_id <= 0:
+            return False
+        rows = await self._get_messages_after(session_id, target_id - 1)
+        return any(self._to_int(row.get("id"), 0) == target_id for row in rows)
+
+    async def _has_stale_memory_message_id(self, session_id: str, *message_ids: int) -> bool:
+        """判断记忆快照引用的消息是否已从会话中删除。"""
+        for message_id in message_ids:
+            target_id = max(0, int(message_id or 0))
+            if target_id > 0 and not await self._message_exists(session_id, target_id):
+                return True
+        return False
+
     async def _get_messages_after(self, session_id: str, last_message_id: int) -> list[dict[str, Any]]:
         """获取并返回目标数据。
         
@@ -1588,9 +1604,16 @@ class SessionMemoryService:
             "updated_at": updated_text,
         }
 
+        summary_last_id = self._to_int(summary.get("last_message_id"), 0)
+        retrieval_last_id = self._to_int(retrieval_summary.get("last_message_id"), 0)
+        if await self._has_stale_memory_message_id(session_id, summary_last_id, retrieval_last_id):
+            await self.clear_memory(session_id)
+            rebuilt = await self.rebuild_from_messages(session_id)
+            return rebuilt
+
         known_id = min(
-            self._to_int(summary.get("last_message_id"), 0),
-            self._to_int(retrieval_summary.get("last_message_id"), 0),
+            summary_last_id,
+            retrieval_last_id,
         )
         if known_id >= latest_message_id:
             return snapshot
@@ -1623,7 +1646,7 @@ class SessionMemoryService:
         """
         fast_path_enabled = self._is_fast_runtime_question(str(input_text or ""))
         if fast_path_enabled:
-            snapshot = await self.load_memory(session_id)
+            snapshot = await self.ensure_memory_current(session_id, current_message_id)
             recent_messages = await self._get_recent_messages(
                 session_id,
                 self._RECENT_WINDOW_ROUNDS * 2,
@@ -1844,6 +1867,12 @@ class SessionMemoryService:
             None: 无返回值。
         """
         try:
+            target_id = max(0, int(assistant_message_id or 0))
+            if target_id <= 0:
+                return
+            if not await self._message_exists(session_id, target_id):
+                return
+
             row = await self._load_memory_row(session_id)
             if not row:
                 snapshot = self._empty_snapshot()
@@ -1861,12 +1890,24 @@ class SessionMemoryService:
                 self._to_int(snapshot.get("summary", {}).get("last_message_id"), 0),
                 self._to_int(snapshot.get("retrieval_summary", {}).get("last_message_id"), 0),
             )
-            target_id = max(0, int(assistant_message_id or 0))
+            if await self._has_stale_memory_message_id(
+                session_id,
+                self._to_int(snapshot.get("summary", {}).get("last_message_id"), 0),
+                self._to_int(snapshot.get("retrieval_summary", {}).get("last_message_id"), 0),
+            ):
+                await self.clear_memory(session_id)
+                snapshot = await self.rebuild_from_messages(session_id)
+                known_id = min(
+                    self._to_int(snapshot.get("summary", {}).get("last_message_id"), 0),
+                    self._to_int(snapshot.get("retrieval_summary", {}).get("last_message_id"), 0),
+                )
             if target_id <= known_id:
                 return
 
             delta_messages = await self._get_messages_after(session_id, known_id)
             if not delta_messages:
+                return
+            if not any(self._to_int(row.get("id"), 0) == target_id for row in delta_messages):
                 return
 
             normalized_turn_artifacts = self._normalize_turn_memory_projection(
@@ -1880,6 +1921,8 @@ class SessionMemoryService:
                 session_id=session_id,
                 assistant_message_id=int(assistant_message_id or 0),
             )
+            if not await self._message_exists(session_id, target_id):
+                return
             await self.save_memory(session_id, updated_snapshot)
         except (
             RuntimeError,
