@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { streamProcessWithSession, getSession, createSession, adminLogin, adminLogout, checkAdminStatus, uploadChatFile, rollbackToQuestion, cancelQaJob } from "./api";
 import GraphView from "./GraphView";
 import SessionSidebar from "./SessionSidebar";
@@ -382,6 +382,18 @@ export default function App() {
   const [filePreview, setFilePreview] = useState(null);
   const [currentJobId, setCurrentJobId] = useState("");
   const [stoppingJob, setStoppingJob] = useState(false);
+  const chatScrollRef = useRef(null);
+
+  const scrollChatToBottom = useCallback((behavior = "smooth") => {
+    const chatNode = chatScrollRef.current;
+    if (!chatNode) return;
+    window.requestAnimationFrame(() => {
+      chatNode.scrollTo({
+        top: chatNode.scrollHeight,
+        behavior,
+      });
+    });
+  }, []);
 
   // 检查登录状态
   useEffect(() => {
@@ -421,6 +433,11 @@ export default function App() {
       localStorage.removeItem(`current_session_${userId}`);
     }
   }, [currentSessionId, userId]);
+
+  useEffect(() => {
+    if (activeTab !== "chat") return;
+    scrollChatToBottom(loading ? "auto" : "smooth");
+  }, [activeTab, loading, messages, scrollChatToBottom]);
 
   const loadSessionMessages = useCallback(async (sessionId) => {
     try {
@@ -832,7 +849,7 @@ export default function App() {
         </div>
         {activeTab === "chat" ? (
           <div className="chat-stage">
-            <main className="chat">
+            <main className="chat" ref={chatScrollRef}>
               {messages.length === 0 ? (
                 <div className="welcome">
                   <div className="welcome-kicker">医学知识问答</div>
@@ -925,7 +942,6 @@ export default function App() {
             <footer className="inputBar">
               <div className="composer-header">
                 <div>
-                  <span className="composer-label">提问区</span>
                   <p>请描述症状、血压数值、用药情况或想了解的高血压问题。</p>
                 </div>
               </div>

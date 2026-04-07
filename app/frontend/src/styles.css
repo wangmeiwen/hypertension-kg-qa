@@ -4722,7 +4722,7 @@ label:focus-within {
   flex: 1;
   min-height: 0;
   padding: clamp(14px, 2vw, 22px);
-  padding-bottom: 170px;
+  padding-bottom: 210px;
   gap: 12px;
   border: 1px solid var(--border-light);
   border-radius: 22px;
@@ -4991,14 +4991,6 @@ label:focus-within {
   padding: 0 4px 2px;
 }
 
-.composer-label {
-  display: block;
-  margin-bottom: 1px;
-  color: var(--primary-900);
-  font-size: 13px;
-  font-weight: 800;
-}
-
 .composer-header p {
   margin: 0;
   color: var(--text-muted);
@@ -5208,7 +5200,7 @@ label:focus-within {
   .chat {
     min-height: 50vh;
     border-radius: 18px;
-    padding-bottom: 230px;
+    padding-bottom: 260px;
   }
 
   .welcome {
