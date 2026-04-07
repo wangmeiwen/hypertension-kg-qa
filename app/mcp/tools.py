@@ -682,7 +682,7 @@ def build_mcp_server() -> MCPServer:
         "handler": kg_er_handler,
     }
 
-    config_path = project_root / "config" / "mcp_tools.yaml"
+    config_path = Path(__file__).resolve().with_name("mcp_tools.yaml")
     manager = ToolManager(config_path=config_path)
 
     extra_blacklist_raw = os.getenv("MCP_TOOL_BLACKLIST", "")
@@ -820,5 +820,4 @@ def sanitize_tool_observation(observation: dict[str, Any], max_chars: int = 4000
     if len(text) > max_chars:
         return text[:max_chars] + "...[truncated]"
     return text
-
 
