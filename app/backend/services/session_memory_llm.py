@@ -21,12 +21,12 @@ from app.common.config import Config
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "assistant_capability"}
+_ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "capability"}
 _ALLOWED_QUESTION_MODES = {
     "repeat_medical_question",
     "memory_lookup",
-    "assistant_capability",
-    "generic_direct",
+    "capability_query",
+    "direct_query",
     "medical_new_question",
     "medical_gap_followup",
 }

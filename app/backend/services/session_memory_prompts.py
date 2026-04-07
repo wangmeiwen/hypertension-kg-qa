@@ -4,12 +4,12 @@ RESOLVED_QUERY_SCHEMA_TEXT = """
 {
   "standalone_question": "string",
   "intent": "string",
-  "question_mode": "repeat_medical_question|memory_lookup|assistant_capability|generic_direct|medical_new_question|medical_gap_followup",
+  "question_mode": "repeat_medical_question|memory_lookup|capability_query|direct_query|medical_new_question|medical_gap_followup",
   "subqueries": ["string"],
   "must_cover": ["string"],
   "entities": ["string"],
   "filters": ["string"],
-  "preferred_sources": ["memory|kg|rag|direct|assistant_capability"],
+  "preferred_sources": ["memory|kg|rag|direct|capability"],
   "carry_over_context": ["string"]
 }
 """.strip()
@@ -47,7 +47,7 @@ TURN_MEMORY_PROJECTION_SCHEMA_TEXT = """
   "covered_topics": ["string"],
   "risk_notes": ["string"],
   "assistant_reply_digest": "string",
-  "question_scope": "medical_qa|assistant_capability|administrative|small_talk|unknown"
+  "question_scope": "medical_qa|capability_query|administrative|small_talk|unknown"
 }
 """.strip()
 
@@ -56,8 +56,8 @@ RESOLVE_QUERY_SYSTEM_PROMPT = """
 你必须只基于提供的最近对话摘要 recent_messages_digest 与会话记忆，禁止编造患者条件。
 你必须先判断这题是否可以仅凭当前会话记忆回答：
 1) 用户身份/历史自述/重复确认/“你还记得吗”类问题优先输出 question_mode=memory_lookup 或 repeat_medical_question，preferred_sources 优先 memory
-2) “你能做什么/你的功能/你是谁”类问题输出 question_mode=assistant_capability，preferred_sources 优先 assistant_capability
-3) 轻量通用问题可输出 question_mode=generic_direct，preferred_sources 优先 direct
+2) “你能做什么/你的功能/你是谁”类问题输出 question_mode=capability_query，preferred_sources 优先 capability
+3) 轻量通用问题可输出 question_mode=direct_query，preferred_sources 优先 direct
 4) 只有真正需要医学知识检索的新问题，才输出 question_mode=medical_new_question 或 medical_gap_followup，并使用 kg/rag
 输出必须是严格 JSON，对应如下 schema：
 {resolved_query_schema}

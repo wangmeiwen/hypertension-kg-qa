@@ -70,7 +70,7 @@ class SessionMemoryService:
     _RETRIEVAL_LIST_MAX_ITEMS = 5
     _FLOW_NOISE_HINTS = ("门控", "归档", "评估完成", "dispatch", "events")
 
-    _ASSISTANT_CAPABILITY_HINTS = (
+    _CAPABILITY_QUERY_HINTS = (
         "你能做什么",
         "你是谁",
         "功能",
@@ -136,12 +136,12 @@ class SessionMemoryService:
         re.compile(r"(?:我叫|我是|名字是)\s*([A-Za-z\u4e00-\u9fff·]{1,20})"),
         re.compile(r"(?:叫我)\s*([A-Za-z\u4e00-\u9fff·]{1,20})"),
     )
-    _ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "assistant_capability"}
+    _ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "capability"}
     _ALLOWED_QUESTION_MODES = {
         "repeat_medical_question",
         "memory_lookup",
-        "assistant_capability",
-        "generic_direct",
+        "capability_query",
+        "direct_query",
         "medical_new_question",
         "medical_gap_followup",
     }
@@ -391,8 +391,8 @@ class SessionMemoryService:
         text = str(input_text or "").strip().lower()
         if not text:
             return "unknown"
-        if any(hint in text for hint in self._ASSISTANT_CAPABILITY_HINTS):
-            return "assistant_capability"
+        if any(hint in text for hint in self._CAPABILITY_QUERY_HINTS):
+            return "capability_query"
         if any(hint in text for hint in self._ADMINISTRATIVE_HINTS):
             return "administrative"
         if any(hint in text for hint in self._SMALL_TALK_HINTS):
@@ -440,7 +440,7 @@ class SessionMemoryService:
             str: 文本结果。
         """
         value = str(scope or "").strip()
-        if value in {"medical_qa", "assistant_capability", "administrative", "small_talk", "unknown"}:
+        if value in {"medical_qa", "capability_query", "administrative", "small_talk", "unknown"}:
             return value
         return "unknown"
 
@@ -482,7 +482,7 @@ class SessionMemoryService:
             bool: 是否满足条件。
         """
         scope = self._infer_question_scope(input_text)
-        if scope in {"assistant_capability", "administrative", "small_talk"}:
+        if scope in {"capability_query", "administrative", "small_talk"}:
             return True
         return self._is_memory_lookup_question(input_text) or bool(self._extract_name_candidate(input_text))
 
@@ -784,7 +784,7 @@ class SessionMemoryService:
         lowered_input = str(input_text or "").strip().lower()
 
         has_context_anchor = bool(conversation_goal or focus_entities or recent_messages_digest)
-        is_capability_query = any(hint in lowered_input for hint in self._ASSISTANT_CAPABILITY_HINTS)
+        is_capability_query = any(hint in lowered_input for hint in self._CAPABILITY_QUERY_HINTS)
         explicit_reset = any(hint in lowered_input for hint in self._TOPIC_RESET_HINTS)
         short_followup = self._is_short_followup(input_text)
 
@@ -1281,12 +1281,12 @@ class SessionMemoryService:
         scope = self._infer_question_scope(question)
         preferred_sources = ["kg"]
         question_mode = "medical_new_question"
-        if scope == "assistant_capability":
-            preferred_sources = ["assistant_capability"]
-            question_mode = "assistant_capability"
+        if scope == "capability_query":
+            preferred_sources = ["capability"]
+            question_mode = "capability_query"
         elif scope in {"administrative", "small_talk"}:
             preferred_sources = ["direct"]
-            question_mode = "generic_direct"
+            question_mode = "direct_query"
         elif self._is_memory_lookup_question(question):
             preferred_sources = ["memory"]
             question_mode = "memory_lookup"
@@ -1335,12 +1335,12 @@ class SessionMemoryService:
         if self._is_memory_lookup_question(question) or extracted_name:
             preferred_sources = ["memory"]
             question_mode = "memory_lookup"
-        elif scope == "assistant_capability":
-            preferred_sources = ["assistant_capability"]
-            question_mode = "assistant_capability"
+        elif scope == "capability_query":
+            preferred_sources = ["capability"]
+            question_mode = "capability_query"
         elif scope in {"administrative", "small_talk"}:
             preferred_sources = ["direct"]
-            question_mode = "generic_direct"
+            question_mode = "direct_query"
 
         return {
             "standalone_question": question,
@@ -1787,12 +1787,12 @@ class SessionMemoryService:
         elif self._is_memory_lookup_question(str(input_text or "")):
             resolved_query["preferred_sources"] = ["memory"]
             resolved_query["question_mode"] = "memory_lookup"
-        elif question_scope == "assistant_capability":
-            resolved_query["preferred_sources"] = ["assistant_capability"]
-            resolved_query["question_mode"] = "assistant_capability"
+        elif question_scope == "capability_query":
+            resolved_query["preferred_sources"] = ["capability"]
+            resolved_query["question_mode"] = "capability_query"
         elif question_scope in {"administrative", "small_talk"}:
             resolved_query["preferred_sources"] = ["direct"]
-            resolved_query["question_mode"] = "generic_direct"
+            resolved_query["question_mode"] = "direct_query"
         elif bool(topic_shift_signal.get("topic_shift_detected")):
             resolved_query["preferred_sources"] = ["kg"]
             resolved_query["question_mode"] = "medical_new_question"

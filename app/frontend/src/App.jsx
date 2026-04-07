@@ -59,6 +59,25 @@ const renderInlineMarkdown = (text, keyPrefix) => {
   });
 };
 
+const getMedicalBlockClass = (text) => {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized.trim()) return "";
+
+  if (/(警告|预警|危险|风险|紧急|立即|急诊|严重|warning|risk|emergency)/i.test(normalized)) {
+    return "medical-info-block warning-block";
+  }
+
+  if (/(建议|处理|干预|饮食|运动|用药|复诊|监测|控制|advice|recommend)/i.test(normalized)) {
+    return "medical-info-block advice-block";
+  }
+
+  if (/(症状|表现|头痛|头晕|胸痛|心悸|气短|symptom)/i.test(normalized)) {
+    return "medical-info-block symptom-block";
+  }
+
+  return "";
+};
+
 const renderMarkdownContent = (content) => {
   const text = String(content || "").replace(/\r\n/g, "\n");
   if (!text.trim()) return "处理中...";
@@ -116,9 +135,10 @@ const renderMarkdownContent = (content) => {
         quoteLines.push(lines[i].replace(/^>\s?/, ""));
         i += 1;
       }
+      const quoteText = quoteLines.join(" ");
       blocks.push(
-        <blockquote key={`quote-${blocks.length}`} className="md-quote">
-          {renderInlineMarkdown(quoteLines.join(" "), `quote-${blocks.length}`)}
+        <blockquote key={`quote-${blocks.length}`} className={`md-quote ${getMedicalBlockClass(quoteText)}`}>
+          {renderInlineMarkdown(quoteText, `quote-${blocks.length}`)}
         </blockquote>
       );
       continue;
@@ -209,7 +229,7 @@ const renderMarkdownContent = (content) => {
 
     const paragraphText = paragraphLines.join(" ");
     blocks.push(
-      <p key={`p-${blocks.length}`} className="md-paragraph">
+      <p key={`p-${blocks.length}`} className={`md-paragraph ${getMedicalBlockClass(paragraphText)}`}>
         {renderInlineMarkdown(paragraphText, `p-${blocks.length}`)}
       </p>
     );
@@ -218,13 +238,67 @@ const renderMarkdownContent = (content) => {
   return blocks;
 };
 
-const getLatestToolStatus = (thinkContent) => {
-  const lines = String(thinkContent || "")
-    .split("\n")
+const THINK_STATUS_META = [
+  { stage: "memory", label: "正在加载记忆", keywords: ["正在加载记忆", "memory", "prepare_session_turn", "build_runtime_context", "ensure_memory_current", "resolve_query"] },
+  { stage: "orchestrator", label: "主agent思考中", keywords: ["主agent思考中", "主代理", "orchestrator", "task_submitted", "task_running", "解析输入", "路由", "任务拆解", "门控"] },
+  { stage: "subagent", label: "子agent正在检索", keywords: ["子agent正在检索", "subagent", "子代理", "检索", "kg", "rag", "search", "retrieval", "调度选中任务", "补检索"] },
+  { stage: "answer", label: "答案生成中", keywords: ["答案生成中", "finalized", "orchestrator_done", "task_completed", "终答", "最终回答", "answer"] },
+];
+
+const THINK_LABELS = THINK_STATUS_META.map((item) => item.label);
+
+const normalizeThinkStatus = (value, stage = "") => {
+  const safeStage = String(stage || "").trim().toLowerCase();
+  const byStage = THINK_STATUS_META.find((item) => item.stage === safeStage);
+  if (byStage) return byStage.label;
+
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (THINK_LABELS.includes(text)) return text;
+
+  const lowered = text.toLowerCase();
+  const matched = THINK_STATUS_META.find((item) => item.keywords.some((keyword) => lowered.includes(String(keyword).toLowerCase())));
+  return matched?.label || "";
+};
+
+const appendThinkStatus = (statuses, value, stage = "") => {
+  const label = normalizeThinkStatus(value, stage);
+  if (!label || statuses.includes(label)) return statuses;
+  return [...statuses, label];
+};
+
+const formatThinkStatuses = (statuses) => statuses.filter(Boolean).join("\n");
+
+const getSimplifiedThinkStatuses = (thinkContent) => {
+  const text = String(thinkContent || "").trim();
+  if (!text) return [];
+
+  const rows = text
+    .split(/\n+/)
     .map((line) => line.trim())
-    .filter((line) => line.startsWith("当前调用工具:"));
-  if (!lines.length) return "";
-  return lines[lines.length - 1];
+    .filter(Boolean);
+  const candidates = rows.length ? rows : [text];
+
+  let statuses = [];
+  candidates.forEach((row) => {
+    const direct = normalizeThinkStatus(row);
+    if (direct) {
+      statuses = appendThinkStatus(statuses, direct);
+    }
+  });
+
+  THINK_STATUS_META.forEach((item) => {
+    if (item.keywords.some((keyword) => text.toLowerCase().includes(String(keyword).toLowerCase()))) {
+      statuses = appendThinkStatus(statuses, item.label);
+    }
+  });
+  return statuses;
+};
+
+const getLatestThinkStatus = (thinkContent) => {
+  const statuses = getSimplifiedThinkStatuses(thinkContent);
+  if (!statuses.length) return "";
+  return statuses[statuses.length - 1];
 };
 
 // ==================== 登录弹窗组件 ====================
@@ -460,13 +534,24 @@ export default function App() {
     const userClientId = `${turnClientId}-user`;
     const assistantClientId = `${turnClientId}-assistant`;
     const userMessage = { clientId: userClientId, role: "user", content: normalizedDisplay, image };
-    const assistantMessage = { clientId: assistantClientId, role: "assistant", content: "", thinkContent: "" };
+    let thinkStatuses = appendThinkStatus([], "正在加载记忆", "memory");
+    let thinkContent = formatThinkStatuses(thinkStatuses);
+    const assistantMessage = { clientId: assistantClientId, role: "assistant", content: "", thinkContent };
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
-    let thinkContent = "";
     let replyContent = "";
     let doneStatus = "done";
     let streamSessionId = currentSessionId;
+    const addThinkStatus = (value, stage = "") => {
+      const nextStatuses = appendThinkStatus(thinkStatuses, value, stage);
+      if (nextStatuses.length !== thinkStatuses.length) {
+        thinkStatuses = nextStatuses;
+        thinkContent = formatThinkStatuses(thinkStatuses);
+        setMessages((prev) => prev.map((msg) => (
+          msg.clientId === assistantClientId ? { ...msg, thinkContent } : msg
+        )));
+      }
+    };
     const hydratePendingMessageIds = ({ sessionId = "", userMessageId = 0, assistantMessageId = 0 }) => {
       const normalizedSessionId = String(sessionId || "").trim();
       if (normalizedSessionId) {
@@ -489,6 +574,7 @@ export default function App() {
       for await (const chunk of streamProcessWithSession(normalizedQuestion, userId, currentSessionId, imageData, fileName)) {
         if (chunk?.type === "job") {
           setCurrentJobId(String(chunk.job_id || ""));
+          addThinkStatus("主agent思考中", "orchestrator");
           continue;
         }
 
@@ -497,6 +583,7 @@ export default function App() {
             sessionId: chunk.session_id,
             userMessageId: chunk.user_message_id,
           });
+          addThinkStatus("主agent思考中", "orchestrator");
           continue;
         }
 
@@ -510,10 +597,12 @@ export default function App() {
         }
 
         if (chunk?.type === "msg") {
-          thinkContent += chunk.msg || "";
+          addThinkStatus(chunk.msg || "", chunk.stage || "");
         } else if (chunk?.type === "reply") {
+          addThinkStatus("答案生成中", "answer");
           replyContent += chunk.msg || "";
         } else if (chunk?.type === "done") {
+          addThinkStatus("答案生成中", "answer");
           doneStatus = String(chunk.status || "done");
           if (!replyContent) {
             replyContent = (chunk.msg || "").trim();
@@ -744,8 +833,10 @@ export default function App() {
             <main className="chat">
               {messages.length === 0 ? (
                 <div className="welcome">
-                  <h2>欢迎使用高血压知识问答系统</h2>
-                  <p>您可以询问关于高血压的任何问题，例如：</p>
+                  <div className="welcome-kicker">医学知识问答</div>
+                  <h2>高血压知识图谱问答助手</h2>
+                  <p>用清晰、可追溯的方式了解高血压症状、风险、用药和生活方式建议。</p>
+                  <p className="welcome-note">如出现胸痛、呼吸困难、意识异常或血压持续显著升高，请及时联系医生或急诊。</p>
                   <div className="examples">
                     <button onClick={() => setInput("高血压的常见症状有哪些？")}>
                       高血压的常见症状有哪些？
@@ -763,11 +854,11 @@ export default function App() {
                   <div key={`${m.role}-${i}`} className={`msg ${m.role}`}>
                     <div className="role">{m.role === "user" ? "你" : "助手"}</div>
                     {(() => {
-                      const toolStatus = getLatestToolStatus(m.thinkContent);
-                      if (m.role !== "assistant" || !toolStatus || m.content) {
+                      const latestThinkStatus = getLatestThinkStatus(m.thinkContent);
+                      if (m.role !== "assistant" || !latestThinkStatus || m.content) {
                         return null;
                       }
-                      return <div className="live-tool-status">{toolStatus}</div>;
+                      return <div className="live-tool-status">{latestThinkStatus}</div>;
                     })()}
                     {m.image && (
                       <div className="msg-image-container">
@@ -779,12 +870,20 @@ export default function App() {
                         ? renderMarkdownContent(m.content || "处理中...")
                         : (m.content || "")}
                     </div>
-                    {m.role === "assistant" && m.thinkContent ? (
-                      <details className="think">
-                        <summary>思考过程</summary>
-                        <pre>{m.thinkContent}</pre>
-                      </details>
-                    ) : null}
+                    {(() => {
+                      const thinkStatuses = m.role === "assistant" ? getSimplifiedThinkStatuses(m.thinkContent) : [];
+                      if (!thinkStatuses.length) return null;
+                      return (
+                        <details className="think">
+                          <summary>思考过程</summary>
+                          <ul className="think-status-list">
+                            {thinkStatuses.map((status) => (
+                              <li key={status}>{status}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      );
+                    })()}
                     <div className="msg-actions">
                       {m.role === "assistant" ? (
                         <button
@@ -822,6 +921,13 @@ export default function App() {
               )}
             </main>
             <footer className="inputBar">
+              <div className="composer-header">
+                <div>
+                  <span className="composer-label">提问区</span>
+                  <p>请描述症状、血压数值、用药情况或想了解的高血压问题。</p>
+                </div>
+                <span className="composer-badge">患者友好</span>
+              </div>
               {filePreview && (
                 <div className="image-preview-container">
                   <img src={filePreview} alt="预览" className="image-preview" />
@@ -857,6 +963,7 @@ export default function App() {
                   </svg>
                 </label>
                 <textarea
+                  aria-label="高血压相关问题"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -870,7 +977,7 @@ export default function App() {
                   }}
                   placeholder={selectedFile ? "描述文件内容或提问..." : "请输入高血压相关问题..."}
                 />
-                <button onClick={send} disabled={loading || (!input.trim() && !selectedFile)}>
+                <button type="button" className="send-btn" onClick={send} disabled={loading || (!input.trim() && !selectedFile)}>
                   {loading ? "发送中..." : "发送"}
                 </button>
                 {loading ? (
@@ -878,6 +985,9 @@ export default function App() {
                     {stoppingJob ? "终止中..." : "终止"}
                   </button>
                 ) : null}
+              </div>
+              <div className="medical-disclaimer">
+                系统回答用于健康知识参考，不能替代医生诊断；急症或明显不适请及时就医。
               </div>
             </footer>
           </>

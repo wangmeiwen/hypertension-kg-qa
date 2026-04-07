@@ -53,10 +53,10 @@ class _FallbackGraphRunner:
         """
         state = await node_parse_input(state)
         state = await node_route_by_memory_capability(state)
-        if str(state.get("response_mode") or "medical_retrieval") in {"medical_retrieval", "memory_augmented_medical"}:
+        if str(state.get("response_mode") or "retrieval_required") == "retrieval_required":
             state = await node_decompose_and_plan(state)
         while True:
-            if str(state.get("response_mode") or "medical_retrieval") not in {"medical_retrieval", "memory_augmented_medical"}:
+            if str(state.get("response_mode") or "retrieval_required") != "retrieval_required":
                 break
             state = await node_pick_next_subtask(state)
             current = state.get("current_subtask") if isinstance(state.get("current_subtask"), dict) else {}
@@ -98,8 +98,8 @@ def route_after_memory_route(state: OrchestratorState) -> str:
     Returns:
         str: 文本结果。
     """
-    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
-    if response_mode in {"medical_retrieval", "memory_augmented_medical"}:
+    response_mode = str(state.get("response_mode") or "retrieval_required").strip() or "retrieval_required"
+    if response_mode == "retrieval_required":
         return "decompose_and_plan"
     return "assess_answerability"
 
@@ -245,6 +245,9 @@ async def run_orchestrator_graph(compiled_graph: Any, state: OrchestratorState) 
                 "gate_result",
                 "answerability",
                 "final_output",
+                "direct_reason",
+                "retrieval_reason",
+                "answer_source",
             ]
         )
     )

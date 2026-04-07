@@ -490,8 +490,8 @@ class TestSessionMemoryIntegration(unittest.TestCase):
         topic_shift = memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}
         summary_obj = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
 
-        self.assertEqual(resolved.get("preferred_sources"), ["assistant_capability"])
-        self.assertEqual(str(resolved.get("question_mode") or ""), "assistant_capability")
+        self.assertEqual(resolved.get("preferred_sources"), ["capability"])
+        self.assertEqual(str(resolved.get("question_mode") or ""), "capability_query")
         self.assertEqual(str(metadata.get("memory_mode") or ""), "fast_path")
         self.assertFalse(bool(topic_shift.get("topic_shift_detected")))
         self.assertIn("ACEI", " ".join(summary_obj.get("confirmed_facts", [])))
@@ -549,8 +549,9 @@ class TestSessionMemoryIntegration(unittest.TestCase):
             },
         )
 
-        self.assertEqual(str(route.get("response_mode") or ""), "medical_retrieval")
-        self.assertEqual(str(route.get("reason") or ""), "memory_preferred_without_support")
+        self.assertEqual(str(route.get("response_mode") or ""), "retrieval_required")
+        self.assertEqual(str(route.get("retrieval_reason") or ""), "memory_insufficient")
+        self.assertEqual(str(route.get("reason") or ""), "memory_insufficient")
 
     def test_name_lookup_should_use_fast_path_without_resolve_query(self) -> None:
         session_id = "s-fast-name"
@@ -614,7 +615,7 @@ class TestSessionMemoryIntegration(unittest.TestCase):
         summary_obj = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
 
         self.assertEqual(resolved.get("preferred_sources"), ["direct"])
-        self.assertEqual(str(resolved.get("question_mode") or ""), "generic_direct")
+        self.assertEqual(str(resolved.get("question_mode") or ""), "direct_query")
         self.assertEqual(str(metadata.get("memory_mode") or ""), "fast_path")
         self.assertFalse(bool(topic_shift.get("topic_shift_detected")))
         self.assertIn("ACEI", " ".join(summary_obj.get("confirmed_facts", [])))

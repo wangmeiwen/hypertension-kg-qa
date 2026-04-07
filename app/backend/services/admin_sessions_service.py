@@ -61,6 +61,24 @@ class AdminSessionsService:
         cleaned = "".join(allowed).strip("_")
         return cleaned or fallback
 
+    @staticmethod
+    def _normalize_response_mode_for_display(value: Any) -> str:
+        token = str(value or "").strip()
+        if token == "direct_answer":
+            return "direct_answer"
+        if token == "retrieval_required":
+            return "retrieval_required"
+        return token or "retrieval_required"
+
+    @staticmethod
+    def _response_mode_label(value: Any) -> str:
+        token = AdminSessionsService._normalize_response_mode_for_display(value)
+        if token == "direct_answer":
+            return "能直接回答"
+        if token == "retrieval_required":
+            return "需要检索"
+        return token or "未知"
+
     def _read_session_turn_records(self, session_id: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         """读取session_turn_records相关信息并返回结果。
         
@@ -386,6 +404,14 @@ class AdminSessionsService:
             )
 
         if orchestrator_decision:
+            response_mode = cls._normalize_response_mode_for_display(orchestrator_decision.get("response_mode"))
+            response_label = cls._response_mode_label(response_mode)
+            route_reason = (
+                orchestrator_decision.get("direct_reason")
+                or orchestrator_decision.get("retrieval_reason")
+                or orchestrator_decision.get("memory_route_reason")
+                or "无"
+            )
             events.append(
                 {
                     "event_id": cls._safe_event_id(turn_id, "decision", 0),
@@ -394,7 +420,7 @@ class AdminSessionsService:
                     "stage": "主控决策",
                     "title": "确定响应路径",
                     "summary": cls._sanitize_text(
-                        f"响应模式：{orchestrator_decision.get('response_mode') or 'unknown'}；回答模式：{orchestrator_decision.get('answer_mode') or 'unknown'}",
+                        f"响应模式：{response_label}；回答模式：{orchestrator_decision.get('answer_mode') or 'unknown'}；原因：{route_reason}",
                         120,
                     ),
                     "actor": "主控编排",
@@ -402,8 +428,10 @@ class AdminSessionsService:
                     "detail": cls._build_detail(
                         input_content=resolved_query.get("standalone_question") or question,
                         output_content={
-                            "响应模式": orchestrator_decision.get("response_mode") or "unknown",
+                            "响应模式": response_label,
                             "回答模式": orchestrator_decision.get("answer_mode") or "unknown",
+                            "路由原因": route_reason,
+                            "回答来源": orchestrator_decision.get("answer_source") or "unknown",
                             "问题模式": orchestrator_decision.get("question_mode") or "unknown",
                             "主题切换": "已触发" if orchestrator_decision.get("topic_shift_detected") else "未触发",
                         },
@@ -574,6 +602,16 @@ class AdminSessionsService:
         normalized_turns: list[dict[str, Any]] = []
         for turn in turns:
             merged_turn = self._merge_turn_memory_update(turn, memory_updates.get(str(turn.get("turn_id") or "")) or {})
+            orchestrator_decision = (
+                merged_turn.get("orchestrator_decision") if isinstance(merged_turn.get("orchestrator_decision"), dict) else {}
+            )
+            normalized_response_mode = self._normalize_response_mode_for_display(orchestrator_decision.get("response_mode"))
+            normalized_decision = {
+                **orchestrator_decision,
+                "response_mode": normalized_response_mode,
+                "response_mode_label": self._response_mode_label(normalized_response_mode),
+            }
+            merged_for_events = {**merged_turn, "orchestrator_decision": normalized_decision}
             normalized_turns.append(
                 {
                     "turn_id": str(merged_turn.get("turn_id") or ""),
@@ -589,9 +627,9 @@ class AdminSessionsService:
                     "total_tokens": int(merged_turn.get("total_tokens") or 0),
                     "memory_before": merged_turn.get("memory_before") if isinstance(merged_turn.get("memory_before"), dict) else {},
                     "resolved_query": merged_turn.get("resolved_query") if isinstance(merged_turn.get("resolved_query"), dict) else {},
-                    "orchestrator_decision": merged_turn.get("orchestrator_decision") if isinstance(merged_turn.get("orchestrator_decision"), dict) else {},
+                    "orchestrator_decision": normalized_decision,
                     "agent_lanes": merged_turn.get("agent_lanes") if isinstance(merged_turn.get("agent_lanes"), dict) else {},
-                    "flow_events": self._build_flow_events(merged_turn),
+                    "flow_events": self._build_flow_events(merged_for_events),
                     "memory_compression": merged_turn.get("memory_compression") if isinstance(merged_turn.get("memory_compression"), list) else [],
                     "timeline": merged_turn.get("timeline") if isinstance(merged_turn.get("timeline"), list) else [],
                 }

@@ -35,6 +35,30 @@ def _append_medical_disclaimer(answer: str) -> str:
     return f"{text}\n\n{_MEDICAL_DISCLAIMER}"
 
 
+def _should_append_medical_disclaimer(
+    *,
+    evidence_count: int,
+    writer_metadata: dict[str, Any],
+) -> bool:
+    """判断最终回答是否需要追加医学免责声明。
+
+    Args:
+        evidence_count: 本轮 KG/RAG 证据数量。
+        writer_metadata: 写作器元数据。
+
+    Returns:
+        bool: 是否追加医学免责声明。
+    """
+    meta = writer_metadata if isinstance(writer_metadata, dict) else {}
+    response_mode = str(meta.get("mode") or "").strip()
+    answer_source = str(meta.get("answer_source") or "").strip()
+    if response_mode == "direct_answer" and answer_source in {"memory", "capability", "generic"}:
+        return False
+    if response_mode == "retrieval_required" or answer_source == "retrieval":
+        return True
+    return int(evidence_count or 0) > 0
+
+
 def assess_answerability(
     *,
     evidence_bundle: dict[str, Any],
@@ -136,6 +160,9 @@ def compose_final_answer(
     mode = str((answerability or {}).get("answer_mode") or "none")
     confidence = float((answerability or {}).get("confidence_cap") or 0.0)
 
+    writer_meta = writer_metadata if isinstance(writer_metadata, dict) else {}
+    writer_tokens = writer_token_usage if isinstance(writer_token_usage, dict) else {}
+
     answer = str(answer_text or "").strip()
     if not answer:
         if mode == "none":
@@ -145,10 +172,8 @@ def compose_final_answer(
                 f"关于“{str(question or '').strip()}”，我查到了一些相关资料，但当前生成回答时出现异常。"
                 "可以先把现有资料作为背景参考，后续建议结合具体病情和专业医生意见进一步判断。"
             )
-    answer = _append_medical_disclaimer(answer)
-
-    writer_meta = writer_metadata if isinstance(writer_metadata, dict) else {}
-    writer_tokens = writer_token_usage if isinstance(writer_token_usage, dict) else {}
+    if _should_append_medical_disclaimer(evidence_count=total, writer_metadata=writer_meta):
+        answer = _append_medical_disclaimer(answer)
     prompt_version = str(writer_meta.get("prompt_version") or "")
     writer_used_raw = str(writer_meta.get("writer_used") or "").strip().lower()
     if writer_used_raw in {"llm", "fallback", "template", "memory", "direct"}:

@@ -14,9 +14,9 @@ from app.a2a.orchestrator.evidence_store import merge_task_evidence
 from app.a2a.orchestrator.gating_adapter import run_gate
 from app.a2a.orchestrator.memory_router import route_by_memory_capability
 from app.a2a.orchestrator.memory_writer import (
-    build_assistant_capability_answer,
-    build_generic_direct_answer,
-    build_memory_answer_text,
+    build_capability_direct_answer,
+    build_context_direct_answer,
+    build_memory_direct_text,
 )
 from app.a2a.orchestrator.retrieval_planner import plan_task
 from app.a2a.orchestrator.router import select_agent
@@ -121,12 +121,12 @@ _INTENT_ALIASES = {
 _INTENT_COMPARISON_HINTS = ("compare", "comparison", "vs", "versus", "比较", "对比", "相比", "差异", "优于", "劣于")
 _INTENT_SOURCE_HINTS = ("source", "citation", "quote", "原文", "出处", "来源", "文献", "引用")
 _INTENT_VERIFY_HINTS = ("verify", "verification", "evidence", "核实", "验证", "求证", "证据")
-_ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "assistant_capability"}
+_ALLOWED_PREFERRED_SOURCES = {"memory", "kg", "rag", "direct", "capability"}
 _ALLOWED_QUESTION_MODES = {
     "repeat_medical_question",
     "memory_lookup",
-    "assistant_capability",
-    "generic_direct",
+    "capability_query",
+    "direct_query",
     "medical_new_question",
     "medical_gap_followup",
 }
@@ -263,7 +263,10 @@ async def node_parse_input(state: OrchestratorState) -> OrchestratorState:
     state["evidence_gaps"] = state.get("evidence_gaps") if isinstance(state.get("evidence_gaps"), list) else []
     state["classification"] = state.get("classification") if isinstance(state.get("classification"), dict) else {}
     state["subtask_decisions"] = state.get("subtask_decisions") if isinstance(state.get("subtask_decisions"), dict) else {}
-    state["response_mode"] = str(state.get("response_mode") or "").strip() or "medical_retrieval"
+    state["response_mode"] = str(state.get("response_mode") or "").strip() or "retrieval_required"
+    state["direct_reason"] = str(state.get("direct_reason") or "").strip()
+    state["retrieval_reason"] = str(state.get("retrieval_reason") or "").strip() or "new_medical_question"
+    state["answer_source"] = str(state.get("answer_source") or "").strip() or "retrieval"
     state["memory_supported_points"] = state.get("memory_supported_points") if isinstance(state.get("memory_supported_points"), list) else []
     state["memory_missing_points"] = state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else []
     state["memory_coverage_ratio"] = float(state.get("memory_coverage_ratio") or 0.0)
@@ -337,15 +340,15 @@ async def node_decompose_and_plan(state: OrchestratorState) -> OrchestratorState
     Returns:
         OrchestratorState: 执行结果。
     """
-    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
-    if response_mode not in {"medical_retrieval", "memory_augmented_medical"}:
+    response_mode = str(state.get("response_mode") or "retrieval_required").strip() or "retrieval_required"
+    if response_mode != "retrieval_required":
         return state
     if state.get("pending_subtasks"):
         return state
 
     resolved_query_obj = state.get("resolved_query")
     resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
-    if response_mode == "memory_augmented_medical":
+    if state.get("memory_missing_points"):
         memory_missing_points = [
             str(item or "").strip()
             for item in (state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else [])
@@ -393,25 +396,30 @@ async def node_route_by_memory_capability(state: OrchestratorState) -> Orchestra
         resolved_query=resolved_query,
         memory_context=memory_context,
     )
-    if str(route.get("response_mode") or "") == "memory_answer":
-        memory_answer = MemoryAnswerService().answer(
+    if (
+        str(route.get("response_mode") or "") == "direct_answer"
+        and str(route.get("answer_source") or "") == "memory"
+    ):
+        memory_direct_result = MemoryAnswerService().answer(
             question=str(state.get("input_text") or ""),
             resolved_query=resolved_query,
             memory_context=memory_context,
         )
-        if not bool(memory_answer.get("can_answer")) or not str(memory_answer.get("answer_text") or "").strip():
-            fallback_mode = "generic_direct" if str(resolved_query.get("question_mode") or "") == "memory_lookup" else "medical_retrieval"
+        if not bool(memory_direct_result.get("can_answer")) or not str(memory_direct_result.get("answer_text") or "").strip():
+            is_memory_lookup = str(resolved_query.get("question_mode") or "") == "memory_lookup"
             route = {
                 **route,
-                "response_mode": fallback_mode,
-                "reason": (
-                    "memory_answer_unavailable_fallback_direct"
-                    if fallback_mode == "generic_direct"
-                    else "memory_answer_unavailable_fallback_retrieval"
-                ),
+                "response_mode": "direct_answer" if is_memory_lookup else "retrieval_required",
+                "reason": "memory_unavailable" if is_memory_lookup else "memory_insufficient",
+                "direct_reason": "memory_unavailable" if is_memory_lookup else "",
+                "retrieval_reason": "" if is_memory_lookup else "memory_insufficient",
+                "answer_source": "memory" if is_memory_lookup else "retrieval",
                 "memory_supported_points": [],
             }
-    state["response_mode"] = str(route.get("response_mode") or "medical_retrieval")
+    state["response_mode"] = str(route.get("response_mode") or "retrieval_required")
+    state["direct_reason"] = str(route.get("direct_reason") or "")
+    state["retrieval_reason"] = str(route.get("retrieval_reason") or "")
+    state["answer_source"] = str(route.get("answer_source") or ("retrieval" if state["response_mode"] == "retrieval_required" else "generic"))
     state["memory_supported_points"] = route.get("memory_supported_points") if isinstance(route.get("memory_supported_points"), list) else []
     state["memory_missing_points"] = route.get("memory_missing_points") if isinstance(route.get("memory_missing_points"), list) else []
     state["memory_coverage_ratio"] = float(route.get("memory_coverage_ratio") or 0.0)
@@ -421,6 +429,9 @@ async def node_route_by_memory_capability(state: OrchestratorState) -> Orchestra
     state["classification"] = {
         **classification,
         "response_mode": state["response_mode"],
+        "direct_reason": state["direct_reason"],
+        "retrieval_reason": state["retrieval_reason"],
+        "answer_source": state["answer_source"],
         "memory_coverage_ratio": state["memory_coverage_ratio"],
     }
 
@@ -434,6 +445,9 @@ async def node_route_by_memory_capability(state: OrchestratorState) -> Orchestra
         str(state["memory_route_reason"] or ""),
         {
             "response_mode": state["response_mode"],
+            "direct_reason": state["direct_reason"],
+            "retrieval_reason": state["retrieval_reason"],
+            "answer_source": state["answer_source"],
             "memory_coverage_ratio": state["memory_coverage_ratio"],
         },
     )
@@ -722,23 +736,26 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
     Returns:
         OrchestratorState: 执行结果。
     """
-    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
-    if response_mode in {"memory_answer", "assistant_capability", "generic_direct"}:
+    response_mode = str(state.get("response_mode") or "retrieval_required").strip() or "retrieval_required"
+    answer_source = str(state.get("answer_source") or ("retrieval" if response_mode == "retrieval_required" else "generic"))
+    if response_mode == "direct_answer":
         state["gate_result"] = {
             "memory_supported_points": state.get("memory_supported_points") if isinstance(state.get("memory_supported_points"), list) else [],
             "memory_missing_points": state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else [],
             "coverage_intervention": float(state.get("memory_coverage_ratio") or 0.0),
+            "answer_source": answer_source,
         }
         state["answerability"] = {
             "answer_mode": "direct",
             "gate_passed": True,
             "should_backtrack": False,
-            "confidence_cap": 0.86 if response_mode == "memory_answer" else 0.78,
+            "confidence_cap": 0.86 if answer_source == "memory" else 0.78,
             "missing_points": state.get("memory_missing_points") if isinstance(state.get("memory_missing_points"), list) else [],
             "direct_support": True,
             "evidence_count": 0,
             "final_evidence_count": 0,
-            "reason": f"{response_mode}_short_circuit",
+            "answer_source": answer_source,
+            "reason": f"{answer_source}_direct_short_circuit",
         }
         _append_step(state, f"记忆优先终答直出 mode={response_mode}")
         return state
@@ -760,7 +777,7 @@ async def node_assess_answerability(state: OrchestratorState) -> OrchestratorSta
         max_backtrack=max(1, int(state.get("max_turns") or 1)),
         is_degraded=is_degraded,
     )
-    if response_mode == "memory_augmented_medical":
+    if state.get("memory_supported_points") or state.get("memory_missing_points"):
         gate_result["memory_supported_points"] = (
             state.get("memory_supported_points") if isinstance(state.get("memory_supported_points"), list) else []
         )
@@ -789,7 +806,9 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
     Returns:
         OrchestratorState: 执行结果。
     """
-    response_mode = str(state.get("response_mode") or "medical_retrieval").strip() or "medical_retrieval"
+    response_mode = str(state.get("response_mode") or "retrieval_required").strip() or "retrieval_required"
+    answer_source = str(state.get("answer_source") or ("retrieval" if response_mode == "retrieval_required" else "generic"))
+    direct_reason = str(state.get("direct_reason") or "").strip()
     answerability = state.get("answerability") if isinstance(state.get("answerability"), dict) else {}
     answer_mode = str(answerability.get("answer_mode") or "none").strip() or "none"
 
@@ -798,43 +817,47 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
         for item in (state.get("processing_steps") if isinstance(state.get("processing_steps"), list) else [])
     ]
 
-    if response_mode == "memory_answer":
-        memory_answer = MemoryAnswerService().answer(
+    if response_mode == "direct_answer" and answer_source == "memory":
+        memory_direct_result = MemoryAnswerService().answer(
             question=str(state.get("input_text") or ""),
             resolved_query=state.get("resolved_query") if isinstance(state.get("resolved_query"), dict) else {},
             memory_context=state.get("memory_context") if isinstance(state.get("memory_context"), dict) else {},
         )
-        answer_text = str(memory_answer.get("answer_text") or "").strip()
+        answer_text = str(memory_direct_result.get("answer_text") or "").strip()
         if not answer_text:
             answer_text = "当前会话记忆里还没有足够信息直接回答这个问题。"
         writer_result = {
-            "answer_text": build_memory_answer_text(
+            "answer_text": build_memory_direct_text(
                 answer_text,
-                support_type=str(memory_answer.get("support_type") or ""),
-                confidence=float(memory_answer.get("confidence") or 0.0),
+                support_type=str(memory_direct_result.get("support_type") or ""),
+                confidence=float(memory_direct_result.get("confidence") or 0.0),
             ),
             "writer_metadata": {
                 "writer_used": "memory",
                 "writer_fallback_reason": "",
                 "prompt_version": "memory_v1",
-                "mode": "memory_answer",
+                "mode": "direct_answer",
+                "answer_source": "memory",
+                "direct_reason": direct_reason or "memory_lookup",
             },
             "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
-    elif response_mode == "assistant_capability":
+    elif response_mode == "direct_answer" and answer_source == "capability":
         writer_result = {
-            "answer_text": build_assistant_capability_answer(),
+            "answer_text": build_capability_direct_answer(),
             "writer_metadata": {
                 "writer_used": "direct",
                 "writer_fallback_reason": "",
                 "prompt_version": "memory_v1",
-                "mode": "assistant_capability",
+                "mode": "direct_answer",
+                "answer_source": "capability",
+                "direct_reason": direct_reason or "capability_direct",
             },
             "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
-    elif response_mode == "generic_direct":
+    elif response_mode == "direct_answer":
         writer_result = {
-            "answer_text": build_generic_direct_answer(
+            "answer_text": build_context_direct_answer(
                 str(state.get("input_text") or ""),
                 state.get("memory_context") if isinstance(state.get("memory_context"), dict) else {},
             ),
@@ -842,7 +865,9 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
                 "writer_used": "direct",
                 "writer_fallback_reason": "",
                 "prompt_version": "memory_v1",
-                "mode": "generic_direct",
+                "mode": "direct_answer",
+                "answer_source": "generic",
+                "direct_reason": direct_reason or "context_direct",
             },
             "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
@@ -872,6 +897,12 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
             processing_steps=processing_steps,
         )
 
+    writer_metadata = writer_result.get("writer_metadata") if isinstance(writer_result.get("writer_metadata"), dict) else {}
+    writer_metadata = {
+        **writer_metadata,
+        "mode": str(writer_metadata.get("mode") or response_mode),
+        "answer_source": str(writer_metadata.get("answer_source") or answer_source),
+    }
     final = compose_final_answer(
         question=str(state.get("input_text") or ""),
         evidence_bundle=state.get("evidence_bundle") if isinstance(state.get("evidence_bundle"), dict) else {},
@@ -879,7 +910,7 @@ async def node_compose_final_answer(state: OrchestratorState) -> OrchestratorSta
         answerability=answerability,
         trace=processing_steps,
         answer_text=str(writer_result.get("answer_text") or ""),
-        writer_metadata=writer_result.get("writer_metadata") if isinstance(writer_result.get("writer_metadata"), dict) else {},
+        writer_metadata=writer_metadata,
         writer_token_usage=writer_result.get("token_usage") if isinstance(writer_result.get("token_usage"), dict) else {},
         writer_packed_evidence=writer_result.get("packed_evidence") if isinstance(writer_result.get("packed_evidence"), dict) else {},
     )

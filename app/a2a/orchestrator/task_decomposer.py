@@ -201,7 +201,7 @@ def _normalize_preferred_sources(value: Any) -> list[str]:
     rows: list[str] = []
     for item in _sanitize_list(value, max_items=3, max_len=32):
         source = str(item or "").strip().lower()
-        if source in {"memory", "kg", "rag", "direct", "assistant_capability"} and source not in rows:
+        if source in {"kg", "rag"} and source not in rows:
             rows.append(source)
     if not rows:
         rows = ["kg"]
@@ -221,8 +221,8 @@ def _normalize_question_mode(value: Any) -> str:
     if token in {
         "repeat_medical_question",
         "memory_lookup",
-        "assistant_capability",
-        "generic_direct",
+        "capability_query",
+        "direct_query",
         "medical_new_question",
         "medical_gap_followup",
     }:
@@ -351,7 +351,7 @@ def decompose_to_tasks(resolved_query: dict[str, Any], constraints: SubAgentCons
     intent = _normalize_intent(str(source.get("intent") or "direct_answer"))
     question_mode = _normalize_question_mode(source.get("question_mode"))
 
-    if question_mode in {"memory_lookup", "assistant_capability", "generic_direct", "repeat_medical_question"}:
+    if question_mode in {"memory_lookup", "capability_query", "direct_query", "repeat_medical_question"}:
         return []
 
     subqueries = _sanitize_list(source.get("subqueries"), max_items=8, max_len=240)

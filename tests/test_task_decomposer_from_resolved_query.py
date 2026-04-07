@@ -79,12 +79,12 @@ class TestTaskDecomposerFromResolvedQuery(unittest.TestCase):
         resolved_query = {
             "standalone_question": "你能做什么",
             "intent": "direct_answer",
-            "question_mode": "assistant_capability",
+            "question_mode": "capability_query",
             "subqueries": ["你能做什么"],
             "must_cover": ["answer"],
             "entities": [],
             "filters": [],
-            "preferred_sources": ["assistant_capability"],
+            "preferred_sources": ["capability"],
             "carry_over_context": [],
         }
         tasks = decompose_to_tasks(

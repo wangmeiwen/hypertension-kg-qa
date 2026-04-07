@@ -48,6 +48,9 @@ class OrchestratorState(TypedDict, total=False):
     classification: dict[str, Any]
     subtask_decisions: dict[str, dict[str, Any]]
     response_mode: str
+    direct_reason: str
+    retrieval_reason: str
+    answer_source: str
     memory_supported_points: list[str]
     memory_missing_points: list[str]
     memory_coverage_ratio: float

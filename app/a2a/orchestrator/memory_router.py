@@ -86,13 +86,18 @@ def _normalize_response_mode(mode: str) -> str:
     Returns:
         str: 文本结果。
     """
-    return mode if mode in {
-        "memory_answer",
-        "memory_augmented_medical",
-        "assistant_capability",
-        "generic_direct",
-        "medical_retrieval",
-    } else "medical_retrieval"
+    return mode if mode in {"direct_answer", "retrieval_required"} else "retrieval_required"
+
+
+def _answer_source_from_reason(reason: str) -> str:
+    token = str(reason or "").strip()
+    if token in {"memory_lookup", "repeat_answer", "memory_full_coverage", "memory_unavailable"}:
+        return "memory"
+    if token == "capability_direct":
+        return "capability"
+    if token == "context_direct":
+        return "generic"
+    return "retrieval"
 
 
 def route_by_memory_capability(
@@ -136,7 +141,7 @@ def route_by_memory_capability(
     memory_supported_points = answered_points[:]
     if repeat_candidate and repeat_candidate not in memory_supported_points:
         memory_supported_points = [repeat_candidate, *memory_supported_points]
-    has_memory_answer_signal = bool(memory_supported_points)
+    has_memory_direct_signal = bool(memory_supported_points)
     is_memory_lookup = question_mode == "memory_lookup"
     is_repeat_medical = question_mode == "repeat_medical_question"
 
@@ -153,39 +158,49 @@ def route_by_memory_capability(
         if point and point not in memory_missing_points:
             memory_missing_points.append(point)
 
-    response_mode = "medical_retrieval"
-    reason = "default_medical_retrieval"
+    response_mode = "retrieval_required"
+    direct_reason = ""
+    retrieval_reason = "new_medical_question"
 
-    if "assistant_capability" in preferred_sources or question_mode == "assistant_capability":
-        response_mode = "assistant_capability"
-        reason = "preferred_assistant_capability"
+    if "capability" in preferred_sources or question_mode == "capability_query":
+        response_mode = "direct_answer"
+        direct_reason = "capability_direct"
+        retrieval_reason = ""
     elif "memory" in preferred_sources or question_mode in {"memory_lookup", "repeat_medical_question"}:
         if is_memory_lookup:
-            response_mode = "memory_answer"
-            reason = "preferred_memory_lookup"
-        elif is_repeat_medical and has_memory_answer_signal and (repeat_detected or coverage_ratio > 0.0):
-            response_mode = "memory_answer"
-            reason = "preferred_memory_with_support"
+            response_mode = "direct_answer"
+            direct_reason = "memory_lookup"
+            retrieval_reason = ""
+        elif is_repeat_medical and has_memory_direct_signal and (repeat_detected or coverage_ratio > 0.0):
+            response_mode = "direct_answer"
+            direct_reason = "repeat_answer"
+            retrieval_reason = ""
         else:
-            response_mode = "medical_retrieval"
-            reason = "memory_preferred_without_support"
+            response_mode = "retrieval_required"
+            retrieval_reason = "memory_insufficient"
     elif repeat_detected and memory_supported_points:
-        response_mode = "memory_answer"
-        reason = "repeat_question_short_circuit"
+        response_mode = "direct_answer"
+        direct_reason = "repeat_answer"
+        retrieval_reason = ""
     elif "direct" in preferred_sources or question_scope in {"administrative", "small_talk"}:
-        response_mode = "generic_direct"
-        reason = "preferred_direct"
+        response_mode = "direct_answer"
+        direct_reason = "context_direct"
+        retrieval_reason = ""
     elif question_scope == "medical_qa" and memory_supported_points:
-        if coverage_ratio >= 0.7:
-            response_mode = "memory_answer"
-            reason = "memory_covers_medical_question"
+        if must_cover and coverage_ratio >= 1.0:
+            response_mode = "direct_answer"
+            direct_reason = "memory_full_coverage"
+            retrieval_reason = ""
         elif coverage_ratio > 0.0 or memory_missing_points:
-            response_mode = "memory_augmented_medical"
-            reason = "memory_partial_medical_support"
+            response_mode = "retrieval_required"
+            retrieval_reason = "memory_gap_followup"
 
     return {
         "response_mode": _normalize_response_mode(response_mode),
-        "reason": reason,
+        "reason": direct_reason or retrieval_reason,
+        "direct_reason": direct_reason,
+        "retrieval_reason": retrieval_reason,
+        "answer_source": _answer_source_from_reason(direct_reason),
         "memory_supported_points": memory_supported_points[:5],
         "memory_missing_points": memory_missing_points[:5],
         "memory_coverage_ratio": round(coverage_ratio, 4),

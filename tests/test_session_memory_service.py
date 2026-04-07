@@ -60,8 +60,8 @@ class TestSessionMemoryService(unittest.TestCase):
 
     def test_build_fallback_resolved_query_should_route_capability_question(self) -> None:
         resolved = self.service._build_fallback_resolved_query("你能做什么")
-        self.assertEqual(resolved["preferred_sources"], ["assistant_capability"])
-        self.assertEqual(resolved["question_mode"], "assistant_capability")
+        self.assertEqual(resolved["preferred_sources"], ["capability"])
+        self.assertEqual(resolved["question_mode"], "capability_query")
 
     def test_normalize_turn_memory_projection_should_drop_raw_tool_payload(self) -> None:
         normalized = self.service._normalize_turn_memory_projection(

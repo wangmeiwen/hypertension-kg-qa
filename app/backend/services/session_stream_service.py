@@ -201,7 +201,7 @@ def _infer_question_scope(input_text: str) -> str:
             "capability",
         )
     ):
-        return "assistant_capability"
+        return "capability_query"
     if any(
         hint in lowered
         for hint in (
@@ -246,7 +246,7 @@ def _normalize_question_scope(scope: Any) -> str:
         str: 文本结果。
     """
     value = str(scope or "").strip()
-    if value in {"medical_qa", "assistant_capability", "administrative", "small_talk", "unknown"}:
+    if value in {"medical_qa", "capability_query", "administrative", "small_talk", "unknown"}:
         return value
     return "unknown"
 
@@ -534,7 +534,7 @@ def _build_orchestrator_cards(
             "finished_at": finished_at,
             "prompt_preview": _sanitize_preview(resolved_query.get("standalone_question") or "", 140),
             "decision_preview": _sanitize_preview(
-                f"response_mode={telemetry.get('response_mode') or 'medical_retrieval'}；question_mode={resolved_query.get('question_mode') or 'medical_new_question'}",
+                f"response_mode={telemetry.get('response_mode') or 'retrieval_required'}；question_mode={resolved_query.get('question_mode') or 'medical_new_question'}",
                 180,
             ),
             "full_prompt": _sanitize_preview(json.dumps(resolved_query, ensure_ascii=False), 1200),
@@ -843,13 +843,16 @@ def _build_turn_observability_payload(
         "evidence_gaps": (memory_context.get("retrieval_summary") if isinstance(memory_context.get("retrieval_summary"), dict) else {}).get("evidence_gaps") or [],
     }
     orchestrator_decision = {
-        "response_mode": str(telemetry.get("response_mode") or "medical_retrieval"),
+        "response_mode": str(telemetry.get("response_mode") or "retrieval_required"),
+        "direct_reason": str(telemetry.get("direct_reason") or ""),
+        "retrieval_reason": str(telemetry.get("retrieval_reason") or ""),
+        "answer_source": str(telemetry.get("answer_source") or ""),
         "answer_mode": str((telemetry.get("answerability") if isinstance(telemetry.get("answerability"), dict) else {}).get("answer_mode") or evidence_summary.get("answer_mode") or ""),
         "question_mode": str(resolved_query.get("question_mode") or ""),
         "preferred_sources": resolved_query.get("preferred_sources") if isinstance(resolved_query.get("preferred_sources"), list) else [],
         "topic_shift_detected": bool((memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}).get("topic_shift_detected")),
         "topic_shift_reason": str((memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}).get("reason") or "no_shift"),
-        "memory_route_reason": str(telemetry.get("response_mode") or ""),
+        "memory_route_reason": str(telemetry.get("direct_reason") or telemetry.get("retrieval_reason") or telemetry.get("response_mode") or ""),
     }
 
     agent_lanes = {

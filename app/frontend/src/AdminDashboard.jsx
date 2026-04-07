@@ -660,11 +660,23 @@ export default function AdminDashboard({ onLogout }) {
                         </div>
                         <div className="human-readable-card">
                           <div className="human-readable-card-title">响应模式</div>
-                          <div className="human-readable-line">{selectedTurn.orchestrator_decision?.response_mode || "-"}</div>
+                          <div className="human-readable-line">
+                            {selectedTurn.orchestrator_decision?.response_mode_label
+                              || (selectedTurn.orchestrator_decision?.response_mode === "direct_answer" ? "能直接回答" : "")
+                              || (selectedTurn.orchestrator_decision?.response_mode === "retrieval_required" ? "需要检索" : "")
+                              || selectedTurn.orchestrator_decision?.response_mode
+                              || "-"}
+                          </div>
+                          <div className="human-readable-hint">
+                            原因：{selectedTurn.orchestrator_decision?.direct_reason || selectedTurn.orchestrator_decision?.retrieval_reason || selectedTurn.orchestrator_decision?.memory_route_reason || "-"}
+                          </div>
                         </div>
                         <div className="human-readable-card">
                           <div className="human-readable-card-title">回答模式</div>
                           <div className="human-readable-line">{selectedTurn.orchestrator_decision?.answer_mode || "-"}</div>
+                          <div className="human-readable-hint">
+                            来源：{selectedTurn.orchestrator_decision?.answer_source || "-"}
+                          </div>
                         </div>
                       </div>
                     </section>

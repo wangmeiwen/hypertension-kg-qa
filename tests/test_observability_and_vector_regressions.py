@@ -15,6 +15,7 @@ from app.a2a.orchestrator.nodes import node_route_by_memory_capability
 from app.backend.middleware.request_timing import request_timing_middleware
 from app.backend.repositories.database import MessageManager, SessionManager
 from app.backend.routers.query_chat import create_query_chat_router
+from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.session_stream_service import SessionStreamService
 from app.backend.services.sessions_history_service import SessionsHistoryService
 from app.common.session_logger import log_api_call
@@ -385,6 +386,55 @@ class TestObservabilityAndVectorRegressions(unittest.TestCase):
             [str(row.get("type") or "") for row in outputs].index("persisted"),
         )
 
+    def test_a2a_progress_events_should_emit_simplified_thinking_statuses(self) -> None:
+        class _FakeA2A:
+            async def asend_message(self, message: dict[str, Any], request_id: str) -> dict[str, Any]:
+                _ = message
+                _ = request_id
+                return {"id": "task-1"}
+
+            async def aget_task_updates(self, task_id: str, cursor: int) -> dict[str, Any]:
+                _ = task_id
+                if int(cursor or 0) > 0:
+                    return {"events": [], "next_cursor": cursor, "terminal": True, "state": "completed", "task": {}}
+                return {
+                    "events": [
+                        {"event": "task_submitted", "detail": "task submitted", "tool_name": "a2a"},
+                        {"event": "orchestrator_start", "detail": "主代理开始分解问题", "tool_name": "orchestrator"},
+                        {"event": "subagent_call_start", "detail": "开始执行任务", "tool_name": "kg"},
+                        {"event": "task_completed", "detail": "task completed", "tool_name": "a2a"},
+                    ],
+                    "next_cursor": 4,
+                    "terminal": True,
+                    "state": "completed",
+                    "task": {
+                        "artifacts": [
+                            {
+                                "name": "final_answer",
+                                "parts": [{"kind": "text", "text": "回答"}],
+                            }
+                        ],
+                        "status": {"message": {"parts": [{"kind": "text", "text": "task_completed"}]}},
+                    },
+                }
+
+        service = A2AEventStreamService(get_a2a=lambda: _FakeA2A())
+
+        async def _run_case() -> list[dict[str, Any]]:
+            rows = []
+            async for row in service.iter_a2a_stream_events(input_text="问题", user_id="u1", session_id="s1"):
+                rows.append(row)
+            return rows
+
+        outputs = asyncio.run(_run_case())
+        msg_rows = [row for row in outputs if str(row.get("type") or "") == "msg"]
+        msg_text = " ".join(str(row.get("msg") or "") for row in msg_rows)
+
+        self.assertEqual([str(row.get("msg") or "") for row in msg_rows], ["主agent思考中", "子agent正在检索", "答案生成中"])
+        self.assertEqual([str(row.get("stage") or "") for row in msg_rows], ["orchestrator", "subagent", "answer"])
+        self.assertNotIn("task submitted", msg_text)
+        self.assertNotIn("task completed", msg_text)
+
     def test_rollback_to_question_should_clear_and_rebuild_memory(self) -> None:
         calls: list[str] = []
 
@@ -700,7 +750,7 @@ class TestObservabilityAndVectorRegressions(unittest.TestCase):
         self.assertIn("assistant_persist_failed_after_done", logged_stages)
         self.assertNotIn("generate_data_with_session_exception", logged_stages)
 
-    def test_memory_answer_route_should_fallback_to_retrieval_when_unavailable(self) -> None:
+    def test_memory_direct_route_should_fallback_to_retrieval_when_unavailable(self) -> None:
         state = {
             "input_text": "高血压的常见症状有哪些？",
             "resolved_query": {
@@ -725,8 +775,9 @@ class TestObservabilityAndVectorRegressions(unittest.TestCase):
         ):
             result = asyncio.run(node_route_by_memory_capability(state))
 
-        self.assertEqual(str(result.get("response_mode") or ""), "medical_retrieval")
-        self.assertEqual(str(result.get("memory_route_reason") or ""), "memory_answer_unavailable_fallback_retrieval")
+        self.assertEqual(str(result.get("response_mode") or ""), "retrieval_required")
+        self.assertEqual(str(result.get("retrieval_reason") or ""), "memory_insufficient")
+        self.assertEqual(str(result.get("memory_route_reason") or ""), "memory_insufficient")
         self.assertEqual(result.get("memory_supported_points"), [])
 
 

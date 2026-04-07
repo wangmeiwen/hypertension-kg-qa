@@ -98,6 +98,51 @@ def extract_progress_detail(event: Dict[str, Any]) -> str:
     return str(event.get("detail") or event.get("event") or "").strip()
 
 
+_SIMPLIFIED_PROGRESS_STAGES = {
+    "orchestrator": "主agent思考中",
+    "subagent": "子agent正在检索",
+    "answer": "答案生成中",
+}
+
+
+def normalize_progress_event(event: Dict[str, Any]) -> Dict[str, str]:
+    """将内部进度事件规整为前端可展示的少量状态。"""
+    if not isinstance(event, dict):
+        return {}
+
+    event_name = str(event.get("event") or "").strip().lower()
+    detail = extract_progress_detail(event)
+    tool_name = str(event.get("tool_name") or "").strip().lower()
+    text = " ".join([event_name, detail.lower(), tool_name]).strip()
+    if not text:
+        return {}
+
+    if any(token in text for token in ("finalized", "orchestrator_done", "task_completed", "终答", "最终回答", "answer")):
+        stage = "answer"
+    elif any(token in text for token in ("subagent", "子代理", "检索", "kg", "rag", "search", "retrieval")):
+        stage = "subagent"
+    elif any(
+        token in text
+        for token in (
+            "orchestrator_start",
+            "orchestrator",
+            "主代理",
+            "解析输入",
+            "路由",
+            "任务拆解",
+            "门控",
+            "思考",
+            "task_submitted",
+            "task_running",
+        )
+    ):
+        stage = "orchestrator"
+    else:
+        return {}
+
+    return {"stage": stage, "msg": _SIMPLIFIED_PROGRESS_STAGES[stage]}
+
+
 def extract_task_final_text(task: Dict[str, Any], state: str) -> str:
     """提取任务终态展示文本。"""
     if not isinstance(task, dict):
@@ -216,6 +261,7 @@ class A2AEventStreamService:
             min(int(safe_float(os.getenv("AGENT_RUN_A2A_POLL_MS", "250"), default=250.0)), 3000),
         )
         traces: List[Dict[str, Any]] = []
+        emitted_progress_stages: set[str] = set()
         cursor = 0
 
         while True:
@@ -239,7 +285,16 @@ class A2AEventStreamService:
                 if not detail:
                     continue
                 traces.append({"step": len(traces) + 1, "action": detail})
-                yield {"type": "msg", "msg": detail, "task_id": task_id}
+                normalized = normalize_progress_event(event if isinstance(event, dict) else {})
+                stage = str(normalized.get("stage") or "")
+                if stage and stage not in emitted_progress_stages:
+                    emitted_progress_stages.add(stage)
+                    yield {
+                        "type": "msg",
+                        "msg": str(normalized.get("msg") or ""),
+                        "stage": stage,
+                        "task_id": task_id,
+                    }
 
             state = str(snapshot.get("state") or "").strip().lower()
             if bool(snapshot.get("terminal")):
@@ -254,6 +309,14 @@ class A2AEventStreamService:
                 evidence_summary = evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
                 telemetry_obj = extract_a2a_artifact(task_payload, "telemetry")
                 telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
+                if state == "completed" and "answer" not in emitted_progress_stages:
+                    emitted_progress_stages.add("answer")
+                    yield {
+                        "type": "msg",
+                        "msg": _SIMPLIFIED_PROGRESS_STAGES["answer"],
+                        "stage": "answer",
+                        "task_id": task_id,
+                    }
                 if state == "completed" and final_text:
                     yield {"type": "reply", "msg": final_text, "task_id": task_id}
                 yield {

@@ -111,7 +111,7 @@ class MemoryAnswerService:
             return {
                 "can_answer": True,
                 "confidence": 0.92,
-                "answer_text": f"根据你当前会话里提供的信息，你叫{name}。",
+                "answer_text": f"你叫{name}。",
                 "support_type": "confirmed_fact",
                 "used_memory_fields": ["summary.confirmed_facts", "recent_messages_digest"],
             }
@@ -122,7 +122,7 @@ class MemoryAnswerService:
                 return {
                     "can_answer": True,
                     "confidence": 0.76,
-                    "answer_text": f"按我们刚才这段对话，我前面主要说的是：{assistant_rows[-1]}",
+                    "answer_text": f"我主要说明的是：{assistant_rows[-1]}",
                     "support_type": "recent_digest",
                     "used_memory_fields": ["recent_messages_digest"],
                 }
@@ -133,7 +133,7 @@ class MemoryAnswerService:
                 return {
                     "can_answer": True,
                     "confidence": 0.82,
-                    "answer_text": "当前还没完全补齐的点主要有：" + "；".join(gaps[:3]) + "。",
+                    "answer_text": "还没完全补齐的点主要有：" + "；".join(gaps[:3]) + "。",
                     "support_type": "answered_point",
                     "used_memory_fields": ["summary.open_questions", "retrieval_summary.evidence_gaps"],
                 }

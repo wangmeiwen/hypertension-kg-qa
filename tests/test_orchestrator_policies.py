@@ -3,7 +3,7 @@
 import unittest
 
 from app.a2a.models import SubAgentConstraints, SubTask
-from app.a2a.orchestrator.answer_gate import compose_final_answer
+from app.a2a.orchestrator.answer_gate import _MEDICAL_DISCLAIMER, compose_final_answer
 from app.a2a.orchestrator.supplement_decider import decide_supplement
 
 
@@ -58,7 +58,7 @@ class TestOrchestratorPolicies(unittest.TestCase):
         )
         self.assertIn("结论：", answer.answer)
         self.assertNotIn("{'doc_id'", answer.answer)
-        self.assertIn("免责声明：", answer.answer)
+        self.assertIn(_MEDICAL_DISCLAIMER, answer.answer)
 
     def test_low_value_partial_should_escalate_to_rag_on_second_round(self) -> None:
         """comparison 在第二轮 low-signal 条件下应触发 KG->RAG 升级。"""
