@@ -14,6 +14,7 @@ function createUserId() {
 }
 
 const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
+const MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。";
 
 const isMarkdownTableSeparator = (line) => {
   const trimmed = String(line || "").trim();
@@ -59,24 +60,9 @@ const renderInlineMarkdown = (text, keyPrefix) => {
   });
 };
 
-const getMedicalBlockClass = (text) => {
-  const normalized = String(text || "").toLowerCase();
-  if (!normalized.trim()) return "";
-
-  if (/(警告|预警|危险|风险|紧急|立即|急诊|严重|warning|risk|emergency)/i.test(normalized)) {
-    return "medical-info-block warning-block";
-  }
-
-  if (/(建议|处理|干预|饮食|运动|用药|复诊|监测|控制|advice|recommend)/i.test(normalized)) {
-    return "medical-info-block advice-block";
-  }
-
-  if (/(症状|表现|头痛|头晕|胸痛|心悸|气短|symptom)/i.test(normalized)) {
-    return "medical-info-block symptom-block";
-  }
-
-  return "";
-};
+const getDisclaimerBlockClass = (text) => (
+  String(text || "").trim() === MEDICAL_DISCLAIMER_TEXT ? " medical-disclaimer-block" : ""
+);
 
 const renderMarkdownContent = (content) => {
   const text = String(content || "").replace(/\r\n/g, "\n");
@@ -137,7 +123,7 @@ const renderMarkdownContent = (content) => {
       }
       const quoteText = quoteLines.join(" ");
       blocks.push(
-        <blockquote key={`quote-${blocks.length}`} className={`md-quote ${getMedicalBlockClass(quoteText)}`}>
+        <blockquote key={`quote-${blocks.length}`} className="md-quote">
           {renderInlineMarkdown(quoteText, `quote-${blocks.length}`)}
         </blockquote>
       );
@@ -229,7 +215,7 @@ const renderMarkdownContent = (content) => {
 
     const paragraphText = paragraphLines.join(" ");
     blocks.push(
-      <p key={`p-${blocks.length}`} className={`md-paragraph ${getMedicalBlockClass(paragraphText)}`}>
+      <p key={`p-${blocks.length}`} className={`md-paragraph${getDisclaimerBlockClass(paragraphText)}`}>
         {renderInlineMarkdown(paragraphText, `p-${blocks.length}`)}
       </p>
     );
@@ -871,13 +857,18 @@ export default function App() {
               ) : (
                 messages.map((m, i) => (
                   <div key={`${m.role}-${i}`} className={`msg ${m.role}`}>
-                    <div className="role">{m.role === "user" ? "你" : "助手"}</div>
                     {(() => {
-                      const latestThinkStatus = getLatestThinkStatus(m.thinkContent);
-                      if (m.role !== "assistant" || !latestThinkStatus || m.content) {
-                        return null;
-                      }
-                      return <div className="live-tool-status">{latestThinkStatus}</div>;
+                      const latestThinkStatus = m.role === "assistant" && !m.content
+                        ? getLatestThinkStatus(m.thinkContent)
+                        : "";
+                      return (
+                        <div className="role">
+                          <span>{m.role === "user" ? "你" : "助手"}</span>
+                          {m.role === "assistant" && !m.content ? (
+                            <span className="processing-stage-badge">{latestThinkStatus || "处理中..."}</span>
+                          ) : null}
+                        </div>
+                      );
                     })()}
                     {m.image && (
                       <div className="msg-image-container">
@@ -886,23 +877,9 @@ export default function App() {
                     )}
                     <div className={m.role === "assistant" ? "content assistant-markdown" : "content"}>
                       {m.role === "assistant"
-                        ? renderMarkdownContent(m.content || "处理中...")
+                        ? (m.content ? renderMarkdownContent(m.content) : null)
                         : (m.content || "")}
                     </div>
-                    {(() => {
-                      const thinkStatuses = m.role === "assistant" ? getSimplifiedThinkStatuses(m.thinkContent) : [];
-                      if (!thinkStatuses.length) return null;
-                      return (
-                        <details className="think">
-                          <summary>思考过程</summary>
-                          <ul className="think-status-list">
-                            {thinkStatuses.map((status) => (
-                              <li key={status}>{status}</li>
-                            ))}
-                          </ul>
-                        </details>
-                      );
-                    })()}
                     <div className="msg-actions">
                       {m.role === "assistant" ? (
                         <button

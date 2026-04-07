@@ -201,6 +201,10 @@ body {
 }
 
 .role {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   color: var(--primary-600);
@@ -209,20 +213,26 @@ body {
   letter-spacing: 0.5px;
 }
 
+.processing-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--primary-200);
+  border-radius: 999px;
+  background: var(--primary-50);
+  color: var(--primary-800);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .content {
   white-space: pre-wrap;
   line-height: 1.7;
   font-size: 15px;
-}
-
-.live-tool-status {
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  font-size: 13px;
-  color: var(--primary-700);
-  background: var(--primary-50);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
 }
 
 .assistant-markdown {
@@ -424,70 +434,6 @@ body {
 
 .assistant-markdown .md-table tbody tr:last-child td {
   border-bottom: none;
-}
-
-/* 思考过程 */
-.think {
-  margin-top: 12px;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.think summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 10px 14px;
-  background: var(--primary-50);
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.think summary:hover {
-  background: var(--primary-100);
-  color: var(--primary-700);
-}
-
-.think summary::before {
-  content: '▶';
-  font-size: 10px;
-  transition: transform var(--transition-fast);
-}
-
-.think[open] summary::before {
-  transform: rotate(90deg);
-}
-
-.think-status-list {
-  margin: 12px 0 0;
-  padding: 14px;
-  background: var(--primary-50);
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  color: var(--text-primary);
-  border: 1px solid var(--border-light);
-  list-style: none;
-}
-
-.think-status-list li {
-  position: relative;
-  padding-left: 18px;
-  line-height: 1.7;
-}
-
-.think-status-list li::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 0.72em;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--primary-500);
 }
 
 /* ========================================
@@ -4870,8 +4816,7 @@ label:focus-within {
   padding-left: 2px;
 }
 
-.assistant-markdown .md-quote,
-.assistant-markdown .medical-info-block {
+.assistant-markdown .md-quote {
   margin: 10px 0;
   padding: 10px 12px;
   border: 1px solid var(--border-light);
@@ -4881,46 +4826,20 @@ label:focus-within {
   color: var(--text-primary);
 }
 
-.assistant-markdown .medical-info-block::before {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.assistant-markdown .symptom-block {
-  border-color: #fed7aa;
-  border-left-color: var(--warning-500);
-  background: var(--warning-50);
-}
-
-.assistant-markdown .symptom-block::before {
-  content: "症状提示";
-  color: var(--warning-700);
-}
-
-.assistant-markdown .warning-block {
-  border-color: var(--danger-100);
-  border-left-color: var(--danger-600);
+.assistant-markdown .medical-disclaimer-block {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger-100);
+  border-left: 4px solid var(--danger-500);
+  border-radius: 12px;
   background: var(--danger-50);
-}
-
-.assistant-markdown .warning-block::before {
-  content: "风险提醒";
   color: var(--danger-700);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
-.assistant-markdown .advice-block {
-  border-color: var(--cta-100);
-  border-left-color: var(--cta-500);
-  background: var(--cta-50);
-}
-
-.assistant-markdown .advice-block::before {
-  content: "行动建议";
-  color: var(--cta-600);
+.assistant-markdown .medical-disclaimer-block::before {
+  content: none;
 }
 
 .assistant-markdown .md-table-wrap {
@@ -4940,19 +4859,6 @@ label:focus-within {
 .assistant-markdown .md-table thead th {
   background: var(--primary-50);
   color: var(--primary-900);
-}
-
-.live-tool-status {
-  padding: 8px 10px;
-  border-color: var(--primary-200);
-  border-radius: 12px;
-  background: var(--primary-50);
-  color: var(--primary-800);
-}
-
-.think summary {
-  min-height: 34px;
-  color: var(--text-secondary);
 }
 
 .msg-actions {
