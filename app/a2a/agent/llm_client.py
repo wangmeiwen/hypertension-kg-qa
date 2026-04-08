@@ -154,52 +154,6 @@ class LLMClient:
                 f"请在 .env 文件中设置以下环境变量: {', '.join(missing)}"
             )
 
-    def chat(
-        self,
-        messages: list[dict[str, Any]],
-        temperature: float = 0.1,
-        timeout: int = 60,
-    ) -> str:
-        """兼容旧接口，只返回内容字符串"""
-
-        response = self.chat_with_tokens(messages, temperature, timeout)
-
-        # 兼容不同返回类型，避免调用方因返回值形态差异导致崩溃
-
-        if isinstance(response, str):
-
-            return response
-
-        if isinstance(response, dict):
-
-            return str(response.get("content", "") or "")
-
-        content = getattr(response, "content", "")
-
-        return str(content or "")
-
-    async def chat_async(
-        self,
-        messages: list[dict[str, Any]],
-        temperature: float = 0.1,
-        timeout: int = 60,
-    ) -> str:
-        """异步兼容接口，只返回内容字符串"""
-
-        response = await self.chat_with_tokens_async(messages, temperature, timeout)
-
-        if isinstance(response, str):
-
-            return response
-
-        if isinstance(response, dict):
-
-            return str(response.get("content", "") or "")
-
-        content = getattr(response, "content", "")
-
-        return str(content or "")
-
     @traceable(name="llm_client.chat_with_tokens", run_type="llm")
     def chat_with_tokens(
         self,

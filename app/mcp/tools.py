@@ -76,44 +76,6 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
-def init_milvus_database(conf: Config):
-    """初始化 Milvus 数据库与向量集合。
-
-    该函数会按配置确保以下资源存在：
-    1) 目标数据库
-    2) 目标集合
-    3) 集合向量索引
-
-    初始化失败时仅返回 False，由调用方决定是否降级处理。
-
-    Args:
-        conf: 系统配置对象。
-
-    Returns:
-        bool: 初始化是否成功。
-    """
-    try:
-        # 复用 RAG 运行时共享资源初始化逻辑，由 VectorStore 内部确保数据库/集合可用。
-        get_shared_vector_store(conf)
-        logger.info(
-            "Milvus 初始化完成: database=%s, collection=%s",
-            str(conf.MILVUS_DATABASE_NAME),
-            str(conf.MILVUS_COLLECTION_NAME),
-        )
-        return True
-    except (
-        RuntimeError,
-        ValueError,
-        TypeError,
-        KeyError,
-        AttributeError,
-        OSError,
-        ImportError,
-    ) as exc:
-        logger.exception("Milvus 初始化失败: %s", str(exc))
-        return False
-
-
 class KnowledgeGraphTool:
     """知识图谱只读查询工具。
 

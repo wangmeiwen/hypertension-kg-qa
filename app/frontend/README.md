@@ -122,8 +122,8 @@ VITE_BACKEND_URL=http://127.0.0.1:8000
 // 流式问答
 streamProcessWithSession(input, userId, sessionId, imageData)
 
-// 图片上传
-uploadImage(file)
+// 聊天文件上传（图片/文档）
+uploadChatFile(file)
 ```
 
 ### 会话接口
@@ -131,7 +131,6 @@ uploadImage(file)
 createSession(userId, title)
 listSessions(userId)
 getSession(sessionId)
-updateSession(sessionId, title)
 deleteSession(sessionId)
 ```
 

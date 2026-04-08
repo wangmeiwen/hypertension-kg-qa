@@ -60,52 +60,6 @@ export async function getReadinessStatus() {
   throw new Error(data?.error ?? `请求错误: ${response.status}`);
 }
 
-export async function* streamProcess(input, userId) {
-  const payload = { input, user_id: userId };
-  const response = await fetch(`${BASE_URL}/process`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok || !response.body) {
-    yield { type: "done", msg: `请求错误: ${response.status}` };
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let index = buffer.indexOf("\n");
-    while (index !== -1) {
-      const line = buffer.slice(0, index).trim();
-      buffer = buffer.slice(index + 1);
-      if (line) {
-        try {
-          yield JSON.parse(line);
-        } catch {
-          yield { type: "msg", msg: line };
-        }
-      }
-      index = buffer.indexOf("\n");
-    }
-  }
-
-  const tail = buffer.trim();
-  if (tail) {
-    try {
-      yield JSON.parse(tail);
-    } catch {
-      yield { type: "msg", msg: tail };
-    }
-  }
-}
-
 // ==================== 会话历史 API ====================
 
 export async function createSession(userId, title = "新会话") {
@@ -144,19 +98,6 @@ export async function getSession(sessionId, userId) {
   return data.data;
 }
 
-export async function updateSession(sessionId, title, userId) {
-  const response = await fetch(`${BASE_URL}/sessions/${sessionId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, user_id: userId })
-  });
-  const data = await response.json();
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || `请求错误: ${response.status}`);
-  }
-  return data;
-}
-
 export async function deleteSession(sessionId, userId) {
   const params = new URLSearchParams();
   params.set("user_id", userId);
@@ -168,19 +109,6 @@ export async function deleteSession(sessionId, userId) {
     throw new Error(data?.error || `请求错误: ${response.status}`);
   }
   return data;
-}
-
-export async function rollbackLastQuestion(sessionId, userId) {
-  const response = await fetch(`${BASE_URL}/sessions/${sessionId}/rollback-last-question`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId })
-  });
-  const data = await response.json();
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || `请求错误: ${response.status}`);
-  }
-  return data.data;
 }
 
 export async function rollbackToQuestion(sessionId, userId, messageId) {
@@ -279,8 +207,6 @@ export async function uploadChatFile(file) {
   return data.data;
 }
 
-export const uploadImage = uploadChatFile;
-
 // ==================== 简化的管理员登录 API ====================
 
 export async function adminLogin(username, password) {
@@ -319,10 +245,6 @@ export async function adminLogout() {
   } finally {
     clearAdminToken();
   }
-}
-
-export function isAdminLoggedIn() {
-  return Boolean(getAdminToken());
 }
 
 // ==================== 管理员后台 API ====================
@@ -383,32 +305,6 @@ export async function getAdminStats() {
     throw new Error(data?.error || "获取统计数据失败");
   }
   return data.data;
-}
-
-// ==================== 文档上传 API ====================
-
-export async function uploadDocument(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const response = await adminFetch(`${BASE_URL}/admin/documents/upload`, {
-    method: "POST",
-    body: formData
-  });
-  const data = await response.json();
-  if (!data?.ok) {
-    throw new Error(data?.error || "上传文档失败");
-  }
-  return data.data;
-}
-
-export async function getDocumentStats() {
-  const response = await adminFetch(`${BASE_URL}/admin/documents/stats`);
-  const data = await response.json();
-  if (!data?.ok) {
-    throw new Error(data?.error || "获取文档统计失败");
-  }
-  return data;
 }
 
 // ==================== Agent 可观测性 API ====================

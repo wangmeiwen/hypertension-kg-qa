@@ -17,7 +17,7 @@ const NODE_COLORS = {
   Entity: "#6b7280"
 };
 
-export function getGraphNodeColor(label) {
+function getGraphNodeColor(label) {
   return NODE_COLORS[label] || NODE_COLORS.Entity;
 }
 
