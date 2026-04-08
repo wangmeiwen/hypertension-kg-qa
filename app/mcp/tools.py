@@ -475,9 +475,11 @@ class HistoryReadTool:
     """读取会话历史检索记录。"""
 
     def __init__(self) -> None:
+        """初始化历史检索读取工具并创建记忆服务实例。"""
         self._memory = SessionMemoryService()
 
     async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """按 history_id 或用户问题读取会话内历史检索记录。"""
         session_id = str(payload.get("session_id") or "").strip()
         history_id = str(payload.get("history_id") or "").strip()
         user_question = str(payload.get("user_question") or "").strip()

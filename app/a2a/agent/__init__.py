@@ -80,6 +80,7 @@ async def process_query(
 
 
 def __getattr__(name: str):
+    """按名称惰性加载子模块类，减少初始化导入成本。"""
     if name == "GraphSubAgent":
         from app.a2a.agent.graph_subagent import GraphSubAgent
 

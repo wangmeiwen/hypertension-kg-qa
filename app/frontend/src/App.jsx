@@ -4,6 +4,7 @@ import GraphView from "./GraphView";
 import SessionSidebar from "./SessionSidebar";
 import AdminDashboard from "./AdminDashboard";
 
+// 生成并缓存前端 userId，确保会话可在刷新后续接。
 function createUserId() {
   const cacheKey = "hypertensionkg_user_id";
   const cached = localStorage.getItem(cacheKey);
@@ -16,6 +17,7 @@ function createUserId() {
 const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
 const MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。";
 
+// 判断一行是否为 Markdown 表格分隔符行。
 const isMarkdownTableSeparator = (line) => {
   const trimmed = String(line || "").trim();
   if (!trimmed || !trimmed.includes("|")) return false;
@@ -26,11 +28,13 @@ const isMarkdownTableSeparator = (line) => {
   return columns.every((part) => /^:?-{3,}:?$/.test(part));
 };
 
+// 将一行 Markdown 表格拆分为单元格数组。
 const parseMarkdownTableRow = (line) => {
   const cleaned = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
   return cleaned.split("|").map((cell) => cell.trim());
 };
 
+// 渲染行内 Markdown（粗体、行内代码、超链接）。
 const renderInlineMarkdown = (text, keyPrefix) => {
   const safeText = String(text || "");
   if (!safeText) return "";
@@ -60,10 +64,12 @@ const renderInlineMarkdown = (text, keyPrefix) => {
   });
 };
 
+// 对固定免责声明段落添加专用样式类。
 const getDisclaimerBlockClass = (text) => (
   String(text || "").trim() === MEDICAL_DISCLAIMER_TEXT ? " medical-disclaimer-block" : ""
 );
 
+// 将消息内容按块渲染为 Markdown 结构。
 const renderMarkdownContent = (content) => {
   const text = String(content || "").replace(/\r\n/g, "\n");
   if (!text.trim()) return "处理中...";
@@ -233,6 +239,7 @@ const THINK_STATUS_META = [
 
 const THINK_LABELS = THINK_STATUS_META.map((item) => item.label);
 
+// 将任意状态文本标准化到前端展示的思考阶段标签。
 const normalizeThinkStatus = (value, stage = "") => {
   const safeStage = String(stage || "").trim().toLowerCase();
   const byStage = THINK_STATUS_META.find((item) => item.stage === safeStage);
@@ -247,14 +254,17 @@ const normalizeThinkStatus = (value, stage = "") => {
   return matched?.label || "";
 };
 
+// 在状态序列中追加去重后的阶段标签。
 const appendThinkStatus = (statuses, value, stage = "") => {
   const label = normalizeThinkStatus(value, stage);
   if (!label || statuses.includes(label)) return statuses;
   return [...statuses, label];
 };
 
+// 将阶段列表格式化为多行文本，供消息 thinkContent 展示。
 const formatThinkStatuses = (statuses) => statuses.filter(Boolean).join("\n");
 
+// 从 thinkContent 提取并归并有效阶段标签。
 const getSimplifiedThinkStatuses = (thinkContent) => {
   const text = String(thinkContent || "").trim();
   if (!text) return [];
@@ -281,6 +291,7 @@ const getSimplifiedThinkStatuses = (thinkContent) => {
   return statuses;
 };
 
+// 获取当前 thinkContent 的最新阶段标签。
 const getLatestThinkStatus = (thinkContent) => {
   const statuses = getSimplifiedThinkStatuses(thinkContent);
   if (!statuses.length) return "";
@@ -288,12 +299,14 @@ const getLatestThinkStatus = (thinkContent) => {
 };
 
 // ==================== 登录弹窗组件 ====================
+// 管理员登录弹窗。
 function LoginModal({ onClose, onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // 提交管理员账号密码并触发登录回调。
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!username.trim() || !password) {
@@ -352,6 +365,7 @@ function LoginModal({ onClose, onLogin }) {
 }
 
 // ==================== 主应用组件 ====================
+// 主应用组件：负责问答、会话、上传、后台入口和图谱标签页切换。
 export default function App() {
   const userId = useMemo(() => createUserId(), []);
   const [messages, setMessages] = useState([]);
@@ -370,6 +384,7 @@ export default function App() {
   const [stoppingJob, setStoppingJob] = useState(false);
   const chatScrollRef = useRef(null);
 
+  // 滚动聊天窗口到底部，保证最新消息可见。
   const scrollChatToBottom = useCallback((behavior = "smooth") => {
     const chatNode = chatScrollRef.current;
     if (!chatNode) return;
@@ -425,6 +440,7 @@ export default function App() {
     scrollChatToBottom(loading ? "auto" : "smooth");
   }, [activeTab, loading, messages, scrollChatToBottom]);
 
+  // 按会话 ID 加载历史消息并映射到前端消息结构。
   const loadSessionMessages = useCallback(async (sessionId) => {
     try {
       const session = await getSession(sessionId, userId);
@@ -444,6 +460,7 @@ export default function App() {
     }
   }, [userId]);
 
+  // 选择历史会话，或重置到空白会话。
   const handleSelectSession = useCallback((session) => {
     if (session) {
       setCurrentSessionId(session.id);
@@ -454,11 +471,13 @@ export default function App() {
     }
   }, [loadSessionMessages]);
 
+  // 新建会话后切换到该会话并清空当前消息。
   const handleCreateSession = useCallback((session) => {
     setCurrentSessionId(session.id);
     setMessages([]);
   }, []);
 
+  // 主动创建新会话（header 新对话按钮使用）。
   const handleNewChat = useCallback(async () => {
     try {
       const session = await createSession(userId, "新会话");
@@ -469,18 +488,21 @@ export default function App() {
     }
   }, [userId]);
 
+  // 管理员登录成功后的 UI 状态更新。
   const handleLogin = () => {
     setIsLoggedIn(true);
     setShowLogin(false);
     setShowAdminPanel(true);
   };
 
+  // 管理员退出并关闭后台面板。
   const handleLogout = async () => {
     await adminLogout();
     setIsLoggedIn(false);
     setShowAdminPanel(false);
   };
 
+  // 进入后台管理，未登录时先弹出登录框。
   const handleEnterAdmin = () => {
     if (isLoggedIn) {
       setShowAdminPanel(true);
@@ -489,10 +511,12 @@ export default function App() {
     }
   };
 
+  // 关闭后台管理面板并返回主页面。
   const handleBackToMain = () => {
     setShowAdminPanel(false);
   };
 
+  // 选择上传文件并进行扩展名、大小与预览处理。
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -520,11 +544,13 @@ export default function App() {
     }
   };
 
+  // 清空当前已选文件及预览。
   const handleRemoveFile = () => {
     setSelectedFile(null);
     setFilePreview(null);
   };
 
+  // 发送一轮问题并消费流式返回，持续更新助手消息和思考阶段。
   const sendQuestion = async ({ question, imageData = null, fileName = "", displayContent = "", image = null }) => {
     const normalizedQuestion = String(question || "").trim();
     const normalizedDisplay = String(displayContent || normalizedQuestion || "").trim();
@@ -545,6 +571,7 @@ export default function App() {
     let replyContent = "";
     let doneStatus = "done";
     let streamSessionId = currentSessionId;
+    // 追加思考状态并同步到当前助手消息。
     const addThinkStatus = (value, stage = "") => {
       const nextStatuses = appendThinkStatus(thinkStatuses, value, stage);
       if (nextStatuses.length !== thinkStatuses.length) {
@@ -555,6 +582,7 @@ export default function App() {
         )));
       }
     };
+    // 将流里返回的持久化 ID 回填到本地 pending 消息。
     const hydratePendingMessageIds = ({ sessionId = "", userMessageId = 0, assistantMessageId = 0 }) => {
       const normalizedSessionId = String(sessionId || "").trim();
       if (normalizedSessionId) {
@@ -647,6 +675,7 @@ export default function App() {
     }
   };
 
+  // 终止当前正在执行的问答任务。
   const handleStopCurrentTask = async () => {
     if (!loading || !currentJobId || !currentSessionId || stoppingJob) return;
     setStoppingJob(true);
@@ -658,6 +687,7 @@ export default function App() {
     }
   };
 
+  // 复制指定消息内容到剪贴板。
   const handleCopyMessage = async (content, key) => {
     const text = String(content || "").trim();
     if (!text) return;
@@ -672,6 +702,7 @@ export default function App() {
     }
   };
 
+  // 复用历史问题文本重新发起提问。
   const handleResendMessage = async (content) => {
     if (loading) return;
     const text = String(content || "").replace(/\n\[(图片|文件):[^\]]+\]\s*$/u, "").trim();
@@ -680,6 +711,7 @@ export default function App() {
     await sendQuestion({ question: text, displayContent: text });
   };
 
+  // 回撤会话到指定问题，并将该问题回填到输入框。
   const handleRollbackQuestion = async (message) => {
     if (loading || !currentSessionId) return;
     const messageId = Number(message?.id || 0);
@@ -699,6 +731,7 @@ export default function App() {
     }
   };
 
+  // 发送入口：处理输入、上传附件并调用 sendQuestion。
   const send = async () => {
     const question = input.trim();
     if ((!question && !selectedFile) || loading) return;

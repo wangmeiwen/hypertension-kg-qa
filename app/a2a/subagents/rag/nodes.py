@@ -14,6 +14,7 @@ def _build_query_records(
     query_statements: list[dict[str, Any]],
     tool_results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """将 RAG 工具命中结果整理成统一 query_records 结构。"""
     records: list[dict[str, Any]] = []
     for index, statement in enumerate(query_statements):
         if not isinstance(statement, dict):

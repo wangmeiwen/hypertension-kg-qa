@@ -17,6 +17,7 @@ import {
 } from "./api";
 import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "./KnowledgeGraphCanvas";
 
+// 模块职责：提供图谱后台管理能力（节点、关系、查询、导入和嵌入）。
 export default function GraphManager() {
   // 状态管理
   const [labels, setLabels] = useState([]);
@@ -110,6 +111,7 @@ export default function GraphManager() {
     }
   }
 
+  // 拉取图谱预览数据，供画布快速浏览使用。
   async function loadGraphPreview(nextKeyword = searchKeyword, nextLimit = graphLimit) {
     setGraphPreviewLoading(true);
     try {
@@ -322,17 +324,20 @@ export default function GraphManager() {
     });
   }
 
+  // 打开文件抽取入图谱弹窗并重置状态。
   function openImportModal() {
     setSelectedImportFile(null);
     setImportResult(null);
     setShowImportModal(true);
   }
 
+  // 处理抽取入图谱的本地文件选择。
   function handleImportFileChange(e) {
     const file = e.target.files[0];
     setSelectedImportFile(file || null);
   }
 
+  // 执行文档抽取并写入图谱流程。
   async function handleExtractAndImport(e) {
     e.preventDefault();
     if (!selectedImportFile) {
@@ -412,6 +417,7 @@ export default function GraphManager() {
 
   const totalPages = Math.ceil(totalNodes / pageSize);
 
+  // 切换图谱预览返回数量并刷新预览。
   function handleGraphLimitChange(event) {
     const nextLimit = Number(event.target.value);
     setGraphLimit(nextLimit);

@@ -13,6 +13,7 @@ import {
 import GraphManager from "./GraphManager";
 import DoclingParser from "./DoclingParser";
 
+// 模块职责：管理员后台总面板，包含会话管理、Agent观测、图谱管理和 Docling 入口。
 export default function AdminDashboard({ onLogout }) {
   const [sessions, setSessions] = useState([]);
   const [total, setTotal] = useState(0);
@@ -59,6 +60,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   }, [activeTab]);
 
+  // 加载会话列表和基础统计信息。
   const loadData = async () => {
     setLoading(true);
     setError("");
@@ -80,6 +82,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  // 加载 Agent 观测汇总与最近运行记录。
   const loadAgentObservability = async () => {
     setAgentObsLoading(true);
     try {
@@ -99,6 +102,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  // 拉取后端 readiness 状态并更新状态条。
   const loadReadiness = async () => {
     setReadinessLoading(true);
     setReadinessError("");
@@ -112,6 +116,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  // 查看会话详情：同时拉取消息和流转观测数据。
   const handleViewSession = async (session) => {
     try {
       const [messageData, observabilityData] = await Promise.all([
@@ -130,6 +135,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  // 删除指定会话并在详情面板中同步移除。
   const handleDeleteSession = async (sessionId) => {
     if (!confirm("确定要删除这个会话吗？此操作不可恢复。")) return;
     try {
@@ -145,6 +151,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  // 清空指定会话历史消息。
   const handleClearSessionHistory = async (sessionId) => {
     if (!confirm("确定要清空这个会话的历史记录吗？此操作会删除全部消息内容。")) return;
     try {
@@ -158,11 +165,13 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  // 统一格式化完整时间。
   const formatTime = (timestamp) => {
     if (!timestamp) return "-";
     return new Date(timestamp).toLocaleString("zh-CN");
   };
 
+  // 格式化事件时间，仅展示时分秒。
   const formatEventTime = (timestamp) => {
     if (!timestamp) return "-";
     const date = new Date(timestamp);
@@ -175,6 +184,7 @@ export default function AdminDashboard({ onLogout }) {
     });
   };
 
+  // 截断过长文本用于表格展示。
   const truncateText = (text, maxLength = 50) => {
     if (!text) return "";
     return text.length > maxLength ? text.slice(0, maxLength) + "..." : text;
@@ -183,10 +193,12 @@ export default function AdminDashboard({ onLogout }) {
   const selectedTurn = sessionObservability.find((turn) => turn.turn_id === selectedTurnId) || sessionObservability[0] || null;
   const flowLaneNames = ["主控编排", "图谱代理", "检索代理", "外部资源"];
 
+  // 切换某个可展开文本块的展开状态。
   const toggleExpandedText = (key) => {
     setExpandedTextMap((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // 渲染可展开文本，避免长文本挤压布局。
   const renderExpandableText = (text, key, maxLength = 160) => {
     const value = String(text || "");
     if (!value) {
@@ -207,6 +219,7 @@ export default function AdminDashboard({ onLogout }) {
     );
   };
 
+  // 将列表型观测数据逐行渲染为可读内容。
   const renderListLines = (items, prefix) => {
     if (!Array.isArray(items) || items.length === 0) {
       return <div className="empty-messages">该阶段没有可用观测数据</div>;
@@ -218,6 +231,7 @@ export default function AdminDashboard({ onLogout }) {
     ));
   };
 
+  // 将错误类型计数字典格式化为一行文本。
   const formatErrorTypes = (errors) => {
     if (!errors || Object.keys(errors).length === 0) {
       return "-";
@@ -258,6 +272,7 @@ export default function AdminDashboard({ onLogout }) {
     }, {})
   ).sort((a, b) => String(b.latest_timestamp || "").localeCompare(String(a.latest_timestamp || "")));
 
+  // 渲染事件详情中的单个字段块。
   const renderDetailField = (label, value, key) => (
     <div className="event-detail-field" key={key}>
       <div className="event-detail-label">{label}</div>
@@ -265,6 +280,7 @@ export default function AdminDashboard({ onLogout }) {
     </div>
   );
 
+  // 渲染会话元信息项。
   const renderSessionMetaItem = (label, value) => (
     <div className="session-meta-item" key={label}>
       <div className="session-meta-label">{label}</div>

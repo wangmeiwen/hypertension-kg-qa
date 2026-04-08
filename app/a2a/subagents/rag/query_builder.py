@@ -8,6 +8,7 @@ from app.common.config import Config
 
 
 def _normalize_query_terms(query_terms: list[str] | None) -> list[str]:
+    """标准化 query_terms，去空并去重。"""
     if not isinstance(query_terms, list):
         return []
     seen: set[str] = set()
@@ -22,12 +23,14 @@ def _normalize_query_terms(query_terms: list[str] | None) -> list[str]:
 
 
 def _normalize_refine_terms(arguments: dict[str, Any]) -> list[str]:
+    """从参数中提取 refine_terms 并转为规范列表。"""
     if not isinstance(arguments, dict):
         return []
     return _normalize_query_terms(arguments.get("refine_terms") if isinstance(arguments.get("refine_terms"), list) else [])
 
 
 def _compose_query(question: str, query_terms: list[str], refine_terms: list[str]) -> str:
+    """组合最终 RAG 查询文本，支持问句、扩展词和细化词。"""
     base = str(question or "").strip()
     if not base and query_terms:
         base = " ".join(query_terms)

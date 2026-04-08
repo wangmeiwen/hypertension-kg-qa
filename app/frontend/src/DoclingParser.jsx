@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { doclingParseDocument, doclingParseAndEmbed } from "./api";
 
+// 模块职责：提供 Docling 文档解析入口，支持仅解析与解析后嵌入两种流程。
 export default function DoclingParser() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [parsing, setParsing] = useState(false);
@@ -15,6 +16,7 @@ export default function DoclingParser() {
     ".jpg", ".jpeg", ".png"
   ];
 
+  // 校验用户选择文件格式并重置结果状态。
   function handleFileSelect(e) {
     const file = e.target.files[0];
     if (file) {
@@ -30,6 +32,7 @@ export default function DoclingParser() {
     }
   }
 
+  // 执行纯解析流程，返回文本和结构化元数据。
   async function handleParse() {
     if (!selectedFile) return;
     setParsing(true);
@@ -44,6 +47,7 @@ export default function DoclingParser() {
     }
   }
 
+  // 执行解析并嵌入流程，解析结果直接进入向量检索链路。
   async function handleParseAndEmbed() {
     if (!selectedFile) return;
     setEmbedding(true);

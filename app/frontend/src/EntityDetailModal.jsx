@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getEntityDetail } from "./api";
 
+// 模块职责：展示单个实体的属性、入边关系和出边关系。
 export default function EntityDetailModal({ entityId, onClose }) {
   const [entityData, setEntityData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -13,6 +14,7 @@ export default function EntityDetailModal({ entityId, onClose }) {
     }
   }, [entityId]);
 
+  // 拉取实体详情并更新弹窗数据状态。
   const loadEntityDetail = async () => {
     setLoading(true);
     setError("");
@@ -26,6 +28,7 @@ export default function EntityDetailModal({ entityId, onClose }) {
     }
   };
 
+  // 根据实体标签返回展示色。
   const getLabelColor = (label) => {
     const colors = {
       "Disease": "#ef4444",

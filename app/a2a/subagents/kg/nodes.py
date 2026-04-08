@@ -18,6 +18,7 @@ def _build_query_records(
     query_statements: list[dict[str, Any]],
     tool_results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """将工具原始结果整理为统一 query_records 结构，供主控复用。"""
     records: list[dict[str, Any]] = []
     for index, statement in enumerate(query_statements):
         if not isinstance(statement, dict):

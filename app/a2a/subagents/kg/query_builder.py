@@ -20,6 +20,7 @@ def _clean_question(text: str) -> str:
 
 
 def _normalize_query_terms(query_terms: list[str] | None) -> list[str]:
+    """标准化 query_terms，去空、去重并保持原顺序。"""
     if not isinstance(query_terms, list):
         return []
     seen: set[str] = set()
@@ -34,6 +35,7 @@ def _normalize_query_terms(query_terms: list[str] | None) -> list[str]:
 
 
 def _fallback_query_from_terms(question: str, query_terms: list[str]) -> str:
+    """在问题为空时使用 query_terms 回退构造查询文本。"""
     if question:
         return question
     if query_terms:
@@ -42,12 +44,14 @@ def _fallback_query_from_terms(question: str, query_terms: list[str]) -> str:
 
 
 def _normalize_refine_terms(arguments: dict[str, Any]) -> list[str]:
+    """从 arguments 中提取并标准化 refine_terms。"""
     if not isinstance(arguments, dict):
         return []
     return _normalize_query_terms(arguments.get("refine_terms") if isinstance(arguments.get("refine_terms"), list) else [])
 
 
 def _append_refine_terms(base_query: str, refine_terms: list[str]) -> str:
+    """将 refine_terms 追加到基础查询文本。"""
     if not refine_terms:
         return str(base_query or "").strip()
     base = str(base_query or "").strip()

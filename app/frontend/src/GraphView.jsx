@@ -3,6 +3,7 @@ import { fetchGraph } from "./api";
 import EntityDetailModal from "./EntityDetailModal";
 import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "./KnowledgeGraphCanvas";
 
+// 模块职责：承载图谱浏览页面，负责查询条件、画布展示和实体详情弹窗联动。
 export default function GraphView() {
   const [keyword, setKeyword] = useState("");
   const [limit, setLimit] = useState(DEFAULT_GRAPH_LIMIT);
@@ -13,6 +14,7 @@ export default function GraphView() {
   const [showDetail, setShowDetail] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState(null);
 
+  // 按关键词和数量拉取图谱数据，并重置当前选中节点。
   const loadGraph = async (nextKeyword = keyword, nextLimit = limit) => {
     setLoading(true);
     setError("");
@@ -36,17 +38,20 @@ export default function GraphView() {
     return `接口返回 ${graph.nodes.length} 个节点 / ${graph.links.length} 条关系`;
   }, [graph.links.length, graph.nodes.length]);
 
+  // 切换返回数量并立即刷新图谱。
   const handleLimitChange = (event) => {
     const nextLimit = Number(event.target.value);
     setLimit(nextLimit);
     loadGraph(keyword, nextLimit);
   };
 
+  // 打开实体详情弹窗。
   const handleOpenDetail = (entityId) => {
     setSelectedEntityId(entityId);
     setShowDetail(true);
   };
 
+  // 关闭实体详情弹窗并清理选中实体。
   const handleCloseDetail = () => {
     setShowDetail(false);
     setSelectedEntityId(null);

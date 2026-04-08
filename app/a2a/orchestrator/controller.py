@@ -21,10 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 def _sanitize_text(value: Any, max_len: int = 800) -> str:
+    """清洗文本并截断到指定长度。"""
     return str(value or "").replace("\n", " ").strip()[:max_len]
 
 
 def _safe_json(value: Any, max_len: int = 2400) -> str:
+    """将任意对象安全序列化为 JSON 文本，失败时降级为字符串。"""
     try:
         text = json.dumps(value, ensure_ascii=False)
     except (TypeError, ValueError):
@@ -33,6 +35,7 @@ def _safe_json(value: Any, max_len: int = 2400) -> str:
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
+    """从模型输出中提取首个 JSON 对象。"""
     raw = str(text or "").strip()
     if not raw:
         return {}
@@ -52,10 +55,12 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
+    """将输入转换为字典，不可转换时返回空字典。"""
     return value if isinstance(value, dict) else {}
 
 
 def _coerce_list(value: Any) -> list[Any]:
+    """将输入转换为列表，不可转换时返回空列表。"""
     return value if isinstance(value, list) else []
 
 
@@ -77,12 +82,14 @@ class UnifiedOrchestratorController:
         llm_client: LLMClient | None = None,
         mcp_gateway: MCPToolGateway | None = None,
     ) -> None:
+        """初始化主控，注入 LLM、子代理客户端与 MCP 网关。"""
         self._conf = conf if conf is not None else Config()
         self._client = llm_client if llm_client is not None else LLMClient(self._conf)
         self._subagent_client = subagent_client
         self._mcp_gateway = mcp_gateway if mcp_gateway is not None else MCPToolGateway(agent_type="orchestrator")
 
     def _build_system_prompt(self) -> str:
+        """构建主控决策提示词。"""
         return (
             "你是高血压问答系统的主控agent。\n"
             "你的职责是基于当前用户问题、会话问答记忆、历史检索问题索引，以及已经拿到的工具结果，自主决定下一步动作。\n"
@@ -108,6 +115,7 @@ class UnifiedOrchestratorController:
         )
 
     def _build_compression_system_prompt(self) -> str:
+        """构建主控提示词压缩器系统提示词。"""
         return (
             "你是主控提示词压缩器。\n"
             "你的任务是根据当前问题，压缩会话问答记忆、历史检索问题索引和工具结果，只保留与当前问题高度相关的内容。\n"
@@ -146,6 +154,7 @@ class UnifiedOrchestratorController:
         )
 
     def _summarize_observation_result(self, row: dict[str, Any]) -> str:
+        """提取单条工具观测结果的摘要文本。"""
         result_obj = _coerce_dict(row.get("result"))
         result_payload = _coerce_dict(result_obj.get("result"))
         return _sanitize_text(
@@ -158,6 +167,7 @@ class UnifiedOrchestratorController:
         )
 
     def _build_observation_lines(self, tool_observations: list[dict[str, Any]]) -> list[str]:
+        """将工具观测列表转为主控提示词可读行。"""
         if not tool_observations:
             return ["当前还没有新的工具结果。"]
         lines: list[str] = []
@@ -173,6 +183,7 @@ class UnifiedOrchestratorController:
         return lines or ["当前还没有新的工具结果。"]
 
     def _count_prompt_tokens(self, messages: list[dict[str, Any]]) -> int:
+        """使用 jieba 统计提示词分词数。"""
         if jieba is None:
             raise RuntimeError("jieba_not_installed")
         text = "\n".join(_sanitize_text(_coerce_dict(row).get("content"), 200000) for row in messages)
@@ -181,6 +192,7 @@ class UnifiedOrchestratorController:
         return sum(1 for token in jieba.lcut(text) if str(token).strip())
 
     def _normalize_query_record(self, row: Any, default_agent: str = "unknown") -> dict[str, Any] | None:
+        """标准化单条 query_record，缺关键字段时返回 None。"""
         if not isinstance(row, dict):
             return None
         query = _sanitize_text(row.get("query"), 300)
@@ -201,6 +213,7 @@ class UnifiedOrchestratorController:
         }
 
     def _normalize_compressed_tool_observations(self, rows: Any) -> list[dict[str, Any]]:
+        """规范化压缩器返回的工具观测数据结构。"""
         if not isinstance(rows, list):
             return []
         normalized_rows: list[dict[str, Any]] = []
@@ -248,6 +261,7 @@ class UnifiedOrchestratorController:
         return normalized_rows
 
     def _compact_tool_observations_for_compression(self, tool_observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """裁剪工具观测字段，生成压缩器输入。"""
         compact_rows: list[dict[str, Any]] = []
         for row in tool_observations[-8:]:
             if not isinstance(row, dict):
@@ -285,6 +299,7 @@ class UnifiedOrchestratorController:
         tool_observations: list[dict[str, Any]],
         compression_count: int,
     ) -> str:
+        """构建压缩器用户提示词。"""
         return (
             "请根据当前问题压缩主控提示词里的动态内容。\n"
             "压缩后不能改变主控 prompt 的 section 结构，只能缩短其中内容。\n"
@@ -313,6 +328,7 @@ class UnifiedOrchestratorController:
         max_turns: int,
         force_final: bool = False,
     ) -> str:
+        """构建主控当前轮次的用户提示词。"""
         observation_lines = self._build_observation_lines(tool_observations)
         final_rule = (
             "本轮必须输出 final_answer。"
@@ -340,6 +356,7 @@ class UnifiedOrchestratorController:
         tool_observations: list[dict[str, Any]],
         compression_count: int,
     ) -> tuple[dict[str, Any], dict[str, int]]:
+        """调用压缩器模型压缩记忆与工具观测内容。"""
         messages = [
             {"role": "system", "content": self._build_compression_system_prompt()},
             {
@@ -384,6 +401,7 @@ class UnifiedOrchestratorController:
         processing_steps: list[str],
         progress_callback: Callable[[dict[str, Any]], None] | None,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """在预算约束下构建主控决策消息，必要时执行压缩。"""
         current_qa_memory_text = str(qa_memory_text or "当前暂无问答对")
         current_retrieval_index_text = str(retrieval_index_text or "当前暂无历史检索问题")
         current_tool_observations = tool_observations if isinstance(tool_observations, list) else []
@@ -523,6 +541,7 @@ class UnifiedOrchestratorController:
         processing_steps: list[str],
         progress_callback: Callable[[dict[str, Any]], None] | None,
     ) -> tuple[dict[str, Any], dict[str, int]]:
+        """调用主控模型生成下一步动作，并汇总 token 统计。"""
         messages, compression_tokens = await self._prepare_budgeted_messages(
             question=question,
             session_id=session_id,
@@ -549,6 +568,7 @@ class UnifiedOrchestratorController:
         return parsed, tokens
 
     def _build_history_observation(self, action: dict[str, Any], tool_result: dict[str, Any]) -> dict[str, Any]:
+        """将 history_read 工具结果包装成统一观测结构。"""
         payload = _coerce_dict(tool_result.get("result"))
         return {
             "agent": "history",
@@ -578,6 +598,7 @@ class UnifiedOrchestratorController:
         }
 
     def _build_subagent_observation(self, result: Any, action: dict[str, Any]) -> dict[str, Any]:
+        """将子代理结果包装成主控统一观测结构。"""
         query_records = result.query_records if isinstance(result.query_records, list) else []
         return {
             "agent": str(result.target_agent or ""),
@@ -609,6 +630,7 @@ class UnifiedOrchestratorController:
         default_question: str,
         max_tool_calls: int,
     ) -> SubTask:
+        """根据主控动作构建子代理任务对象。"""
         target_agent = "kg" if str(action.get("action") or "") == "call_kg" else "rag"
         requested_tool_name = _sanitize_text(action.get("tool_name"), 64)
         if target_agent == "kg":
@@ -632,6 +654,7 @@ class UnifiedOrchestratorController:
         )
 
     def _build_evidence_summary(self, tool_observations: list[dict[str, Any]]) -> dict[str, Any]:
+        """汇总工具观测中的证据覆盖信息。"""
         query_records: list[dict[str, Any]] = []
         covered_topics: list[str] = []
         for row in tool_observations:
@@ -657,6 +680,7 @@ class UnifiedOrchestratorController:
         }
 
     def _build_budget_telemetry(self, compression_state: dict[str, Any]) -> dict[str, Any]:
+        """构建提示词预算相关观测字段。"""
         compression_events = compression_state.get("compression_events")
         return {
             "prompt_budget_limit": int(compression_state.get("prompt_budget_limit") or self._PROMPT_TOKEN_LIMIT),
@@ -681,6 +705,7 @@ class UnifiedOrchestratorController:
         total_tokens: int,
         compression_state: dict[str, Any],
     ) -> dict[str, Any]:
+        """构建超预算中止场景的统一返回结构。"""
         evidence_summary = self._build_evidence_summary(tool_observations)
         evidence_summary["answer_mode"] = "aborted_over_budget"
         return {
@@ -711,6 +736,7 @@ class UnifiedOrchestratorController:
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        """执行主控决策循环，直到终答或触发保护性中止。"""
         _ = user_id
         safe_question = str(input_text or "").strip()
         safe_session_id = str(session_id or "").strip()

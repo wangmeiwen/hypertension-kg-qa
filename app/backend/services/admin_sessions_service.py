@@ -117,6 +117,7 @@ class AdminSessionsService:
 
     @staticmethod
     def _normalize_controller_mode(value: Any) -> str:
+        """规范化主控模式标识，兜底为显式记忆主控。"""
         token = str(value or "").strip()
         if token == "explicit_memory_with_history_read":
             return "explicit_memory_with_history_read"
@@ -124,6 +125,7 @@ class AdminSessionsService:
 
     @staticmethod
     def _controller_mode_label(value: Any) -> str:
+        """将主控模式标识转换为可展示中文标签。"""
         token = AdminSessionsService._normalize_controller_mode(value)
         if token == "explicit_memory_with_history_read":
             return "显式记忆主控"

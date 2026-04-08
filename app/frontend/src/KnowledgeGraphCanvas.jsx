@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { forceCollide, forceX, forceY } from "d3-force-3d";
 
+// 模块职责：对图谱数据进行预处理、采样和布局，再通过 ForceGraph2D 渲染可交互画布。
 export const DEFAULT_GRAPH_LIMIT = 80;
 export const GRAPH_LIMIT_OPTIONS = [50, 80, 150, 250];
 
@@ -17,10 +18,12 @@ const NODE_COLORS = {
   Entity: "#6b7280"
 };
 
+// 根据节点标签返回颜色，未知标签回退到 Entity 色。
 function getGraphNodeColor(label) {
   return NODE_COLORS[label] || NODE_COLORS.Entity;
 }
 
+// 兼容 link 两端为对象或原始值两种数据格式，统一成字符串 ID。
 function getEndpointId(endpoint) {
   if (endpoint && typeof endpoint === "object") {
     return String(endpoint.id);
@@ -28,15 +31,18 @@ function getEndpointId(endpoint) {
   return String(endpoint);
 }
 
+// 截断过长标签，避免画布文字重叠严重。
 function truncateLabel(label) {
   const text = String(label || "");
   return text.length > LABEL_KEEP_LENGTH ? `${text.slice(0, LABEL_KEEP_LENGTH)}...` : text;
 }
 
+// 提取节点显示名称，按字段优先级兜底。
 function getNodeName(node) {
   return node?.name || node?.properties?.name || node?.properties?.title || node?.id || "";
 }
 
+// 提取节点标签，优先使用 labels[0]。
 function getNodeLabel(node) {
   if (Array.isArray(node?.labels) && node.labels.length > 0) {
     return node.labels[0];
@@ -44,6 +50,7 @@ function getNodeLabel(node) {
   return node?.label || "Entity";
 }
 
+// 根据无向边构建邻接表，用于邻居高亮和连通分量分析。
 function buildAdjacency(nodes, links) {
   const adjacency = new Map(nodes.map((node) => [String(node.id), new Set()]));
   for (const link of links) {
@@ -58,6 +65,7 @@ function buildAdjacency(nodes, links) {
   return adjacency;
 }
 
+// 通过 BFS 计算连通分量，并按分量大小降序返回。
 function getConnectedComponents(nodes, links) {
   const adjacency = buildAdjacency(nodes, links);
   const seen = new Set();
@@ -90,6 +98,7 @@ function getConnectedComponents(nodes, links) {
   return components.sort((a, b) => b.length - a.length);
 }
 
+// 按标签做一跳邻域筛选：保留命中节点和其直接邻居。
 function filterByLabelNeighborhood(nodes, links, labelFilter) {
   if (!labelFilter) {
     return { nodes, links };
@@ -120,6 +129,7 @@ function filterByLabelNeighborhood(nodes, links, labelFilter) {
   };
 }
 
+// 在节点过多时进行分量内轮询采样，尽量保留结构代表性。
 function sampleGraph(nodes, links, maxNodes) {
   if (nodes.length <= maxNodes) {
     return { nodes, links, truncated: false };
@@ -165,6 +175,7 @@ function sampleGraph(nodes, links, maxNodes) {
   };
 }
 
+// 给节点预置初始坐标，降低力导布局初始重叠。
 function seedNodePositions(nodes, links) {
   const components = getConnectedComponents(nodes, links);
   const componentCount = Math.max(components.length, 1);
@@ -193,6 +204,7 @@ function seedNodePositions(nodes, links) {
   return seeded;
 }
 
+// 统一执行图谱标准化、标签筛选、采样和初始坐标注入。
 function prepareGraph(rawGraph, { labelFilter = "", maxNodes = GRAPH_RENDER_LIMIT } = {}) {
   const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
   const rawLinks = Array.isArray(rawGraph?.links) ? rawGraph.links : [];
@@ -227,6 +239,7 @@ function prepareGraph(rawGraph, { labelFilter = "", maxNodes = GRAPH_RENDER_LIMI
   };
 }
 
+// 图谱画布组件：支持标签筛选、节点高亮、邻居聚焦和详情打开。
 export default function KnowledgeGraphCanvas({
   graph,
   className = "",
@@ -302,10 +315,12 @@ export default function KnowledgeGraphCanvas({
     return () => window.clearTimeout(fitTimer);
   }, [degree, prepared.graphData]);
 
+  // 让画布自动缩放到当前图谱边界。
   const handleFitView = () => {
     graphRef.current?.zoomToFit?.(650, 24);
   };
 
+  // 判断当前节点是否需要显示文字标签。
   const shouldShowLabel = (node) => {
     const nodeId = String(node.id);
     if (showAllLabels) {
@@ -317,6 +332,7 @@ export default function KnowledgeGraphCanvas({
     return nodeId === focusId || focusNeighbors.has(nodeId);
   };
 
+  // 聚焦状态下，非焦点和非邻居节点降亮度。
   const isDimmed = (nodeId) => {
     if (!focusId) {
       return false;
@@ -324,6 +340,7 @@ export default function KnowledgeGraphCanvas({
     return nodeId !== focusId && !focusNeighbors.has(nodeId);
   };
 
+  // 自定义节点绘制：节点圆点、选中描边、标签底板与文字。
   const renderNode = (node, ctx, globalScale) => {
     const nodeId = String(node.id);
     const isSelected = selectedId === nodeId;
@@ -363,6 +380,7 @@ export default function KnowledgeGraphCanvas({
     ctx.globalAlpha = 1;
   };
 
+  // 扩大节点的 pointer 热区，提升鼠标命中体验。
   const renderPointerArea = (node, color, ctx) => {
     ctx.fillStyle = color;
     ctx.beginPath();

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { listSessions, deleteSession, createSession } from "./api";
 
+// 模块职责：管理左侧会话列表，提供新建、切换和删除会话入口。
 export default function SessionSidebar({
   userId,
   currentSessionId,
@@ -15,6 +16,7 @@ export default function SessionSidebar({
   const [editTitle, setEditTitle] = useState("");
   const [isCollapsed, setIsCollapsed] = useState(false);
 
+  // 拉取当前用户的会话列表。
   const loadSessions = useCallback(async () => {
     if (!userId) return;
     setLoading(true);
@@ -34,6 +36,7 @@ export default function SessionSidebar({
     loadSessions();
   }, [loadSessions]);
 
+  // 创建新会话并插入到列表顶部。
   const handleCreateSession = async () => {
     try {
       const session = await createSession(userId, "新会话");
@@ -45,6 +48,7 @@ export default function SessionSidebar({
     }
   };
 
+  // 删除会话并在必要时清理当前选中状态。
   const handleDeleteSession = async (e, sessionId) => {
     e.stopPropagation();
     if (!confirm("确定要删除这个会话吗？")) return;
@@ -61,6 +65,7 @@ export default function SessionSidebar({
     }
   };
 
+  // 将时间戳格式化为“刚刚/几小时前/日期”形式。
   const formatTime = (timestamp) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -83,6 +88,7 @@ export default function SessionSidebar({
     });
   };
 
+  // 截断过长会话标题，保证列表排版稳定。
   const truncateTitle = (title, maxLength = 20) => {
     if (!title) return "新会话";
     return title.length > maxLength ? title.slice(0, maxLength) + "..." : title;

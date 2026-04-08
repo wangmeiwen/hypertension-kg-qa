@@ -13,15 +13,18 @@ class OrchestratorExecutor:
     """执行新的统一主控决策循环。"""
 
     def __init__(self, subagent_client: SubAgentClientFactory):
+        """初始化执行器并绑定主控控制器与配置。"""
         self.subagent_client = subagent_client
         self.conf = Config()
         self.controller = UnifiedOrchestratorController(subagent_client, conf=self.conf)
 
     @staticmethod
     def _clamp_positive(value: int, lower: int, upper: int) -> int:
+        """将数值限制在正向闭区间内。"""
         return max(int(lower), min(int(value), int(upper)))
 
     def _resolve_max_turns(self, max_turns: int | None) -> int:
+        """解析本轮可用最大轮次，优先用户输入并应用上下界。"""
         default_turns = int(self.conf.A2A_ORCHESTRATOR_MAX_TURNS_DEFAULT)
         max_limit = int(self.conf.A2A_ORCHESTRATOR_MAX_TURNS_MAX)
         if isinstance(max_turns, int) and max_turns > 0:
@@ -41,6 +44,7 @@ class OrchestratorExecutor:
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        """执行统一主控循环并返回最终编排结果。"""
         _ = trace_id
         _ = strategy
         _ = original_input_text

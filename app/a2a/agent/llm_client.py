@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _hash_payload(payload: Any) -> str:
+    """计算请求载荷哈希，便于日志比对与去重排查。"""
     try:
         text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     except (TypeError, ValueError):
@@ -39,6 +40,7 @@ def _hash_payload(payload: Any) -> str:
 
 
 def _compact_payload(payload: Any, max_chars: int = 300) -> str:
+    """将载荷压缩为短文本，避免日志过大。"""
     try:
         text = json.dumps(payload, ensure_ascii=False)
     except (TypeError, ValueError):
@@ -49,6 +51,7 @@ def _compact_payload(payload: Any, max_chars: int = 300) -> str:
 
 
 def _log_server_llm_event(event: str, payload: dict[str, Any]) -> None:
+    """记录标准化 LLM 服务端事件日志。"""
     logger.info(
         "llm_server_event %s",
         json.dumps(

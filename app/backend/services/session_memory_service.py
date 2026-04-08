@@ -35,6 +35,7 @@ class SessionMemoryService:
 
     @staticmethod
     def _to_int(value: Any, default: int = 0) -> int:
+        """安全转整型，失败时回退默认值。"""
         try:
             return int(value)
         except (TypeError, ValueError):
@@ -42,9 +43,11 @@ class SessionMemoryService:
 
     @staticmethod
     def _sanitize_text(value: Any, max_len: int) -> str:
+        """清洗文本并按上限截断。"""
         return str(value or "").replace("\n", " ").strip()[:max_len]
 
     def _sanitize_list(self, value: Any, *, max_items: int, max_len: int) -> list[str]:
+        """规范化字符串列表，去重并限制长度与数量。"""
         if not isinstance(value, list):
             return []
         rows: list[str] = []
@@ -60,6 +63,7 @@ class SessionMemoryService:
         return rows
 
     def _empty_qa_memory(self, last_message_id: int = 0) -> QAMemorySnapshot:
+        """构造空的问答记忆快照。"""
         return {
             "version": 2,
             "last_message_id": max(0, int(last_message_id or 0)),
@@ -67,6 +71,7 @@ class SessionMemoryService:
         }
 
     def _empty_retrieval_memory(self, last_message_id: int = 0) -> RetrievalMemorySnapshot:
+        """构造空的检索历史记忆快照。"""
         return {
             "version": 2,
             "last_message_id": max(0, int(last_message_id or 0)),
@@ -74,6 +79,7 @@ class SessionMemoryService:
         }
 
     def _empty_snapshot(self, last_message_id: int = 0, updated_at: str = "") -> SessionMemorySnapshot:
+        """构造空的会话记忆总快照。"""
         return {
             "qa_memory": self._empty_qa_memory(last_message_id),
             "retrieval_memory": self._empty_retrieval_memory(last_message_id),
@@ -81,6 +87,7 @@ class SessionMemoryService:
         }
 
     def _sanitize_qa_entry(self, row: Any) -> QAMemoryEntry | None:
+        """标准化单条问答记忆记录。"""
         if not isinstance(row, dict):
             return None
         question = self._sanitize_text(row.get("user_question"), self._QUESTION_MAX_LEN)
@@ -96,6 +103,7 @@ class SessionMemoryService:
         }
 
     def _sanitize_qa_memory(self, data: Any) -> QAMemorySnapshot:
+        """标准化问答记忆对象并应用窗口裁剪。"""
         source = data if isinstance(data, dict) else {}
         rows: list[QAMemoryEntry] = []
         for item in source.get("qa_pairs") if isinstance(source.get("qa_pairs"), list) else []:
@@ -109,6 +117,7 @@ class SessionMemoryService:
         }
 
     def _sanitize_retrieval_record(self, row: Any) -> RetrievalRecord | None:
+        """标准化单条检索记录。"""
         if not isinstance(row, dict):
             return None
         query = self._sanitize_text(row.get("query"), self._QUESTION_MAX_LEN)
@@ -124,6 +133,7 @@ class SessionMemoryService:
         }
 
     def _sanitize_retrieval_entry(self, row: Any) -> RetrievalHistoryEntry | None:
+        """标准化单条历史检索问题记录。"""
         if not isinstance(row, dict):
             return None
         history_id = self._sanitize_text(row.get("history_id"), 64)
@@ -149,6 +159,7 @@ class SessionMemoryService:
         }
 
     def _sanitize_retrieval_memory(self, data: Any) -> RetrievalMemorySnapshot:
+        """标准化检索记忆对象并限制历史长度。"""
         source = data if isinstance(data, dict) else {}
         rows: list[RetrievalHistoryEntry] = []
         for item in source.get("questions") if isinstance(source.get("questions"), list) else []:
@@ -162,6 +173,7 @@ class SessionMemoryService:
         }
 
     def _parse_qa_memory(self, raw: str) -> QAMemorySnapshot:
+        """解析并清洗数据库中的问答记忆 JSON 文本。"""
         text = str(raw or "").strip()
         if not text:
             return self._empty_qa_memory()
@@ -172,6 +184,7 @@ class SessionMemoryService:
         return self._sanitize_qa_memory(data)
 
     def _parse_retrieval_memory(self, raw: str) -> RetrievalMemorySnapshot:
+        """解析并清洗数据库中的检索记忆 JSON 文本。"""
         text = str(raw or "").strip()
         if not text:
             return self._empty_retrieval_memory()
@@ -182,6 +195,7 @@ class SessionMemoryService:
         return self._sanitize_retrieval_memory(data)
 
     async def _load_memory_row(self, session_id: str) -> dict[str, Any] | None:
+        """读取会话记忆原始数据库行。"""
         row = await fetch_one(
             """
             SELECT summary_text, retrieval_summary_text, updated_at
@@ -193,6 +207,7 @@ class SessionMemoryService:
         return row if isinstance(row, dict) else None
 
     async def _get_messages(self, session_id: str) -> list[dict[str, Any]]:
+        """读取会话全部消息并转换为统一结构。"""
         rows = await fetch_all(
             """
             SELECT id, role, content, think_content, created_at
@@ -216,6 +231,7 @@ class SessionMemoryService:
         return output
 
     def _build_qa_pairs_from_messages(self, messages: list[dict[str, Any]]) -> QAMemorySnapshot:
+        """从消息序列重建最近问答对记忆。"""
         pending_users: list[dict[str, Any]] = []
         pairs: list[QAMemoryEntry] = []
         last_message_id = 0
@@ -252,6 +268,7 @@ class SessionMemoryService:
         }
 
     def _build_retrieval_question_index(self, retrieval_memory: RetrievalMemorySnapshot) -> list[dict[str, object]]:
+        """从检索记忆构建轻量问题索引。"""
         rows: list[dict[str, object]] = []
         for item in retrieval_memory.get("questions", []):
             if not isinstance(item, dict):
@@ -269,6 +286,7 @@ class SessionMemoryService:
         return rows[-self._RETRIEVAL_HISTORY_LIMIT :]
 
     def _format_qa_memory_text(self, qa_memory: QAMemorySnapshot) -> str:
+        """将问答记忆快照格式化为提示词文本。"""
         rows = qa_memory.get("qa_pairs") if isinstance(qa_memory.get("qa_pairs"), list) else []
         if not rows:
             return "当前暂无问答对"
@@ -282,6 +300,7 @@ class SessionMemoryService:
         return "\n".join(parts) if parts else "当前暂无问答对"
 
     def _format_retrieval_question_index_text(self, rows: list[dict[str, object]]) -> str:
+        """将检索问题索引格式化为提示词文本。"""
         if not rows:
             return "当前暂无历史检索问题"
         output: list[str] = []
@@ -296,9 +315,11 @@ class SessionMemoryService:
         return "\n".join(output)
 
     def _build_history_id(self, user_message_id: int, assistant_message_id: int) -> str:
+        """根据消息 ID 生成稳定历史检索记录 ID。"""
         return f"h-{max(0, int(user_message_id or 0))}-{max(0, int(assistant_message_id or 0))}"
 
     def _sanitize_query_records(self, rows: Any) -> list[RetrievalRecord]:
+        """批量清洗 query_records。"""
         if not isinstance(rows, list):
             return []
         records: list[RetrievalRecord] = []
@@ -318,6 +339,7 @@ class SessionMemoryService:
         query_records: list[RetrievalRecord],
         captured_at: str,
     ) -> RetrievalMemorySnapshot:
+        """将当前轮检索结果追加到检索记忆。"""
         if not query_records:
             return retrieval_memory
         questions = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []
@@ -340,6 +362,7 @@ class SessionMemoryService:
         }
 
     async def load_memory(self, session_id: str) -> SessionMemorySnapshot:
+        """加载并返回会话记忆快照。"""
         row = await self._load_memory_row(session_id)
         if not row:
             return self._empty_snapshot()
@@ -352,6 +375,7 @@ class SessionMemoryService:
         }
 
     async def save_memory(self, session_id: str, snapshot: SessionMemorySnapshot) -> None:
+        """将会话记忆快照写回数据库。"""
         qa_memory = self._sanitize_qa_memory(snapshot.get("qa_memory"))
         retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
         await SessionMemoryManager.upsert_summary(
@@ -364,9 +388,11 @@ class SessionMemoryService:
         )
 
     async def clear_memory(self, session_id: str) -> None:
+        """清空指定会话的记忆数据。"""
         await SessionMemoryManager.clear_summary(str(session_id or ""))
 
     async def ensure_memory_current(self, session_id: str, current_message_id: int) -> SessionMemorySnapshot:
+        """基于最新消息重建问答记忆并合并已有检索记忆。"""
         snapshot = await self.load_memory(session_id)
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
@@ -383,6 +409,7 @@ class SessionMemoryService:
         input_text: str,
         current_message_id: int,
     ) -> RuntimeMemoryPayload:
+        """构建主控运行时所需的显式记忆上下文。"""
         snapshot = await self.ensure_memory_current(session_id, current_message_id)
         qa_memory = self._sanitize_qa_memory(snapshot.get("qa_memory"))
         retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
@@ -404,6 +431,7 @@ class SessionMemoryService:
         assistant_message_id: int,
         turn_artifacts: dict[str, Any],
     ) -> SessionMemorySnapshot:
+        """在单轮结束后刷新记忆并持久化。"""
         snapshot = await self.load_memory(session_id)
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
@@ -438,6 +466,7 @@ class SessionMemoryService:
         return updated_snapshot
 
     async def rebuild_from_messages(self, session_id: str) -> SessionMemorySnapshot:
+        """仅基于消息表重建会话记忆。"""
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
         snapshot: SessionMemorySnapshot = {
@@ -455,6 +484,7 @@ class SessionMemoryService:
         history_id: str = "",
         user_question: str = "",
     ) -> dict[str, Any]:
+        """按 history_id 或相似问题读取历史检索记录。"""
         snapshot = await self.load_memory(session_id)
         retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
         rows = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []

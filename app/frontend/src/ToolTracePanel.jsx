@@ -1,8 +1,10 @@
 import { useState } from "react";
 
+// 模块职责：展示工具调用轨迹，支持按步骤展开查看输入输出。
 export default function ToolTracePanel({ traces, isLoading }) {
   const [expandedSteps, setExpandedSteps] = useState(new Set());
 
+  // 切换某一步骤的展开/收起状态。
   const toggleStep = (step) => {
     const newExpanded = new Set(expandedSteps);
     if (newExpanded.has(step)) {
@@ -13,6 +15,7 @@ export default function ToolTracePanel({ traces, isLoading }) {
     setExpandedSteps(newExpanded);
   };
 
+  // 为不同工具类型返回对应图标。
   const getToolIcon = (toolName) => {
     switch (toolName) {
       case "kg_query":
@@ -38,6 +41,7 @@ export default function ToolTracePanel({ traces, isLoading }) {
     }
   };
 
+  // 工具英文标识映射为中文展示名。
   const getToolName = (toolName) => {
     const names = {
       kg_query: "知识图谱查询",
