@@ -1,34 +1,21 @@
-﻿"""executor 模块。
-
-提供 executor 相关能力与对外接口。
-"""
-
+"""主控执行器。"""
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Callable
 
 from app.a2a.client.subagent_client import SubAgentClientFactory
-from app.a2a.orchestrator.graph import compile_orchestrator_graph, run_orchestrator_graph
-from app.a2a.orchestrator.state import OrchestratorState
+from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.common.config import Config
 
 
 class OrchestratorExecutor:
-    """执行主代理 LangGraph。"""
-
-    _SUPPLEMENT_MAX_ROUNDS_FIXED = 2
+    """执行新的统一主控决策循环。"""
 
     def __init__(self, subagent_client: SubAgentClientFactory):
-        """初始化 OrchestratorExecutor 实例。
-        
-        Args:
-            subagent_client: 参数。
-        """
         self.subagent_client = subagent_client
         self.conf = Config()
-        self.graph = compile_orchestrator_graph(subagent_client)
+        self.controller = UnifiedOrchestratorController(subagent_client, conf=self.conf)
 
     @staticmethod
     def _clamp_positive(value: int, lower: int, upper: int) -> int:
@@ -41,15 +28,6 @@ class OrchestratorExecutor:
             return self._clamp_positive(max_turns, 1, max_limit)
         return self._clamp_positive(default_turns, 1, max_limit)
 
-    def _resolve_subagent_max_tool_calls(self) -> int:
-        default_calls = int(self.conf.A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT)
-        max_calls = int(self.conf.A2A_SUBAGENT_MAX_TOOL_CALLS_MAX)
-        return self._clamp_positive(default_calls, 1, max_calls)
-
-    def _resolve_supplement_max_rounds(self, max_turns: int) -> int:
-        # 补检索轮数按策略固定，避免运行时配置漂移。
-        return self._clamp_positive(self._SUPPLEMENT_MAX_ROUNDS_FIXED, 1, max_turns)
-
     async def run(
         self,
         *,
@@ -60,106 +38,19 @@ class OrchestratorExecutor:
         strategy: str = "iterative",
         max_turns: int | None = None,
         original_input_text: str = "",
-        resolved_query: dict[str, Any] | None = None,
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        """执行 run。
-        
-        Args:
-            input_text: 参数。
-            session_id: 参数。
-            user_id: 参数。
-            trace_id: 参数。
-            strategy: 参数。
-            max_turns: 参数。
-            progress_callback: 参数。
-        
-        Returns:
-            执行结果。
-        """
+        _ = trace_id
+        _ = strategy
+        _ = original_input_text
         safe_max_turns = self._resolve_max_turns(max_turns)
-        safe_subagent_max_tool_calls = self._resolve_subagent_max_tool_calls()
-        safe_supplement_max_rounds = self._resolve_supplement_max_rounds(safe_max_turns)
-        safe_resolved_query = resolved_query if isinstance(resolved_query, dict) else {}
         safe_memory_context = memory_context if isinstance(memory_context, dict) else {}
-        resolved_question = str(safe_resolved_query.get("standalone_question") or "").strip()
-        safe_input_text = resolved_question if resolved_question else str(input_text or "").strip()
-        safe_original_input_text = str(original_input_text or input_text or "").strip()
-
-        state: OrchestratorState = {
-            "input_text": safe_input_text,
-            "original_input_text": safe_original_input_text,
-            "resolved_query": safe_resolved_query,
-            "memory_context": safe_memory_context,
-            "session_id": str(session_id or "").strip(),
-            "user_id": str(user_id or "").strip(),
-            "trace_id": str(trace_id or "").strip(),
-            "strategy": str(strategy or "iterative").strip() or "iterative",
-            "max_turns": safe_max_turns,
-            "supplement_max_rounds": safe_supplement_max_rounds,
-            "subagent_max_tool_calls": safe_subagent_max_tool_calls,
-            "retrieval_round": 0,
-            "pending_subtasks": [],
-            "tool_observations": [],
-            "reflection_events": [],
-            "processing_steps": [],
-            "evidence_bundle": {
-                "kg_evidence": [],
-                "rag_evidence": [],
-                "citations": [],
-            },
-            # 每个主代理请求独立串行闸门，仅限制本请求对子代理的并发度。
-            "serial_guard": asyncio.Semaphore(1),
-        }
-
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "event": "orchestrator_start",
-                    "detail": "主代理开始分解问题",
-                    "tool_name": "orchestrator",
-                }
-            )
-
-        output = await run_orchestrator_graph(self.graph, state)
-
-        final_obj = output.get("final_output")
-        final_output = final_obj if isinstance(final_obj, dict) else {}
-        answer = str(final_output.get("answer") or "").strip()
-        confidence = float(final_output.get("confidence") or 0.0)
-        evidence_summary_obj = final_output.get("evidence_summary")
-        evidence_summary = evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
-
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "event": "orchestrator_done",
-                    "detail": "主代理完成终答",
-                    "tool_name": "orchestrator",
-                }
-            )
-
-        return {
-            "output": answer,
-            "output_type": "orchestrator_final",
-            "confidence": confidence,
-            "tool_observations": output.get("tool_observations") if isinstance(output.get("tool_observations"), list) else [],
-            "reflection_events": output.get("reflection_events") if isinstance(output.get("reflection_events"), list) else [],
-            "processing_steps": output.get("processing_steps") if isinstance(output.get("processing_steps"), list) else [],
-            "telemetry": {
-                "retrieval_round": int(output.get("retrieval_round") or 0),
-                "strategy": str(output.get("strategy") or strategy),
-                "max_turns": safe_max_turns,
-                "supplement_max_rounds": safe_supplement_max_rounds,
-                "subagent_max_tool_calls": safe_subagent_max_tool_calls,
-                "response_mode": str(output.get("response_mode") or ""),
-                "direct_reason": str(output.get("direct_reason") or ""),
-                "retrieval_reason": str(output.get("retrieval_reason") or ""),
-                "answer_source": str(output.get("answer_source") or ""),
-                "classification": output.get("classification") if isinstance(output.get("classification"), dict) else {},
-                "answerability": output.get("answerability") if isinstance(output.get("answerability"), dict) else {},
-                "gate_result": output.get("gate_result") if isinstance(output.get("gate_result"), dict) else {},
-            },
-            "evidence_summary": evidence_summary,
-        }
+        return await self.controller.run(
+            input_text=str(input_text or "").strip(),
+            session_id=str(session_id or "").strip(),
+            user_id=str(user_id or "").strip(),
+            max_turns=safe_max_turns,
+            memory_context=safe_memory_context,
+            progress_callback=progress_callback,
+        )

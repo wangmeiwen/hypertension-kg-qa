@@ -167,9 +167,6 @@ def create_query_chat_router(
                 user_message_id=int(prepared.get("user_message_id") or 0),
                 request_id=str(getattr(request.state, "request_id", "") or ""),
                 original_input_text=str(prepared.get("original_input_text") or input_text or ""),
-                resolved_query=prepared.get("resolved_query")
-                if isinstance(prepared.get("resolved_query"), dict)
-                else {},
                 memory_context=prepared.get("memory_context") if isinstance(prepared.get("memory_context"), dict) else {},
             ),
             media_type="text/plain",

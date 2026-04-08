@@ -97,7 +97,6 @@ class SessionTurnService:
 
         runtime_payload: Dict[str, Any] = {
             "original_input_text": str(input_text or ""),
-            "resolved_query": {},
             "memory_context": {},
         }
         try:
@@ -122,13 +121,5 @@ class SessionTurnService:
             "session_id": safe_session_id,
             "user_message_id": user_message_id,
             "original_input_text": str(runtime_payload.get("original_input_text") or input_text or ""),
-            "resolved_query": runtime_payload.get("resolved_query") if isinstance(runtime_payload.get("resolved_query"), dict) else {},
             "memory_context": runtime_payload.get("memory_context") if isinstance(runtime_payload.get("memory_context"), dict) else {},
-            "topic_shift_detected": bool(
-                (
-                    runtime_payload.get("memory_context")
-                    if isinstance(runtime_payload.get("memory_context"), dict)
-                    else {}
-                ).get("topic_shift_signal", {}).get("topic_shift_detected")
-            ),
         }

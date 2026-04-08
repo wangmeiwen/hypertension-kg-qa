@@ -14,6 +14,66 @@ from app.a2a.subagents.kg.query_builder import (
 from app.a2a.subagents.kg.state import KgSubAgentState
 
 
+def _build_query_records(
+    query_statements: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, statement in enumerate(query_statements):
+        if not isinstance(statement, dict):
+            continue
+        tool_name = str(statement.get("tool_name") or "").strip() or "kg_entity_relation_search"
+        payload_obj = statement.get("payload")
+        payload = payload_obj if isinstance(payload_obj, dict) else {}
+        query = str(payload.get("query") or payload.get("keyword") or payload.get("cypher") or "").strip()
+        if not query:
+            continue
+        row = tool_results[index] if index < len(tool_results) and isinstance(tool_results[index], dict) else {}
+        result_obj = row.get("result")
+        result = result_obj if isinstance(result_obj, dict) else {}
+        content_parts: list[str] = []
+        citations: list[str] = []
+
+        records_obj = result.get("records")
+        result_records = records_obj if isinstance(records_obj, list) else []
+        for item in result_records[:3]:
+            if isinstance(item, dict):
+                content_parts.append(str(item).replace("\n", " ").strip()[:280])
+
+        entities_obj = result.get("entities")
+        entities = entities_obj if isinstance(entities_obj, list) else []
+        for entity in entities[:3]:
+            if not isinstance(entity, dict):
+                continue
+            content_parts.append(str(entity).replace("\n", " ").strip()[:280])
+            citation = str(entity.get("id") or entity.get("name") or "").strip()
+            if citation and citation not in citations:
+                citations.append(citation)
+
+        relationships_obj = result.get("relationships")
+        relationships = relationships_obj if isinstance(relationships_obj, list) else []
+        for relation in relationships[:3]:
+            if not isinstance(relation, dict):
+                continue
+            content_parts.append(str(relation).replace("\n", " ").strip()[:280])
+            citation = str(relation.get("id") or relation.get("relation") or relation.get("type") or "").strip()
+            if citation and citation not in citations:
+                citations.append(citation)
+
+        records.append(
+            {
+                "agent": "kg",
+                "query": query,
+                "result_content": " | ".join(content_parts)[:1600],
+                "captured_at": "",
+                "citations": citations[:6],
+                "has_signal": bool(content_parts),
+                "tool_name": tool_name,
+            }
+        )
+    return records
+
+
 async def node_validate_constraints(state: KgSubAgentState) -> KgSubAgentState:
     """执行 node_validate_constraints 节点逻辑。
     
@@ -197,6 +257,8 @@ async def node_build_response(state: KgSubAgentState) -> KgSubAgentState:
 
     query_statements_obj = state.get("query_statements")
     query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
+    tool_results_obj = state.get("tool_results")
+    tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
     queries_used: list[str] = []
     for statement in query_statements:
         if not isinstance(statement, dict):
@@ -206,6 +268,7 @@ async def node_build_response(state: KgSubAgentState) -> KgSubAgentState:
         query = str(payload.get("query") or payload.get("keyword") or payload.get("cypher") or "").strip()
         if query:
             queries_used.append(query)
+    query_records = _build_query_records(query_statements, tool_results)
 
     if evidence_count == 0:
         signal = "none"
@@ -220,7 +283,8 @@ async def node_build_response(state: KgSubAgentState) -> KgSubAgentState:
         question=str(state.get("input_question") or ""),
         query_statements=query_statements,
         queries_used=queries_used,
-        tool_results=state.get("tool_results") or [],
+        query_records=query_records,
+        tool_results=tool_results,
         evidence=evidence_rows,
         signal=signal,
         coverage={

@@ -229,7 +229,6 @@ class A2AEventStreamService:
         strategy: str = "iterative",
         max_turns: Optional[int] = None,
         original_input_text: str = "",
-        resolved_query: Optional[Dict[str, Any]] = None,
         memory_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """生成 Agent 流式输出事件。"""
@@ -237,7 +236,6 @@ class A2AEventStreamService:
         service: A2AService = self._get_a2a()
 
         safe_original_input_text = str(original_input_text or input_text or "")
-        safe_resolved_query = resolved_query if isinstance(resolved_query, dict) else {}
         safe_memory_context = memory_context if isinstance(memory_context, dict) else {}
 
         metadata: Dict[str, Any] = {
@@ -245,7 +243,6 @@ class A2AEventStreamService:
             "user_id": str(user_id or ""),
             "strategy": str(strategy or "iterative"),
             "original_input_text": safe_original_input_text,
-            "resolved_query": safe_resolved_query,
             "memory_context": safe_memory_context,
             "source": "stream_api",
         }

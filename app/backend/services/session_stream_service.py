@@ -472,6 +472,8 @@ def _build_lane_card_from_tool_observation(
         lane_name = "图谱代理"
     elif agent == "rag" or "rag" in tool_name.lower():
         lane_name = "检索代理"
+    elif agent == "history" or "history" in tool_name.lower():
+        lane_name = "主控编排"
     else:
         lane_name = "评估代理"
     result_payload = observation.get("result") if isinstance(observation.get("result"), dict) else {}
@@ -526,35 +528,41 @@ def _build_evaluator_lane_card(
 
 
 def _build_orchestrator_cards(
-    resolved_query: Dict[str, Any],
+    input_text: str,
+    memory_context: Dict[str, Any],
     telemetry: Dict[str, Any],
     llm_rows: list[dict[str, Any]],
     started_at: str,
     finished_at: str,
 ) -> list[Dict[str, Any]]:
     """构建并返回目标数据。
-    
-    Args:
-        resolved_query: 问题改写后的结构化数据。
-        telemetry: 函数输入参数。
-        llm_rows: 函数输入参数。
-        started_at: 函数输入参数。
-        finished_at: 函数输入参数。
-    
-    Returns:
-        list[Dict[str, Any]]: 处理后的列表结果。
     """
     cards: list[Dict[str, Any]] = [
         {
-            "title": "主控路由判定",
+            "title": "主控统一决策",
             "started_at": started_at,
             "finished_at": finished_at,
-            "prompt_preview": _sanitize_preview(resolved_query.get("standalone_question") or "", 140),
+            "prompt_preview": _sanitize_preview(input_text, 140),
             "decision_preview": _sanitize_preview(
-                f"response_mode={telemetry.get('response_mode') or 'retrieval_required'}；question_mode={resolved_query.get('question_mode') or 'medical_new_question'}",
+                (
+                    f"controller_mode={telemetry.get('controller_mode') or 'explicit_memory_with_history_read'}；"
+                    f"retrieval_round={telemetry.get('retrieval_round') or 0}；"
+                    f"compression_count={telemetry.get('compression_count') or 0}；"
+                    f"aborted_for_prompt_budget={'yes' if bool(telemetry.get('aborted_for_prompt_budget')) else 'no'}"
+                ),
                 180,
             ),
-            "full_prompt": _sanitize_preview(json.dumps(resolved_query, ensure_ascii=False), 1200),
+            "full_prompt": _sanitize_preview(
+                json.dumps(
+                    {
+                        "question": input_text,
+                        "qa_memory_text": memory_context.get("qa_memory_text"),
+                        "retrieval_question_index_text": memory_context.get("retrieval_question_index_text"),
+                    },
+                    ensure_ascii=False,
+                ),
+                1200,
+            ),
             "full_decision": _sanitize_preview(json.dumps(telemetry, ensure_ascii=False), 1200),
             "status": "完成",
         }
@@ -604,10 +612,18 @@ def _build_memory_compression_stages(
     Returns:
         list[Dict[str, Any]]: 处理后的列表结果。
     """
-    summary_before = memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}
-    retrieval_before = memory_context.get("retrieval_summary") if isinstance(memory_context.get("retrieval_summary"), dict) else {}
-    post_summary = post_memory.get("summary") if isinstance((post_memory or {}).get("summary"), dict) else {}
-    post_retrieval = post_memory.get("retrieval_summary") if isinstance((post_memory or {}).get("retrieval_summary"), dict) else {}
+    qa_before = memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []
+    retrieval_before = (
+        memory_context.get("retrieval_question_index")
+        if isinstance(memory_context.get("retrieval_question_index"), list)
+        else []
+    )
+    qa_after = ((post_memory or {}).get("qa_memory") if isinstance((post_memory or {}).get("qa_memory"), dict) else {}).get("qa_pairs")
+    retrieval_after = (
+        ((post_memory or {}).get("retrieval_memory") if isinstance((post_memory or {}).get("retrieval_memory"), dict) else {}).get("questions")
+    )
+    qa_after_rows = qa_after if isinstance(qa_after, list) else []
+    retrieval_after_rows = retrieval_after if isinstance(retrieval_after, list) else []
     return [
         {
             "stage_name": "原始消息增量",
@@ -621,31 +637,31 @@ def _build_memory_compression_stages(
         {
             "stage_name": "本轮记忆投影",
             "event_time": finished_at,
-            "description": "从本轮对话中提炼出的短期记忆投影。",
+            "description": "从本轮对话中提炼出的显式 QA 与检索记录写回内容。",
             "content_lines": [
-                f"已回答要点：{'；'.join(turn_projection.get('answered_points') or []) or '无'}",
-                f"证据缺口：{'；'.join(turn_projection.get('evidence_gaps') or []) or '无'}",
-                f"关注实体：{'；'.join(turn_projection.get('focus_entities') or []) or '无'}",
+                f"本轮问题：{_sanitize_preview(turn_projection.get('user_question') or input_text, 180)}",
+                f"写入检索记录数：{len(turn_projection.get('query_records') or [])}",
+                f"检索预览：{'；'.join(turn_projection.get('query_preview') or []) or '无'}",
             ],
         },
         {
-            "stage_name": "压缩前记忆",
+            "stage_name": "写回前记忆",
             "event_time": started_at,
-            "description": "进入本轮前，会话中已有的结构化记忆。",
+            "description": "进入本轮前，会话中已有的显式问答记忆与历史检索索引。",
             "content_lines": [
-                f"会话目标：{_sanitize_preview(summary_before.get('conversation_goal') or '无', 180)}",
-                f"已确认事实：{'；'.join(summary_before.get('confirmed_facts') or []) or '无'}",
-                f"检索焦点：{'；'.join(retrieval_before.get('focus_entities') or []) or '无'}",
+                f"QA 条数：{len(qa_before)}",
+                f"最近问题：{_sanitize_preview((qa_before[-1] if qa_before else {}).get('user_question') or '无', 180)}",
+                f"历史检索问题数：{len(retrieval_before)}",
             ],
         },
         {
-            "stage_name": "压缩后记忆",
+            "stage_name": "写回后记忆",
             "event_time": compressed_at,
-            "description": "后台压缩完成后，写回到会话记忆中的结果。",
+            "description": "后台写回完成后，会话中的显式 QA 与历史检索状态。",
             "content_lines": [
-                f"会话目标：{_sanitize_preview(post_summary.get('conversation_goal') or '压缩结果暂不可用', 180)}",
-                f"已确认事实：{'；'.join(post_summary.get('confirmed_facts') or []) or '无'}",
-                f"检索焦点：{'；'.join(post_retrieval.get('focus_entities') or []) or '无'}",
+                f"QA 条数：{len(qa_after_rows)}",
+                f"最近问题：{_sanitize_preview((qa_after_rows[-1] if qa_after_rows else {}).get('user_question') or '写回结果暂不可用', 180)}",
+                f"历史检索问题数：{len(retrieval_after_rows)}",
             ],
         },
     ]
@@ -654,11 +670,11 @@ def _build_memory_compression_stages(
 def _build_turn_memory_projection(
     *,
     input_text: str,
+    user_message_id: int,
     full_reply: str,
     processing_steps: List[str],
     tool_observations: List[Dict[str, Any]],
     evidence_summary: Dict[str, Any],
-    resolved_query: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """构建并返回目标数据。
     
@@ -668,53 +684,46 @@ def _build_turn_memory_projection(
         processing_steps: 函数输入参数。
         tool_observations: 函数输入参数。
         evidence_summary: 函数输入参数。
-        resolved_query: 问题改写后的结构化数据。
-    
-    Returns:
-        Dict[str, Any]: 结构化结果数据。
     """
-    resolved = resolved_query if isinstance(resolved_query, dict) else {}
     _ = processing_steps
-    missing_points: List[str] = []
-    for key in ("missing_points", "uncovered_points", "evidence_gaps"):
-        value = evidence_summary.get(key)
-        if isinstance(value, list):
-            missing_points.extend([_sanitize_text(item, 120) for item in value if _sanitize_text(item, 120)])
-
-    risk_notes: List[str] = []
-    high_risk_tokens = evidence_summary.get("high_risk_tokens")
-    if isinstance(high_risk_tokens, list):
-        risk_notes.extend([_sanitize_text(item, 120) for item in high_risk_tokens if _sanitize_text(item, 120)])
-    retrieval_risk_flags = evidence_summary.get("retrieval_risk_flags")
-    if isinstance(retrieval_risk_flags, list):
-        risk_notes.extend([_sanitize_text(item, 120) for item in retrieval_risk_flags if _sanitize_text(item, 120)])
-
-    answered_points = _extract_answered_points(evidence_summary, full_reply)
-    covered_topics = _sanitize_list(
-        [
-            *(resolved.get("must_cover") if isinstance(resolved.get("must_cover"), list) else []),
-            *(evidence_summary.get("covered_topics") if isinstance(evidence_summary.get("covered_topics"), list) else []),
-        ],
-        max_items=5,
-        max_len=120,
-    )
-    focus_entities = _sanitize_list(
-        resolved.get("entities") if isinstance(resolved.get("entities"), list) else [],
-        max_items=5,
-        max_len=80,
-    )
-
+    _ = evidence_summary
+    query_records: List[Dict[str, Any]] = []
+    query_preview: List[str] = []
+    captured_at = _iso_now()
+    for observation in tool_observations:
+        if not isinstance(observation, dict):
+            continue
+        raw_records = observation.get("query_records")
+        if not isinstance(raw_records, list):
+            result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+            payload = result_obj.get("result") if isinstance(result_obj.get("result"), dict) else {}
+            raw_records = payload.get("query_records") if isinstance(payload.get("query_records"), list) else []
+        for item in raw_records if isinstance(raw_records, list) else []:
+            if not isinstance(item, dict) or not bool(item.get("has_signal")):
+                continue
+            record = {
+                "agent": _sanitize_text(item.get("agent"), 24) or _sanitize_text(observation.get("agent"), 24) or "unknown",
+                "query": _sanitize_text(item.get("query"), 300),
+                "result_content": _sanitize_text(item.get("result_content"), 1600),
+                "captured_at": _sanitize_text(item.get("captured_at"), 64) or captured_at,
+                "citations": _sanitize_list(item.get("citations"), max_items=6, max_len=120),
+                "has_signal": True,
+            }
+            if not record["query"] or not record["result_content"]:
+                continue
+            query_records.append(record)
+            preview = _sanitize_text(f"{record['agent']}:{record['query']}", 120)
+            if preview and preview not in query_preview:
+                query_preview.append(preview)
     return {
-        "turn_memory_projection": {
-            "answered_points": answered_points,
-            "evidence_gaps": _sanitize_list(missing_points, max_items=5, max_len=120),
-            "focus_entities": focus_entities,
-            "covered_topics": covered_topics,
-            "risk_notes": _sanitize_list(risk_notes, max_items=5, max_len=120),
-            "assistant_reply_digest": _build_reply_digest(full_reply),
-            "question_scope": _normalize_question_scope(_infer_question_scope(input_text)),
-        },
-        "projection_mode": "turn_memory_projection_v1",
+        "user_question": str(input_text or ""),
+        "user_message_id": int(user_message_id or 0),
+        "captured_at": captured_at,
+        "query_records": query_records,
+        "query_preview": query_preview[:5],
+        "assistant_reply_digest": _build_reply_digest(full_reply),
+        "question_scope": _normalize_question_scope(_infer_question_scope(input_text)),
+        "projection_mode": "explicit_memory_v2",
         "assistant_reply_chars": len(str(full_reply or "")),
         "tool_observations_count": len(tool_observations),
         "tool_observations_chars": _json_text_len(tool_observations),
@@ -810,7 +819,6 @@ def _build_turn_observability_payload(
     input_text: str,
     full_reply: str,
     memory_context: Dict[str, Any],
-    resolved_query: Dict[str, Any],
     processing_steps: List[str],
     tool_observations: List[Dict[str, Any]],
     evidence_summary: Dict[str, Any],
@@ -832,48 +840,35 @@ def _build_turn_observability_payload(
         input_text: 函数输入参数。
         full_reply: 函数输入参数。
         memory_context: 会话记忆上下文。
-        resolved_query: 问题改写后的结构化数据。
-        processing_steps: 函数输入参数。
-        tool_observations: 函数输入参数。
-        evidence_summary: 函数输入参数。
-        telemetry: 函数输入参数。
-        started_at: 函数输入参数。
-        finished_at: 函数输入参数。
-        duration_ms: 函数输入参数。
-        status: 函数输入参数。
-        turn_artifacts: 函数输入参数。
-    
-    Returns:
-        Dict[str, Any]: 结构化结果数据。
     """
-    turn_projection = turn_artifacts.get("turn_memory_projection") if isinstance(turn_artifacts.get("turn_memory_projection"), dict) else {}
     llm_metrics = _collect_request_llm_metrics(session_id, request_id)
     tool_metrics = _derive_tool_metrics(tool_observations)
     llm_rows = llm_metrics.get("llm_rows") if isinstance(llm_metrics.get("llm_rows"), list) else []
 
     memory_before = {
-        "conversation_goal": str((memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}).get("conversation_goal") or ""),
-        "confirmed_facts": (memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}).get("confirmed_facts") or [],
-        "answered_points": (memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}).get("answered_points") or [],
-        "open_questions": (memory_context.get("summary") if isinstance(memory_context.get("summary"), dict) else {}).get("open_questions") or [],
-        "focus_entities": (memory_context.get("retrieval_summary") if isinstance(memory_context.get("retrieval_summary"), dict) else {}).get("focus_entities") or [],
-        "evidence_gaps": (memory_context.get("retrieval_summary") if isinstance(memory_context.get("retrieval_summary"), dict) else {}).get("evidence_gaps") or [],
+        "qa_pair_count": len(memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []),
+        "retrieval_question_count": len(
+            memory_context.get("retrieval_question_index")
+            if isinstance(memory_context.get("retrieval_question_index"), list)
+            else []
+        ),
+        "qa_memory_text": str(memory_context.get("qa_memory_text") or ""),
+        "retrieval_question_index_text": str(memory_context.get("retrieval_question_index_text") or ""),
     }
     orchestrator_decision = {
-        "response_mode": str(telemetry.get("response_mode") or "retrieval_required"),
-        "direct_reason": str(telemetry.get("direct_reason") or ""),
-        "retrieval_reason": str(telemetry.get("retrieval_reason") or ""),
-        "answer_source": str(telemetry.get("answer_source") or ""),
-        "answer_mode": str((telemetry.get("answerability") if isinstance(telemetry.get("answerability"), dict) else {}).get("answer_mode") or evidence_summary.get("answer_mode") or ""),
-        "question_mode": str(resolved_query.get("question_mode") or ""),
-        "preferred_sources": resolved_query.get("preferred_sources") if isinstance(resolved_query.get("preferred_sources"), list) else [],
-        "topic_shift_detected": bool((memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}).get("topic_shift_detected")),
-        "topic_shift_reason": str((memory_context.get("topic_shift_signal") if isinstance(memory_context.get("topic_shift_signal"), dict) else {}).get("reason") or "no_shift"),
-        "memory_route_reason": str(telemetry.get("direct_reason") or telemetry.get("retrieval_reason") or telemetry.get("response_mode") or ""),
+        "controller_mode": str(telemetry.get("controller_mode") or "explicit_memory_with_history_read"),
+        "retrieval_round": int(telemetry.get("retrieval_round") or 0),
+        "final_source": str(telemetry.get("final_source") or "controller"),
+        "answer_mode": str(evidence_summary.get("answer_mode") or ""),
+        "prompt_budget_limit": int(telemetry.get("prompt_budget_limit") or 0),
+        "compression_count": int(telemetry.get("compression_count") or 0),
+        "prompt_token_count_before_last_decision": int(telemetry.get("prompt_token_count_before_last_decision") or 0),
+        "prompt_token_count_after_last_compression": int(telemetry.get("prompt_token_count_after_last_compression") or 0),
+        "aborted_for_prompt_budget": bool(telemetry.get("aborted_for_prompt_budget")),
     }
 
     agent_lanes = {
-        "主控编排": _build_orchestrator_cards(resolved_query, telemetry, llm_rows, started_at, finished_at),
+        "主控编排": _build_orchestrator_cards(input_text, memory_context, telemetry, llm_rows, started_at, finished_at),
         "图谱代理": [],
         "检索代理": [],
         "评估代理": [],
@@ -883,7 +878,7 @@ def _build_turn_observability_payload(
         lane_name = str(card.get("lane_name") or "")
         agent_lanes[lane_name] = agent_lanes.get(lane_name) if isinstance(agent_lanes.get(lane_name), list) else []
         agent_lanes[lane_name].append(card)
-    agent_lanes["评估代理"].append(_build_evaluator_lane_card(str(resolved_query.get("standalone_question") or input_text or ""), evidence_summary, telemetry, finished_at))
+    agent_lanes["评估代理"].append(_build_evaluator_lane_card(str(input_text or ""), evidence_summary, telemetry, finished_at))
 
     return {
         "record_type": "turn_observability",
@@ -900,14 +895,13 @@ def _build_turn_observability_payload(
         "status": str(status or "done"),
         "duration_ms": round(float(duration_ms), 2),
         "memory_before": memory_before,
-        "resolved_query": resolved_query,
         "orchestrator_decision": orchestrator_decision,
         "agent_lanes": agent_lanes,
         "memory_compression": _build_memory_compression_stages(
             input_text=input_text,
             full_reply=full_reply,
             memory_context=memory_context,
-            turn_projection=turn_projection,
+            turn_projection=turn_artifacts,
             post_memory=None,
             started_at=started_at,
             finished_at=finished_at,
@@ -915,8 +909,7 @@ def _build_turn_observability_payload(
         ),
         "timeline": [
             {"title": "开始处理用户问题", "event_time": started_at, "detail": _sanitize_preview(input_text, 140)},
-            {"title": "完成会话记忆读取", "event_time": started_at, "detail": "已加载当前会话记忆与最近对话摘要"},
-            {"title": "完成问题改写", "event_time": finished_at, "detail": _sanitize_preview(resolved_query.get("standalone_question") or input_text, 160)},
+            {"title": "完成会话记忆读取", "event_time": started_at, "detail": "已加载显式 QA 记忆与历史检索问题索引"},
             *[
                 {"title": "主控过程事件", "event_time": finished_at, "detail": _sanitize_preview(item, 160)}
                 for item in processing_steps[:8]
@@ -1019,7 +1012,6 @@ class SessionStreamService:
         user_message_id: int = 0,
         request_id: str = "",
         original_input_text: str = "",
-        resolved_query: Optional[Dict[str, Any]] = None,
         memory_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[str]:
         """基于 A2A 生成流式响应并保存助手回复。"""
@@ -1112,11 +1104,11 @@ class SessionStreamService:
             try:
                 turn_artifacts = _build_turn_memory_projection(
                     input_text=str(input_text or ""),
+                    user_message_id=int(user_message_id or 0),
                     full_reply=full_reply,
                     processing_steps=done_processing_steps,
                     tool_observations=done_tool_observations,
                     evidence_summary=done_evidence_summary,
-                    resolved_query=resolved_query,
                 )
                 payload = _build_turn_observability_payload(
                     session_id=str(session_id or ""),
@@ -1127,7 +1119,6 @@ class SessionStreamService:
                     input_text=str(input_text or ""),
                     full_reply=full_reply,
                     memory_context=memory_context if isinstance(memory_context, dict) else {},
-                    resolved_query=resolved_query if isinstance(resolved_query, dict) else {},
                     processing_steps=done_processing_steps,
                     tool_observations=done_tool_observations,
                     evidence_summary=done_evidence_summary,
@@ -1186,11 +1177,11 @@ class SessionStreamService:
 
             turn_artifacts = _build_turn_memory_projection(
                 input_text=str(input_text or ""),
+                user_message_id=int(user_message_id or 0),
                 full_reply=full_reply,
                 processing_steps=done_processing_steps,
                 tool_observations=done_tool_observations,
                 evidence_summary=done_evidence_summary,
-                resolved_query=resolved_query,
             )
 
             async def refresh_memory_task() -> None:
@@ -1287,7 +1278,6 @@ class SessionStreamService:
                 session_id=session_id,
                 request_id=request_id,
                 original_input_text=original_input_text,
-                resolved_query=resolved_query,
                 memory_context=memory_context,
             ):
                 if msg.get("type") == "reply":

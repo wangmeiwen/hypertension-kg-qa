@@ -116,21 +116,17 @@ class AdminSessionsService:
             return False, type(exc).__name__
 
     @staticmethod
-    def _normalize_response_mode_for_display(value: Any) -> str:
+    def _normalize_controller_mode(value: Any) -> str:
         token = str(value or "").strip()
-        if token == "direct_answer":
-            return "direct_answer"
-        if token == "retrieval_required":
-            return "retrieval_required"
-        return token or "retrieval_required"
+        if token == "explicit_memory_with_history_read":
+            return "explicit_memory_with_history_read"
+        return token or "explicit_memory_with_history_read"
 
     @staticmethod
-    def _response_mode_label(value: Any) -> str:
-        token = AdminSessionsService._normalize_response_mode_for_display(value)
-        if token == "direct_answer":
-            return "能直接回答"
-        if token == "retrieval_required":
-            return "需要检索"
+    def _controller_mode_label(value: Any) -> str:
+        token = AdminSessionsService._normalize_controller_mode(value)
+        if token == "explicit_memory_with_history_read":
+            return "显式记忆主控"
         return token or "未知"
 
     def _read_session_turn_records(self, session_id: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -202,19 +198,21 @@ class AdminSessionsService:
         patched: list[dict[str, Any]] = []
         for item in memory_compression:
             row = item if isinstance(item, dict) else {}
-            if str(row.get("stage_name") or "") != "压缩后记忆":
+            if str(row.get("stage_name") or "") not in {"压缩后记忆", "写回后记忆"}:
                 patched.append(row)
                 continue
-            summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
-            retrieval = snapshot.get("retrieval_summary") if isinstance(snapshot.get("retrieval_summary"), dict) else {}
+            qa_memory = snapshot.get("qa_memory") if isinstance(snapshot.get("qa_memory"), dict) else {}
+            retrieval_memory = snapshot.get("retrieval_memory") if isinstance(snapshot.get("retrieval_memory"), dict) else {}
+            qa_pairs = qa_memory.get("qa_pairs") if isinstance(qa_memory.get("qa_pairs"), list) else []
+            retrieval_questions = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []
             patched.append(
                 {
                     **row,
                     "event_time": updated_at or str(row.get("event_time") or ""),
                     "content_lines": [
-                        f"会话目标：{str(summary.get('conversation_goal') or '无')}",
-                        f"已确认事实：{'；'.join(summary.get('confirmed_facts') or []) or '无'}",
-                        f"检索焦点：{'；'.join(retrieval.get('focus_entities') or []) or '无'}",
+                        f"QA 条数：{len(qa_pairs)}",
+                        f"最近问题：{str((qa_pairs[-1] if qa_pairs else {}).get('user_question') or '无')}",
+                        f"历史检索问题数：{len(retrieval_questions)}",
                     ],
                 }
             )
@@ -392,9 +390,7 @@ class AdminSessionsService:
         started_at = str(turn.get("started_at") or "")
         finished_at = str(turn.get("finished_at") or started_at)
         question = str(turn.get("question") or "")
-        answer_digest = str(turn.get("answer_digest") or "")
         memory_before = turn.get("memory_before") if isinstance(turn.get("memory_before"), dict) else {}
-        resolved_query = turn.get("resolved_query") if isinstance(turn.get("resolved_query"), dict) else {}
         orchestrator_decision = turn.get("orchestrator_decision") if isinstance(turn.get("orchestrator_decision"), dict) else {}
         agent_lanes = turn.get("agent_lanes") if isinstance(turn.get("agent_lanes"), dict) else {}
         tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
@@ -403,7 +399,6 @@ class AdminSessionsService:
 
         events: list[dict[str, Any]] = []
 
-        focus_entities = cls._join_lines(memory_before.get("focus_entities"), limit=3, item_limit=80)
         events.append(
             {
                 "event_id": cls._safe_event_id(turn_id, "memory-read", 0),
@@ -412,7 +407,7 @@ class AdminSessionsService:
                 "stage": "读取会话记忆",
                 "title": "载入当前会话记忆",
                 "summary": cls._sanitize_text(
-                    f"会话目标：{memory_before.get('conversation_goal') or '无'}；关注实体：{focus_entities}",
+                    f"QA 条数：{memory_before.get('qa_pair_count') or 0}；历史检索问题数：{memory_before.get('retrieval_question_count') or 0}",
                     120,
                 ),
                 "actor": "主控编排",
@@ -420,58 +415,26 @@ class AdminSessionsService:
                 "detail": cls._build_detail(
                     input_content=question,
                     output_content={
-                        "会话目标": memory_before.get("conversation_goal") or "无",
-                        "已确认事实": cls._join_lines(memory_before.get("confirmed_facts"), limit=4, item_limit=100),
-                        "未闭合问题": cls._join_lines(memory_before.get("open_questions"), limit=4, item_limit=100),
-                        "关注实体": focus_entities,
+                        "QA 条数": memory_before.get("qa_pair_count") or 0,
+                        "历史检索问题数": memory_before.get("retrieval_question_count") or 0,
+                        "问答记忆": memory_before.get("qa_memory_text") or "当前暂无问答对",
+                        "历史检索问题索引": memory_before.get("retrieval_question_index_text") or "当前暂无历史检索问题",
                     },
                     handoff="主控编排",
-                    final_return="会话记忆摘要已送入后续决策链路",
+                    final_return="显式 QA 记忆与历史检索问题索引已送入主控",
                     status="完成",
-                    note="该阶段读取当前会话中的长期记忆与检索摘要",
+                    note="该阶段只读取显式问答记忆与历史检索问题索引，不再做旧摘要兼容",
                 ),
             }
         )
 
-        if resolved_query:
-            events.append(
-                {
-                    "event_id": cls._safe_event_id(turn_id, "rewrite", 0),
-                    "event_time": started_at,
-                    "lane": "主控编排",
-                    "stage": "问题改写",
-                    "title": "生成本轮独立问题",
-                    "summary": cls._sanitize_text(
-                        resolved_query.get("standalone_question") or question or "本轮问题改写结果",
-                        120,
-                    ),
-                    "actor": "主控编排",
-                    "kind": "model_call",
-                    "detail": cls._build_detail(
-                        input_content=question,
-                        output_content={
-                            "独立问题": resolved_query.get("standalone_question") or "无",
-                            "意图": resolved_query.get("intent") or "无",
-                            "问题模式": resolved_query.get("question_mode") or "无",
-                            "优先来源": cls._join_lines(resolved_query.get("preferred_sources"), limit=4, item_limit=40),
-                        },
-                        handoff="主控编排",
-                        final_return=resolved_query.get("standalone_question") or question,
-                        status="完成",
-                        note="主控先把用户问题补全为当前轮的独立问题",
-                    ),
-                }
-            )
-
         if orchestrator_decision:
-            response_mode = cls._normalize_response_mode_for_display(orchestrator_decision.get("response_mode"))
-            response_label = cls._response_mode_label(response_mode)
-            route_reason = (
-                orchestrator_decision.get("direct_reason")
-                or orchestrator_decision.get("retrieval_reason")
-                or orchestrator_decision.get("memory_route_reason")
-                or "无"
-            )
+            controller_mode = cls._normalize_controller_mode(orchestrator_decision.get("controller_mode"))
+            controller_label = cls._controller_mode_label(controller_mode)
+            answer_mode = orchestrator_decision.get("answer_mode") or "unknown"
+            final_source = orchestrator_decision.get("final_source") or "controller"
+            compression_count = int(orchestrator_decision.get("compression_count") or 0)
+            aborted_for_prompt_budget = bool(orchestrator_decision.get("aborted_for_prompt_budget"))
             events.append(
                 {
                     "event_id": cls._safe_event_id(turn_id, "decision", 0),
@@ -480,25 +443,32 @@ class AdminSessionsService:
                     "stage": "主控决策",
                     "title": "确定响应路径",
                     "summary": cls._sanitize_text(
-                        f"响应模式：{response_label}；回答模式：{orchestrator_decision.get('answer_mode') or 'unknown'}；原因：{route_reason}",
+                        (
+                            f"主控模式：{controller_label}；回答模式：{answer_mode}；来源：{final_source}；"
+                            f"压缩次数：{compression_count}"
+                            + ("；已因超限中止" if aborted_for_prompt_budget else "")
+                        ),
                         120,
                     ),
                     "actor": "主控编排",
                     "kind": "decision",
                     "detail": cls._build_detail(
-                        input_content=resolved_query.get("standalone_question") or question,
+                        input_content=question,
                         output_content={
-                            "响应模式": response_label,
-                            "回答模式": orchestrator_decision.get("answer_mode") or "unknown",
-                            "路由原因": route_reason,
-                            "回答来源": orchestrator_decision.get("answer_source") or "unknown",
-                            "问题模式": orchestrator_decision.get("question_mode") or "unknown",
-                            "主题切换": "已触发" if orchestrator_decision.get("topic_shift_detected") else "未触发",
+                            "主控模式": controller_label,
+                            "回答模式": answer_mode,
+                            "回答来源": final_source,
+                            "检索轮次": orchestrator_decision.get("retrieval_round") or 0,
+                            "提示词预算": orchestrator_decision.get("prompt_budget_limit") or 0,
+                            "压缩次数": compression_count,
+                            "压缩前分词数": orchestrator_decision.get("prompt_token_count_before_last_decision") or 0,
+                            "压缩后分词数": orchestrator_decision.get("prompt_token_count_after_last_compression") or 0,
+                            "是否超限中止": "是" if aborted_for_prompt_budget else "否",
                         },
                         handoff="图谱代理 / 检索代理 / 评估代理",
                         final_return="主控已将问题分发到后续执行链路",
                         status="完成",
-                        note=f"Topic shift 原因：{orchestrator_decision.get('topic_shift_reason') or 'no_shift'}",
+                        note="主控统一根据显式 QA 记忆、历史检索问题索引和当前工具结果做决策",
                     ),
                 }
             )
@@ -665,11 +635,11 @@ class AdminSessionsService:
             orchestrator_decision = (
                 merged_turn.get("orchestrator_decision") if isinstance(merged_turn.get("orchestrator_decision"), dict) else {}
             )
-            normalized_response_mode = self._normalize_response_mode_for_display(orchestrator_decision.get("response_mode"))
+            normalized_controller_mode = self._normalize_controller_mode(orchestrator_decision.get("controller_mode"))
             normalized_decision = {
                 **orchestrator_decision,
-                "response_mode": normalized_response_mode,
-                "response_mode_label": self._response_mode_label(normalized_response_mode),
+                "controller_mode": normalized_controller_mode,
+                "controller_mode_label": self._controller_mode_label(normalized_controller_mode),
             }
             merged_for_events = {**merged_turn, "orchestrator_decision": normalized_decision}
             normalized_turns.append(
@@ -686,7 +656,6 @@ class AdminSessionsService:
                     "llm_calls": int(merged_turn.get("llm_calls") or 0),
                     "total_tokens": int(merged_turn.get("total_tokens") or 0),
                     "memory_before": merged_turn.get("memory_before") if isinstance(merged_turn.get("memory_before"), dict) else {},
-                    "resolved_query": merged_turn.get("resolved_query") if isinstance(merged_turn.get("resolved_query"), dict) else {},
                     "orchestrator_decision": normalized_decision,
                     "agent_lanes": merged_turn.get("agent_lanes") if isinstance(merged_turn.get("agent_lanes"), dict) else {},
                     "flow_events": self._build_flow_events(merged_for_events),

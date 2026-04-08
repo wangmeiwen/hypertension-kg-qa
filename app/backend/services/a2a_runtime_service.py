@@ -116,8 +116,6 @@ class A2ARuntimeService:
         raw_max_turns = meta.get("max_turns")
         max_turns: Optional[int] = raw_max_turns if isinstance(raw_max_turns, int) and raw_max_turns > 0 else None
         original_input_text = str(meta.get("original_input_text") or input_text or "").strip()
-        resolved_query_obj = meta.get("resolved_query")
-        resolved_query = resolved_query_obj if isinstance(resolved_query_obj, dict) else {}
         memory_context_obj = meta.get("memory_context")
         memory_context = memory_context_obj if isinstance(memory_context_obj, dict) else {}
 
@@ -130,7 +128,6 @@ class A2ARuntimeService:
             strategy=strategy,
             max_turns=max_turns,
             original_input_text=original_input_text,
-            resolved_query=resolved_query,
             memory_context=memory_context,
             cancel_check=cancel_check,
             progress_callback=progress_callback,

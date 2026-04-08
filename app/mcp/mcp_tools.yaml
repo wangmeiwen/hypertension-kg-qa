@@ -51,3 +51,17 @@ tools:
     input_schema:
       query: str
       top_k: int?
+
+  - server_name: local
+    tool_name: history_read
+    alias: history_read
+    description: |
+      读取当前会话里某个历史检索问题保存下来的 query 和归一化结果内容，适合主控在回答前先复盘历史检索。
+      输入至少提供一种定位方式：history_id 或 user_question；同时必须提供 session_id。
+      示例：
+      - 按 history_id 读取：{"session_id":"session-1","history_id":"h-12-13"}
+      - 按历史问题读取：{"session_id":"session-1","user_question":"ACEI 和 ARB 联用是否推荐"}
+    input_schema:
+      session_id: str
+      history_id: str?
+      user_question: str?

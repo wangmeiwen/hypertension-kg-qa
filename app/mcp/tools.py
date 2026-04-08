@@ -26,6 +26,7 @@ from typing import Any, Optional
 from app.common.config import Config
 from app.common.perf_logger import log_duration
 from app.a2a.agent.llm_client import LLMClient
+from app.backend.services.session_memory_service import SessionMemoryService
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.mcp.server import MCPServer, MCPTool
 from app.mcp.tool_manager import ToolManager
@@ -508,6 +509,27 @@ class KgEntityRelationSearchTool:
             }
 
 
+class HistoryReadTool:
+    """读取会话历史检索记录。"""
+
+    def __init__(self) -> None:
+        self._memory = SessionMemoryService()
+
+    async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(payload.get("session_id") or "").strip()
+        history_id = str(payload.get("history_id") or "").strip()
+        user_question = str(payload.get("user_question") or "").strip()
+        if not session_id:
+            return {"matched": False, "records": [], "error": "session_id_required"}
+        if not history_id and not user_question:
+            return {"matched": False, "records": [], "error": "history_id_or_user_question_required"}
+        return await self._memory.read_retrieval_history(
+            session_id=session_id,
+            history_id=history_id,
+            user_question=user_question,
+        )
+
+
 # 全局 MCP 服务器实例（单例模式）
 _mcp_server_instance: Optional[MCPServer] = None
 
@@ -682,6 +704,22 @@ def build_mcp_server() -> MCPServer:
         "handler": kg_er_handler,
     }
 
+    history_read_tool = HistoryReadTool()
+
+    async def history_read_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        """处理 `history_read` 请求，返回指定历史问题下的检索记录。"""
+        return await history_read_tool.query(payload)
+
+    builtin_registry["history_read"] = {
+        "description": "读取当前会话中某个历史检索问题对应的 query 与结果内容",
+        "input_schema": {
+            "session_id": "str",
+            "history_id": "str?",
+            "user_question": "str?",
+        },
+        "handler": history_read_handler,
+    }
+
     config_path = Path(__file__).resolve().with_name("mcp_tools.yaml")
     manager = ToolManager(config_path=config_path)
 
@@ -739,7 +777,7 @@ async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str
         if isinstance(item, dict)
     }
 
-    required_tools = ["kg_query", "rag_search"]
+    required_tools = ["kg_query", "rag_search", "history_read"]
     optional_tools = ["kg_entity_relation_search"]
 
     missing_required = [name for name in required_tools if name not in tool_names]
@@ -752,6 +790,7 @@ async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str
     probe_payloads: dict[str, dict[str, Any]] = {
         "kg_query": {"keyword": "", "limit": 1},
         "rag_search": {"query": "", "top_k": 1},
+        "history_read": {"session_id": "probe", "history_id": "missing"},
         "kg_entity_relation_search": {"query": "", "top_k": 1},
     }
 
@@ -820,4 +859,3 @@ def sanitize_tool_observation(observation: dict[str, Any], max_chars: int = 4000
     if len(text) > max_chars:
         return text[:max_chars] + "...[truncated]"
     return text
-

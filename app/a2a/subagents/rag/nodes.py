@@ -2,10 +2,54 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.a2a.mcp.tool_gateway import MCPToolGateway
 from app.a2a.models import SubAgentResult
 from app.a2a.subagents.rag.query_builder import build_rag_payload, validate_rag_payload
 from app.a2a.subagents.rag.state import RagSubAgentState
+
+
+def _build_query_records(
+    query_statements: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, statement in enumerate(query_statements):
+        if not isinstance(statement, dict):
+            continue
+        payload_obj = statement.get("payload")
+        payload = payload_obj if isinstance(payload_obj, dict) else {}
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            continue
+        row = tool_results[index] if index < len(tool_results) and isinstance(tool_results[index], dict) else {}
+        result_obj = row.get("result")
+        result = result_obj if isinstance(result_obj, dict) else {}
+        hits_obj = result.get("hits")
+        hits = hits_obj if isinstance(hits_obj, list) else []
+        content_parts: list[str] = []
+        citations: list[str] = []
+        for hit in hits[:3]:
+            if not isinstance(hit, dict):
+                continue
+            snippet = str(hit.get("text") or hit.get("parent_content") or "").replace("\n", " ").strip()
+            if snippet:
+                content_parts.append(snippet[:280])
+            citation = str(hit.get("source") or hit.get("id") or "").strip()
+            if citation and citation not in citations:
+                citations.append(citation)
+        records.append(
+            {
+                "agent": "rag",
+                "query": query,
+                "result_content": " | ".join(content_parts)[:1600],
+                "captured_at": "",
+                "citations": citations[:6],
+                "has_signal": bool(content_parts),
+            }
+        )
+    return records
 
 
 async def node_validate_constraints(state: RagSubAgentState) -> RagSubAgentState:
@@ -115,6 +159,8 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
 
     query_statements_obj = state.get("query_statements")
     query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
+    tool_results_obj = state.get("tool_results")
+    tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
     queries_used: list[str] = []
     for statement in query_statements:
         if not isinstance(statement, dict):
@@ -124,6 +170,7 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
         query = str(payload.get("query") or "").strip()
         if query:
             queries_used.append(query)
+    query_records = _build_query_records(query_statements, tool_results)
 
     if evidence_count == 0:
         signal = "none"
@@ -138,7 +185,8 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
         question=str(state.get("input_question") or ""),
         query_statements=query_statements,
         queries_used=queries_used,
-        tool_results=state.get("tool_results") or [],
+        query_records=query_records,
+        tool_results=tool_results,
         evidence=evidence_rows,
         signal=signal,
         coverage={

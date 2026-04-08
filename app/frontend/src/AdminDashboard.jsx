@@ -643,39 +643,58 @@ export default function AdminDashboard({ onLogout }) {
                       <h4>会话记忆与主控判定</h4>
                       <div className="human-readable-card-grid flow-summary-grid">
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">会话目标</div>
-                          {renderExpandableText(selectedTurn.memory_before?.conversation_goal, `goal-${selectedTurn.turn_id}`, 180)}
+                          <div className="human-readable-card-title">QA 记忆条数</div>
+                          <div className="human-readable-line">{selectedTurn.memory_before?.qa_pair_count ?? "-"}</div>
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">已确认事实</div>
-                          {renderListLines(selectedTurn.memory_before?.confirmed_facts, `facts-${selectedTurn.turn_id}`)}
+                          <div className="human-readable-card-title">历史检索问题数</div>
+                          <div className="human-readable-line">{selectedTurn.memory_before?.retrieval_question_count ?? "-"}</div>
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">已回答要点</div>
-                          {renderListLines(selectedTurn.memory_before?.answered_points, `answered-${selectedTurn.turn_id}`)}
+                          <div className="human-readable-card-title">问答记忆</div>
+                          {renderExpandableText(selectedTurn.memory_before?.qa_memory_text, `qa-memory-${selectedTurn.turn_id}`, 180)}
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">未闭合问题</div>
-                          {renderListLines(selectedTurn.memory_before?.open_questions, `open-${selectedTurn.turn_id}`)}
+                          <div className="human-readable-card-title">历史检索问题索引</div>
+                          {renderExpandableText(selectedTurn.memory_before?.retrieval_question_index_text, `retrieval-index-${selectedTurn.turn_id}`, 180)}
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">响应模式</div>
+                          <div className="human-readable-card-title">主控模式</div>
                           <div className="human-readable-line">
-                            {selectedTurn.orchestrator_decision?.response_mode_label
-                              || (selectedTurn.orchestrator_decision?.response_mode === "direct_answer" ? "能直接回答" : "")
-                              || (selectedTurn.orchestrator_decision?.response_mode === "retrieval_required" ? "需要检索" : "")
-                              || selectedTurn.orchestrator_decision?.response_mode
+                            {selectedTurn.orchestrator_decision?.controller_mode_label
+                              || selectedTurn.orchestrator_decision?.controller_mode
                               || "-"}
                           </div>
                           <div className="human-readable-hint">
-                            原因：{selectedTurn.orchestrator_decision?.direct_reason || selectedTurn.orchestrator_decision?.retrieval_reason || selectedTurn.orchestrator_decision?.memory_route_reason || "-"}
+                            检索轮次：{selectedTurn.orchestrator_decision?.retrieval_round ?? "-"}
                           </div>
                         </div>
                         <div className="human-readable-card">
                           <div className="human-readable-card-title">回答模式</div>
                           <div className="human-readable-line">{selectedTurn.orchestrator_decision?.answer_mode || "-"}</div>
                           <div className="human-readable-hint">
-                            来源：{selectedTurn.orchestrator_decision?.answer_source || "-"}
+                            来源：{selectedTurn.orchestrator_decision?.final_source || "-"}
+                          </div>
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">提示词预算</div>
+                          <div className="human-readable-line">
+                            {selectedTurn.orchestrator_decision?.prompt_budget_limit ?? "-"}
+                          </div>
+                          <div className="human-readable-hint">
+                            压缩次数：{selectedTurn.orchestrator_decision?.compression_count ?? "-"}
+                          </div>
+                        </div>
+                        <div className="human-readable-card">
+                          <div className="human-readable-card-title">预算结果</div>
+                          <div className="human-readable-line">
+                            压缩前：{selectedTurn.orchestrator_decision?.prompt_token_count_before_last_decision ?? "-"}
+                          </div>
+                          <div className="human-readable-hint">
+                            压缩后：{selectedTurn.orchestrator_decision?.prompt_token_count_after_last_compression ?? "-"}
+                          </div>
+                          <div className="human-readable-hint">
+                            超限中止：{selectedTurn.orchestrator_decision?.aborted_for_prompt_budget ? "是" : "否"}
                           </div>
                         </div>
                       </div>

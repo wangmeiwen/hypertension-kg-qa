@@ -44,7 +44,6 @@ class IterativeAgent:
         strategy: str = "iterative",
         max_turns: Optional[int] = None,
         original_input_text: str = "",
-        resolved_query: dict[str, Any] | None = None,
         memory_context: dict[str, Any] | None = None,
         cancel_check: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
@@ -101,7 +100,6 @@ class IterativeAgent:
             strategy=str(strategy or "iterative").strip() or "iterative",
             max_turns=turns,
             original_input_text=str(original_input_text or "").strip(),
-            resolved_query=resolved_query if isinstance(resolved_query, dict) else {},
             memory_context=memory_context if isinstance(memory_context, dict) else {},
             progress_callback=progress_callback,
         )

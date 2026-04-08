@@ -69,6 +69,7 @@ class RagSubAgent:
                     "ok": True,
                     "query_statements": result.get("query_statements") if isinstance(result.get("query_statements"), list) else [],
                     "queries_used": result.get("queries_used") if isinstance(result.get("queries_used"), list) else [],
+                    "query_records": result.get("query_records") if isinstance(result.get("query_records"), list) else [],
                     "tool_results": result.get("tool_results") if isinstance(result.get("tool_results"), list) else [],
                     "evidence": evidence,
                     "signal": str(result.get("signal") or "none"),
@@ -87,6 +88,7 @@ class RagSubAgent:
                 {
                     "ok": False,
                     "query_statements": [],
+                    "query_records": [],
                     "tool_results": [],
                     "evidence": [],
                     "no_signal": True,

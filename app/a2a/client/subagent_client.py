@@ -49,6 +49,8 @@ class SubAgentClientFactory:
         query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
         queries_used_obj = first_item.get("queries_used")
         queries_used = queries_used_obj if isinstance(queries_used_obj, list) else []
+        query_records_obj = first_item.get("query_records")
+        query_records = query_records_obj if isinstance(query_records_obj, list) else []
         tool_results_obj = first_item.get("tool_results")
         tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
         evidence_obj = first_item.get("evidence")
@@ -94,6 +96,7 @@ class SubAgentClientFactory:
             question=task.question,
             query_statements=query_statements,
             queries_used=[str(item) for item in queries_used],
+            query_records=query_records,
             tool_results=tool_results,
             evidence=evidence,
             signal=signal,

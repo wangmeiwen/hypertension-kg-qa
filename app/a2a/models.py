@@ -60,6 +60,7 @@ class SubAgentResult(BaseModel):
     question: str = Field(default="")
     query_statements: list[dict[str, Any]] = Field(default_factory=list)
     queries_used: list[str] = Field(default_factory=list)
+    query_records: list[dict[str, Any]] = Field(default_factory=list)
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     signal: str = Field(default="none")
