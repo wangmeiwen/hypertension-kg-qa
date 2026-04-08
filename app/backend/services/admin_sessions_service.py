@@ -303,8 +303,7 @@ class AdminSessionsService:
             "主控编排": 0,
             "图谱代理": 1,
             "检索代理": 2,
-            "评估代理": 3,
-            "外部资源": 4,
+            "外部资源": 3,
         }
         return mapping.get(str(name or ""), 99)
 
@@ -465,7 +464,7 @@ class AdminSessionsService:
                             "压缩后分词数": orchestrator_decision.get("prompt_token_count_after_last_compression") or 0,
                             "是否超限中止": "是" if aborted_for_prompt_budget else "否",
                         },
-                        handoff="图谱代理 / 检索代理 / 评估代理",
+                        handoff="图谱代理 / 检索代理",
                         final_return="主控已将问题分发到后续执行链路",
                         status="完成",
                         note="主控统一根据显式 QA 记忆、历史检索问题索引和当前工具结果做决策",
@@ -474,7 +473,7 @@ class AdminSessionsService:
             )
 
         event_index = 0
-        for lane_name in ("主控编排", "图谱代理", "检索代理", "评估代理"):
+        for lane_name in ("主控编排", "图谱代理", "检索代理"):
             cards = agent_lanes.get(lane_name) if isinstance(agent_lanes.get(lane_name), list) else []
             for card in cards:
                 row = card if isinstance(card, dict) else {}
@@ -484,8 +483,8 @@ class AdminSessionsService:
                 event_time = str(row.get("occurred_at") or row.get("started_at") or row.get("finished_at") or finished_at)
                 output_handoff = "主控编排"
                 if lane_name == "主控编排":
-                    output_handoff = "图谱代理 / 检索代理 / 评估代理"
-                elif lane_name in {"图谱代理", "检索代理", "评估代理"}:
+                    output_handoff = "图谱代理 / 检索代理"
+                elif lane_name in {"图谱代理", "检索代理"}:
                     output_handoff = "主控编排"
                 events.append(
                     {

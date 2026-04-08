@@ -404,8 +404,6 @@ def _extract_llm_role_from_compact(messages_compact: str) -> str:
         return "图谱代理"
     if "Retrieval Agent" in text or "检索" in text:
         return "检索代理"
-    if "Evaluator Agent" in text or "评估" in text:
-        return "评估代理"
     return "主控编排"
 
 
@@ -475,7 +473,7 @@ def _build_lane_card_from_tool_observation(
     elif agent == "history" or "history" in tool_name.lower():
         lane_name = "主控编排"
     else:
-        lane_name = "评估代理"
+        lane_name = "主控编排"
     result_payload = observation.get("result") if isinstance(observation.get("result"), dict) else {}
     return {
         "lane_name": lane_name,
@@ -487,45 +485,6 @@ def _build_lane_card_from_tool_observation(
         "full_decision": _sanitize_preview(json.dumps(result_payload, ensure_ascii=False), 1200),
         "status": "成功" if bool(result_payload.get("ok", True)) else "失败",
     }
-
-
-def _build_evaluator_lane_card(
-    question: str,
-    evidence_summary: Dict[str, Any],
-    telemetry: Dict[str, Any],
-    fallback_time: str,
-) -> Dict[str, Any]:
-    """构建并返回目标数据。
-    
-    Args:
-        question: 用户输入问题文本。
-        evidence_summary: 函数输入参数。
-        telemetry: 函数输入参数。
-        fallback_time: 函数输入参数。
-    
-    Returns:
-        Dict[str, Any]: 结构化结果数据。
-    """
-    answerability = telemetry.get("answerability") if isinstance(telemetry.get("answerability"), dict) else {}
-    gate_result = telemetry.get("gate_result") if isinstance(telemetry.get("gate_result"), dict) else {}
-    decision_rows = [
-        f"回答模式：{answerability.get('answer_mode') or evidence_summary.get('answer_mode') or 'unknown'}",
-        f"是否通过门控：{'是' if bool(answerability.get('gate_passed', gate_result.get('gate_passed'))) else '否'}",
-    ]
-    missing_points = gate_result.get("missing_points") if isinstance(gate_result.get("missing_points"), list) else []
-    if missing_points:
-        decision_rows.append(f"未覆盖点：{'；'.join([_sanitize_preview(item, 50) for item in missing_points[:3]])}")
-    return {
-        "lane_name": "评估代理",
-        "title": "终答门控评估",
-        "occurred_at": fallback_time,
-        "prompt_preview": _sanitize_preview(question, 140),
-        "decision_preview": "；".join(decision_rows),
-        "full_prompt": f"评估问题：{question}",
-        "full_decision": "；".join(decision_rows),
-        "status": "完成",
-    }
-
 
 def _build_orchestrator_cards(
     input_text: str,
@@ -871,14 +830,12 @@ def _build_turn_observability_payload(
         "主控编排": _build_orchestrator_cards(input_text, memory_context, telemetry, llm_rows, started_at, finished_at),
         "图谱代理": [],
         "检索代理": [],
-        "评估代理": [],
     }
     for observation in tool_observations:
         card = _build_lane_card_from_tool_observation(observation, finished_at)
         lane_name = str(card.get("lane_name") or "")
         agent_lanes[lane_name] = agent_lanes.get(lane_name) if isinstance(agent_lanes.get(lane_name), list) else []
         agent_lanes[lane_name].append(card)
-    agent_lanes["评估代理"].append(_build_evaluator_lane_card(str(input_text or ""), evidence_summary, telemetry, finished_at))
 
     return {
         "record_type": "turn_observability",

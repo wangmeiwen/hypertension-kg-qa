@@ -11,7 +11,6 @@ import uuid
 from typing import Any, Awaitable, Callable, Optional
 
 from app.a2a.cards import (
-    build_evaluator_card,
     build_kg_subagent_card,
     build_orchestrator_card,
     build_rag_subagent_card,
@@ -92,8 +91,6 @@ class A2AService:
             card = build_kg_subagent_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
         elif "retrieval" in name_lower or "rag" in name_lower:
             card = build_rag_subagent_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
-        elif "evaluator" in name_lower:
-            card = build_evaluator_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
         else:
             card = build_orchestrator_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
         card["name"] = self._agent_name

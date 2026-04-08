@@ -39,7 +39,7 @@ def get_feature_flag(name: str, default: bool = False) -> bool:
     该函数从环境变量读取指定开关，再通过 `_to_bool` 做布尔化处理。
 
     Args:
-        name: 环境变量名，例如 ENABLE_A2A_ORCHESTRATION。
+        name: 环境变量名，例如 ENABLE_HEAVY_API_RATE_LIMIT。
         default: 环境变量不存在或值非法时的默认值。
 
     Returns:
@@ -57,8 +57,6 @@ def get_runtime_flag_snapshot() -> Dict[str, bool]:
         Dict[str, bool]: 以开关名为键、启用状态为值的字典。
     """
     return {
-        "ENABLE_A2A_ORCHESTRATION": get_feature_flag("ENABLE_A2A_ORCHESTRATION", True),
-        "ENABLE_MCP_V2_DISPATCH": get_feature_flag("ENABLE_MCP_V2_DISPATCH", True),
         "ENABLE_HEAVY_API_RATE_LIMIT": get_feature_flag("ENABLE_HEAVY_API_RATE_LIMIT", True),
         "ENABLE_MCP_TOOL_CIRCUIT_BREAKER": get_feature_flag("ENABLE_MCP_TOOL_CIRCUIT_BREAKER", True),
     }

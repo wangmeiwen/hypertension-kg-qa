@@ -181,7 +181,7 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   const selectedTurn = sessionObservability.find((turn) => turn.turn_id === selectedTurnId) || sessionObservability[0] || null;
-  const flowLaneNames = ["主控编排", "图谱代理", "检索代理", "评估代理", "外部资源"];
+  const flowLaneNames = ["主控编排", "图谱代理", "检索代理", "外部资源"];
 
   const toggleExpandedText = (key) => {
     setExpandedTextMap((prev) => ({ ...prev, [key]: !prev[key] }));

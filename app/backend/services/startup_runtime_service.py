@@ -104,12 +104,10 @@ class StartupRuntimeService:
             )
             graph_card = self._a2a_runtime.get_a2a_graph().get_agent_card()
             retrieval_card = self._a2a_runtime.get_a2a_retrieval().get_agent_card()
-            evaluator_card = self._a2a_runtime.get_a2a_evaluator().get_agent_card()
             logger.info(
-                "A2A 子代理已初始化: %s, %s, %s",
+                "A2A 子代理已初始化: %s, %s",
                 graph_card.get("name", ""),
                 retrieval_card.get("name", ""),
-                evaluator_card.get("name", ""),
             )
         except Exception as exc:
             self._log_api_error("startup", "a2a_init", exc)

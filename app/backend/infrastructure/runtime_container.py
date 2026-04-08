@@ -24,7 +24,6 @@ class BackendRuntimeContainer:
     a2a_service: Optional["A2AService"] = None
     a2a_graph_service: Optional["A2AService"] = None
     a2a_retrieval_service: Optional["A2AService"] = None
-    a2a_evaluator_service: Optional["A2AService"] = None
     graph_subagent: Optional["GraphSubAgent"] = None
     rag_subagent: Optional["RagSubAgent"] = None
     session_memory_service: Optional["SessionMemoryService"] = None

@@ -342,81 +342,6 @@ class A2ARuntimeService:
             },
         }
 
-    async def _run_evaluator_a2a_query(
-        self,
-        input_text: str,
-        context_id: str = "",
-        user_id: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
-        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-    ) -> Dict[str, Any]:
-        """评估子代理执行入口。"""
-        _ = input_text
-        _ = context_id
-        _ = user_id
-        _ = cancel_check
-        meta = metadata if isinstance(metadata, dict) else {}
-        traces_obj = meta.get("traces") or meta.get("tool_observations")
-        traces = traces_obj if isinstance(traces_obj, list) else []
-        classification_obj = meta.get("classification")
-        classification = classification_obj if isinstance(classification_obj, dict) else {}
-        backtrack_count = int(meta.get("backtrack_count") or 0)
-        max_backtrack = int(meta.get("max_backtrack") or 2)
-        is_degraded = bool(meta.get("is_degraded"))
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "event": "evaluator_start",
-                    "detail": "evidence evaluator running",
-                    "tool_name": "evaluator_agent",
-                }
-            )
-        from app.a2a.agent.gating_mechanism.evidence_evaluator import evaluate_and_gate
-
-        gate_result = evaluate_and_gate(
-            traces=traces,
-            classification=classification,
-            backtrack_count=backtrack_count,
-            max_backtrack=max_backtrack,
-            is_degraded=is_degraded,
-        )
-        gate_passed = bool(gate_result.get("gate_passed"))
-        note = "证据门控通过，可终答" if gate_passed else "证据未达到终答阈值，需继续补检索"
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "event": "evaluator_done",
-                    "detail": note,
-                    "tool_name": "evaluator_agent",
-                }
-            )
-        return {
-            "output": note,
-            "output_type": "evaluator_gate",
-            "confidence": float(gate_result.get("confidence") or 0.0),
-            "evaluator_result": gate_result,
-            "telemetry": {
-                "gate_passed": gate_passed,
-                "sufficient": bool(gate_result.get("sufficient")),
-                "should_backtrack": bool(gate_result.get("should_backtrack")),
-                "evidence_count": int(gate_result.get("evidence_count") or 0),
-                "conflict_count": int(gate_result.get("conflict_count") or 0),
-            },
-            "evidence_summary": {
-                "evidence_count": int(gate_result.get("evidence_count") or 0),
-                "conflict_count": int(gate_result.get("conflict_count") or 0),
-                "hop_coverage": float(gate_result.get("hop_coverage") or 0.0),
-                "uncovered_points": gate_result.get("uncovered_points") or [],
-                "high_risk": bool(gate_result.get("high_risk")),
-                "high_risk_tokens": gate_result.get("high_risk_tokens") or [],
-                "disambiguation_ambiguous_count": int(gate_result.get("disambiguation_ambiguous_count") or 0),
-                "community_count": int(gate_result.get("community_count") or 0),
-                "top_community_score": float(gate_result.get("top_community_score") or 0.0),
-                "force_supplement_required": bool(gate_result.get("force_supplement_required")),
-            },
-        }
-
     def get_a2a(self) -> Any:
         """获取主编排 A2A 服务。"""
         if self._runtime.a2a_service is None:
@@ -462,28 +387,12 @@ class A2ARuntimeService:
             )
         return self._runtime.a2a_retrieval_service
 
-    def get_a2a_evaluator(self) -> Any:
-        """获取评估子代理 A2A 服务。"""
-        if self._runtime.a2a_evaluator_service is None:
-            from app.a2a import A2AService
-
-            self._runtime.a2a_evaluator_service = A2AService(
-                run_query=self._run_evaluator_a2a_query,
-                agent_name="Hypertension Evaluator Agent",
-                agent_description="证据门控与风险评估代理（A2A 适配）",
-                protocol_version="0.2.5",
-                agent_url="/a2a/evaluator/rpc",
-                events_base_path="/a2a/evaluator/tasks",
-            )
-        return self._runtime.a2a_evaluator_service
-
     async def build_a2a_runtime_snapshot(self, limit_per_service: int = 200) -> Dict[str, Any]:
         """汇总 A2A 运行时任务快照。"""
         services = {
             "orchestrator": self.get_a2a(),
             "graph": self.get_a2a_graph(),
             "retrieval": self.get_a2a_retrieval(),
-            "evaluator": self.get_a2a_evaluator(),
         }
         result: Dict[str, Any] = {}
         total = 0
@@ -561,6 +470,3 @@ class A2ARuntimeService:
         if self._runtime.a2a_retrieval_service is not None:
             await self._runtime.a2a_retrieval_service.ashutdown()
             self._runtime.a2a_retrieval_service = None
-        if self._runtime.a2a_evaluator_service is not None:
-            await self._runtime.a2a_evaluator_service.ashutdown()
-            self._runtime.a2a_evaluator_service = None

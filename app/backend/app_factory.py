@@ -159,7 +159,6 @@ def create_app() -> FastAPI:
         get_a2a=a2a_runtime_service.get_a2a,
         get_a2a_graph=a2a_runtime_service.get_a2a_graph,
         get_a2a_retrieval=a2a_runtime_service.get_a2a_retrieval,
-        get_a2a_evaluator=a2a_runtime_service.get_a2a_evaluator,
         log_api_error=_log_api_error,
     )
 

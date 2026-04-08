@@ -38,7 +38,7 @@ def get_mcp_server(request: Request) -> Any:
 
 def get_a2a_service(
     request: Request,
-    kind: Literal["orchestrator", "graph", "retrieval", "evaluator"],
+    kind: Literal["orchestrator", "graph", "retrieval"],
 ) -> A2AService:
     """按类型获取 A2A 服务依赖。"""
     runtime = get_runtime(request)
@@ -46,7 +46,6 @@ def get_a2a_service(
         "orchestrator": runtime.a2a_service,
         "graph": runtime.a2a_graph_service,
         "retrieval": runtime.a2a_retrieval_service,
-        "evaluator": runtime.a2a_evaluator_service,
     }
     service = mapping.get(kind)
     if isinstance(service, A2AService):

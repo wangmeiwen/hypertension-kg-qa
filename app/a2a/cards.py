@@ -129,34 +129,6 @@ def build_rag_subagent_card(
     )
 
 
-def build_evaluator_card(
-    agent_url: str = "/a2a/evaluator/rpc",
-    protocol_version: str = "0.2.5",
-) -> dict[str, Any]:
-    """构建 evaluator_card。
-    
-    Args:
-        agent_url: 参数。
-        protocol_version: 参数。
-    
-    Returns:
-        执行结果。
-    """
-    return _base_card(
-        name="Hypertension Evaluator Agent",
-        description="证据门控代理，负责评估证据充分性与风险。",
-        url=agent_url,
-        protocol_version=protocol_version,
-        skills=[
-            {
-                "id": "medical_evidence_gating",
-                "name": "Medical Evidence Gating",
-                "description": "对证据进行门控评估，输出是否可终答。",
-            }
-        ],
-    )
-
-
 def all_agent_cards(protocol_version: str = "0.2.5") -> list[dict[str, Any]]:
     """执行 all_agent_cards。
     
@@ -170,5 +142,4 @@ def all_agent_cards(protocol_version: str = "0.2.5") -> list[dict[str, Any]]:
         build_orchestrator_card(protocol_version=protocol_version),
         build_kg_subagent_card(protocol_version=protocol_version),
         build_rag_subagent_card(protocol_version=protocol_version),
-        build_evaluator_card(protocol_version=protocol_version),
     ]

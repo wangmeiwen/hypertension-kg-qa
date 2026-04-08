@@ -15,14 +15,13 @@ from app.common.langsmith_tracing import set_trace_metadata
 
 
 class A2ADispatchService:
-    """统一处理 A2A 四类 service 的路由分发。"""
+    """统一处理 A2A 三类 service 的路由分发。"""
 
     def __init__(
         self,
         get_a2a: Callable[[], A2AService],
         get_a2a_graph: Callable[[], A2AService],
         get_a2a_retrieval: Callable[[], A2AService],
-        get_a2a_evaluator: Callable[[], A2AService],
         log_api_error: Callable[..., None],
     ) -> None:
         """初始化实例并注入运行依赖。
@@ -31,7 +30,6 @@ class A2ADispatchService:
             get_a2a: 函数输入参数。
             get_a2a_graph: 函数输入参数。
             get_a2a_retrieval: 函数输入参数。
-            get_a2a_evaluator: 函数输入参数。
             log_api_error: 函数输入参数。
         
         Returns:
@@ -41,7 +39,6 @@ class A2ADispatchService:
             "orchestrator": get_a2a,
             "graph": get_a2a_graph,
             "retrieval": get_a2a_retrieval,
-            "evaluator": get_a2a_evaluator,
         }
         self._log_api_error = log_api_error
 
