@@ -1,4 +1,4 @@
-﻿"""异步调用辅助（已移除线程池执行器）。"""
+﻿"""异步调用辅助"""
 
 from __future__ import annotations
 
