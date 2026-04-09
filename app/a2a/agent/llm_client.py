@@ -163,6 +163,8 @@ class LLMClient:
         messages: list[dict[str, Any]],
         temperature: float = 0.1,
         timeout: int = 60,
+        actor_role: str | None = None,
+        actor_name: str | None = None,
     ) -> LLMResponse:
         """调用大模型并返回内容和 token 使用量"""
 
@@ -172,6 +174,8 @@ class LLMClient:
                 "model": self.conf.MODEL_NAME,
                 "temperature": temperature,
                 "message_count": len(messages),
+                "actor_role": str(actor_role or ""),
+                "actor_name": str(actor_name or ""),
             },
             tags=["llm", "requests_chat_completions"],
         )
@@ -190,6 +194,8 @@ class LLMClient:
                 "message_count": len(messages),
                 "messages_compact": _compact_payload(messages),
                 "messages_hash": _hash_payload(messages),
+                "actor_role": str(actor_role or ""),
+                "actor_name": str(actor_name or ""),
             },
         )
 
@@ -229,6 +235,8 @@ class LLMClient:
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                     "messages_hash": _hash_payload(messages),
+                    "actor_role": str(actor_role or ""),
+                    "actor_name": str(actor_name or ""),
                 },
             )
 
@@ -244,6 +252,8 @@ class LLMClient:
                 latency_ms=(time.perf_counter() - started) * 1000,
                 finish_reason="",
                 error=str(exc),
+                actor_role=str(actor_role or ""),
+                actor_name=str(actor_name or ""),
             )
 
             raise
@@ -309,6 +319,8 @@ class LLMClient:
             total_tokens=total_tokens,
             latency_ms=(time.perf_counter() - started) * 1000,
             finish_reason=finish_reason,
+            actor_role=str(actor_role or ""),
+            actor_name=str(actor_name or ""),
         )
 
         _log_server_llm_event(
@@ -323,6 +335,8 @@ class LLMClient:
                 "finish_reason": str(finish_reason or ""),
                 "response_compact": _compact_payload(content),
                 "response_hash": _hash_payload(content),
+                "actor_role": str(actor_role or ""),
+                "actor_name": str(actor_name or ""),
             },
         )
 
@@ -341,6 +355,8 @@ class LLMClient:
         messages: list[dict[str, Any]],
         temperature: float = 0.1,
         timeout: int = 60,
+        actor_role: str | None = None,
+        actor_name: str | None = None,
     ) -> LLMResponse:
         """异步调用大模型并返回内容和 token 使用量"""
 
@@ -351,6 +367,8 @@ class LLMClient:
                 "model": self.conf.MODEL_NAME,
                 "temperature": temperature,
                 "message_count": len(messages),
+                "actor_role": str(actor_role or ""),
+                "actor_name": str(actor_name or ""),
             },
             tags=["llm", "httpx_async_chat_completions"],
         )
@@ -369,6 +387,8 @@ class LLMClient:
                 "message_count": len(messages),
                 "messages_compact": _compact_payload(messages),
                 "messages_hash": _hash_payload(messages),
+                "actor_role": str(actor_role or ""),
+                "actor_name": str(actor_name or ""),
             },
         )
 
@@ -406,6 +426,8 @@ class LLMClient:
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                     "messages_hash": _hash_payload(messages),
+                    "actor_role": str(actor_role or ""),
+                    "actor_name": str(actor_name or ""),
                 },
             )
 
@@ -421,6 +443,8 @@ class LLMClient:
                 latency_ms=(time.perf_counter() - started) * 1000,
                 finish_reason="",
                 error=str(exc),
+                actor_role=str(actor_role or ""),
+                actor_name=str(actor_name or ""),
             )
 
             raise
@@ -480,6 +504,8 @@ class LLMClient:
             total_tokens=total_tokens,
             latency_ms=(time.perf_counter() - started) * 1000,
             finish_reason=finish_reason,
+            actor_role=str(actor_role or ""),
+            actor_name=str(actor_name or ""),
         )
 
         _log_server_llm_event(
@@ -494,6 +520,8 @@ class LLMClient:
                 "finish_reason": str(finish_reason or ""),
                 "response_compact": _compact_payload(content),
                 "response_hash": _hash_payload(content),
+                "actor_role": str(actor_role or ""),
+                "actor_name": str(actor_name or ""),
             },
         )
 
@@ -512,6 +540,8 @@ class LLMClient:
         image_data: Optional[str] = None,
         temperature: float = 0.1,
         timeout: int = 120,
+        actor_role: str | None = None,
+        actor_name: str | None = None,
     ) -> LLMResponse:
         """调用支持视觉的大模型，支持图片输入"""
 
@@ -530,7 +560,13 @@ class LLMClient:
 
                     break
 
-        return self.chat_with_tokens(messages, temperature, timeout)
+        return self.chat_with_tokens(
+            messages,
+            temperature,
+            timeout,
+            actor_role=actor_role,
+            actor_name=actor_name,
+        )
 
     async def chat_with_vision_async(
         self,
@@ -538,6 +574,8 @@ class LLMClient:
         image_data: Optional[str] = None,
         temperature: float = 0.1,
         timeout: int = 120,
+        actor_role: str | None = None,
+        actor_name: str | None = None,
     ) -> LLMResponse:
         """异步调用支持视觉的大模型，支持图片输入"""
 
@@ -556,7 +594,13 @@ class LLMClient:
 
                     break
 
-        return await self.chat_with_tokens_async(messages, temperature, timeout)
+        return await self.chat_with_tokens_async(
+            messages,
+            temperature,
+            timeout,
+            actor_role=actor_role,
+            actor_name=actor_name,
+        )
 
 
 

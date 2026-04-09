@@ -190,8 +190,21 @@ export default function AdminDashboard({ onLogout }) {
     return text.length > maxLength ? text.slice(0, maxLength) + "..." : text;
   };
 
+  const formatDurationMs = (value) => {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) return "-";
+    if (numeric < 1000) return `${numeric.toFixed(0)} ms`;
+    return `${(numeric / 1000).toFixed(2)} s`;
+  };
+
+  const splitPreviewLines = (text) =>
+    String(text || "")
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
   const selectedTurn = sessionObservability.find((turn) => turn.turn_id === selectedTurnId) || sessionObservability[0] || null;
-  const flowLaneNames = ["主控编排", "图谱代理", "检索代理", "外部资源"];
+  const flowLaneNames = ["主控编排", "图谱代理", "检索代理"];
 
   // 切换某个可展开文本块的展开状态。
   const toggleExpandedText = (key) => {
@@ -238,6 +251,71 @@ export default function AdminDashboard({ onLogout }) {
     }
     return Object.entries(errors).map(([k, v]) => `${k}:${v}`).join(" | ");
   };
+
+  const selectedTurnQuestion = String(selectedTurn?.question || "").trim();
+  const selectedTurnMemoryCompression = Array.isArray(selectedTurn?.memory_compression) ? selectedTurn.memory_compression : [];
+  const selectedTurnProjectionStage = selectedTurnMemoryCompression.find(
+    (item) => item && typeof item === "object" && String(item.stage_name || "").trim() === "本轮记忆投影"
+  ) || null;
+  const selectedTurnProjectionLines = Array.isArray(selectedTurnProjectionStage?.content_lines)
+    ? selectedTurnProjectionStage.content_lines
+    : [];
+  const selectedTurnProjectionCountLine = selectedTurnProjectionLines.find(
+    (line) => String(line || "").includes("写入检索记录数：")
+  );
+  const selectedTurnProjectedRecordCount = Number(
+    String(selectedTurnProjectionCountLine || "").split("写入检索记录数：")[1] || 0
+  ) || 0;
+  const selectedTurnProjectionPreviewLine = selectedTurnProjectionLines.find(
+    (line) => String(line || "").includes("检索预览：")
+  );
+  const selectedTurnProjectionPreviews = String(selectedTurnProjectionPreviewLine || "")
+    .split("检索预览：")[1]
+    ?.split("；")
+    .map((item) => item.trim())
+    .filter((item) => item && item !== "无")
+    .slice(0, 3) || [];
+  const selectedTurnHistoryRetrievalLines = splitPreviewLines(selectedTurn?.memory_before?.retrieval_question_index_text);
+  const selectedTurnFilteredHistoryRetrievalText = selectedTurnHistoryRetrievalLines
+    .filter((line) => !selectedTurnQuestion || !line.includes(selectedTurnQuestion))
+    .join("\n");
+
+  const selectedTurnToolObservations = Array.isArray(selectedTurn?.tool_observations) ? selectedTurn.tool_observations : [];
+  const selectedTurnToolSummary = selectedTurnToolObservations.reduce(
+    (acc, observation) => {
+      const row = observation && typeof observation === "object" ? observation : {};
+      const agent = String(row.agent || "").trim().toLowerCase();
+      const toolName = String(row.tool_name || row.requested_tool_name || "").trim().toLowerCase();
+      const action = String(row.action || "").trim().toLowerCase();
+
+      acc.total += 1;
+      if (agent === "kg" || toolName.includes("kg_")) {
+        acc.kg += 1;
+      } else if (agent === "rag" || toolName.includes("rag")) {
+        acc.rag += 1;
+      } else if (agent === "history" || toolName.includes("history_read") || action === "call_history_read") {
+        acc.history += 1;
+      }
+
+      const queryRecords = Array.isArray(row.query_records) ? row.query_records : [];
+      queryRecords.forEach((item) => {
+        const preview = String(item?.query || "").trim();
+        if (preview && !acc.previews.includes(preview) && acc.previews.length < 3) {
+          acc.previews.push(preview);
+        }
+      });
+
+      if (acc.previews.length < 3) {
+        const fallbackPreview = String(row.subquery || row.question || "").trim();
+        if (fallbackPreview && !acc.previews.includes(fallbackPreview)) {
+          acc.previews.push(fallbackPreview);
+        }
+      }
+
+      return acc;
+    },
+    { total: 0, kg: 0, rag: 0, history: 0, previews: [] }
+  );
 
   const agentObsSessions = Object.values(
     agentObsRuns.reduce((acc, run) => {
@@ -595,18 +673,17 @@ export default function AdminDashboard({ onLogout }) {
       {showDetail && selectedSession && (
         <div className="modal-overlay" onClick={() => setShowDetail(false)}>
           <div className="modal session-detail-modal session-observability-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>会话详情</h3>
+            <div className="modal-header session-detail-meta-header">
+              <div className="session-meta-grid">
+                {[
+                  ["会话ID", selectedSession.id],
+                  ["用户ID", selectedSession.user_id],
+                  ["标题", selectedSession.title],
+                  ["创建时间", formatTime(selectedSession.created_at)],
+                  ["更新时间", formatTime(selectedSession.updated_at)],
+                ].map(([label, value]) => renderSessionMetaItem(label, value))}
+              </div>
               <button className="close-btn" onClick={() => setShowDetail(false)}>×</button>
-            </div>
-            <div className="session-info session-meta-grid">
-              {[
-                ["会话ID", selectedSession.id],
-                ["用户ID", selectedSession.user_id],
-                ["标题", selectedSession.title],
-                ["创建时间", formatTime(selectedSession.created_at)],
-                ["更新时间", formatTime(selectedSession.updated_at)],
-              ].map(([label, value]) => renderSessionMetaItem(label, value))}
             </div>
             <div className="session-observability-layout">
               <section className="turn-detail-section">
@@ -656,58 +733,77 @@ export default function AdminDashboard({ onLogout }) {
                     </section>
 
                     <section className="turn-detail-section">
-                      <h4>会话记忆与主控判定</h4>
+                      <h4>观测情况摘要</h4>
                       <div className="human-readable-card-grid flow-summary-grid">
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">QA 记忆条数</div>
-                          <div className="human-readable-line">{selectedTurn.memory_before?.qa_pair_count ?? "-"}</div>
+                          <div className="human-readable-card-title">会话历史记录</div>
+                          <div className="human-readable-hint">问答历史</div>
+                          {renderExpandableText(
+                            selectedTurn.memory_before?.qa_memory_text || "当前暂无问答对",
+                            `qa-memory-${selectedTurn.turn_id}`,
+                            180
+                          )}
+                          <div className="human-readable-hint" style={{ marginTop: 12 }}>历史检索问题</div>
+                          {renderExpandableText(
+                            selectedTurnFilteredHistoryRetrievalText || "当前暂无历史检索问题",
+                            `retrieval-index-${selectedTurn.turn_id}`,
+                            180
+                          )}
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">历史检索问题数</div>
-                          <div className="human-readable-line">{selectedTurn.memory_before?.retrieval_question_count ?? "-"}</div>
+                          <div className="human-readable-card-title">本轮对话中工具调用情况</div>
+                          {selectedTurnToolSummary.total > 0 || selectedTurnProjectedRecordCount > 0 ? (
+                            <>
+                              <div className="human-readable-line">调用总数：{selectedTurnToolSummary.total}</div>
+                              {selectedTurnToolSummary.total > 0 && (
+                                <div className="human-readable-hint">
+                                  kg：{selectedTurnToolSummary.kg} / rag：{selectedTurnToolSummary.rag} / history_read：{selectedTurnToolSummary.history}
+                                </div>
+                              )}
+                              {selectedTurnProjectedRecordCount > 0 && (
+                                <div className="human-readable-hint">
+                                  本轮写入检索记录：{selectedTurnProjectedRecordCount}
+                                </div>
+                              )}
+                              <div className="human-readable-hint" style={{ marginTop: 12 }}>Query / 子问题预览</div>
+                              {[...selectedTurnToolSummary.previews, ...selectedTurnProjectionPreviews]
+                                .filter((preview, index, rows) => preview && rows.indexOf(preview) === index)
+                                .slice(0, 3).length > 0 ? (
+                                [...selectedTurnToolSummary.previews, ...selectedTurnProjectionPreviews]
+                                  .filter((preview, index, rows) => preview && rows.indexOf(preview) === index)
+                                  .slice(0, 3)
+                                  .map((preview, index) => (
+                                  <div key={`tool-preview-${selectedTurn.turn_id}-${index}`} className="human-readable-line">
+                                    {index + 1}. {preview}
+                                  </div>
+                                  ))
+                              ) : (
+                                <div className="human-readable-line">本轮无可展示的 query 预览</div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="human-readable-line">本轮未调用工具</div>
+                          )}
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">问答记忆</div>
-                          {renderExpandableText(selectedTurn.memory_before?.qa_memory_text, `qa-memory-${selectedTurn.turn_id}`, 180)}
+                          <div className="human-readable-card-title">耗时</div>
+                          <div className="human-readable-line">{formatDurationMs(selectedTurn.duration_ms)}</div>
+                          <div className="human-readable-hint">开始：{formatEventTime(selectedTurn.started_at)}</div>
+                          <div className="human-readable-hint">结束：{formatEventTime(selectedTurn.finished_at)}</div>
                         </div>
                         <div className="human-readable-card">
-                          <div className="human-readable-card-title">历史检索问题索引</div>
-                          {renderExpandableText(selectedTurn.memory_before?.retrieval_question_index_text, `retrieval-index-${selectedTurn.turn_id}`, 180)}
-                        </div>
-                        <div className="human-readable-card">
-                          <div className="human-readable-card-title">主控模式</div>
+                          <div className="human-readable-card-title">提示词预算/压缩情况</div>
                           <div className="human-readable-line">
-                            {selectedTurn.orchestrator_decision?.controller_mode_label
-                              || selectedTurn.orchestrator_decision?.controller_mode
-                              || "-"}
-                          </div>
-                          <div className="human-readable-hint">
-                            检索轮次：{selectedTurn.orchestrator_decision?.retrieval_round ?? "-"}
-                          </div>
-                        </div>
-                        <div className="human-readable-card">
-                          <div className="human-readable-card-title">回答模式</div>
-                          <div className="human-readable-line">{selectedTurn.orchestrator_decision?.answer_mode || "-"}</div>
-                          <div className="human-readable-hint">
-                            来源：{selectedTurn.orchestrator_decision?.final_source || "-"}
-                          </div>
-                        </div>
-                        <div className="human-readable-card">
-                          <div className="human-readable-card-title">提示词预算</div>
-                          <div className="human-readable-line">
-                            {selectedTurn.orchestrator_decision?.prompt_budget_limit ?? "-"}
+                            预算：{selectedTurn.orchestrator_decision?.prompt_budget_limit ?? "-"}
                           </div>
                           <div className="human-readable-hint">
                             压缩次数：{selectedTurn.orchestrator_decision?.compression_count ?? "-"}
                           </div>
-                        </div>
-                        <div className="human-readable-card">
-                          <div className="human-readable-card-title">预算结果</div>
-                          <div className="human-readable-line">
-                            压缩前：{selectedTurn.orchestrator_decision?.prompt_token_count_before_last_decision ?? "-"}
+                          <div className="human-readable-hint">
+                            压缩前分词数：{selectedTurn.orchestrator_decision?.prompt_token_count_before_last_decision ?? "-"}
                           </div>
                           <div className="human-readable-hint">
-                            压缩后：{selectedTurn.orchestrator_decision?.prompt_token_count_after_last_compression ?? "-"}
+                            压缩后分词数：{selectedTurn.orchestrator_decision?.prompt_token_count_after_last_compression ?? "-"}
                           </div>
                           <div className="human-readable-hint">
                             超限中止：{selectedTurn.orchestrator_decision?.aborted_for_prompt_budget ? "是" : "否"}
@@ -744,7 +840,9 @@ export default function AdminDashboard({ onLogout }) {
                                       <div className="flow-event-stage">{event.stage || laneName}</div>
                                       <div className="flow-event-title">{event.title || "过程事件"}</div>
                                       <div className="flow-event-summary">{event.summary || "该事件暂无摘要"}</div>
-                                      <div className="flow-event-actor">{event.actor || laneName}</div>
+                                      <div className="flow-event-actor">
+                                        {(event.actor || laneName)} · 工具调用 {Number(event.detail?.tool_call_count || 0)}
+                                      </div>
                                       <div className="flow-event-link">查看详情</div>
                                     </button>
                                   ) : (
@@ -782,12 +880,10 @@ export default function AdminDashboard({ onLogout }) {
               {renderExpandableText(selectedFlowEvent.summary, `flow-summary-${selectedFlowEvent.event_id}`, 240)}
             </div>
             <div className="event-detail-grid">
-              {renderDetailField("输入内容", selectedFlowEvent.detail?.["输入内容"], `detail-input-${selectedFlowEvent.event_id}`)}
-              {renderDetailField("输出内容", selectedFlowEvent.detail?.["输出内容"], `detail-output-${selectedFlowEvent.event_id}`)}
-              {renderDetailField("输出承接方", selectedFlowEvent.detail?.["输出承接方"], `detail-handoff-${selectedFlowEvent.event_id}`)}
-              {renderDetailField("最终返回", selectedFlowEvent.detail?.["最终返回"], `detail-return-${selectedFlowEvent.event_id}`)}
-              {renderDetailField("状态", selectedFlowEvent.detail?.["状态"], `detail-status-${selectedFlowEvent.event_id}`)}
-              {renderDetailField("补充说明", selectedFlowEvent.detail?.["补充说明"], `detail-note-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("模型输入提示词", selectedFlowEvent.detail?.model_input_prompt, `detail-model-input-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("模型输出内容", selectedFlowEvent.detail?.model_output_text, `detail-model-output-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("工具调用输入", selectedFlowEvent.detail?.tool_call_inputs, `detail-tool-input-${selectedFlowEvent.event_id}`)}
+              {renderDetailField("工具调用结果", selectedFlowEvent.detail?.tool_call_results, `detail-tool-result-${selectedFlowEvent.event_id}`)}
             </div>
           </div>
         </div>

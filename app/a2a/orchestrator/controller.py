@@ -98,6 +98,7 @@ class UnifiedOrchestratorController:
             "2. call_kg：调用图谱子agent。\n"
             "3. call_rag：调用检索子agent。\n"
             "4. call_history_read：调用 MCP 工具 history_read 读取某个历史检索问题的结果。\n"
+            "如果会话记忆已经可以回答此问题，直接回答。"
             "如果历史检索里已经有高度相关的问题，优先先读 history_read，再决定是否补检索。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
@@ -370,7 +371,13 @@ class UnifiedOrchestratorController:
                 ),
             },
         ]
-        response = await self._client.chat_with_tokens_async(messages=messages, temperature=0.0, timeout=90)
+        response = await self._client.chat_with_tokens_async(
+            messages=messages,
+            temperature=0.0,
+            timeout=90,
+            actor_role="controller",
+            actor_name="orchestrator_prompt_compressor",
+        )
         parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
         tokens = {
             "prompt_tokens": int(getattr(response, "prompt_tokens", 0) or 0),
@@ -555,7 +562,13 @@ class UnifiedOrchestratorController:
             processing_steps=processing_steps,
             progress_callback=progress_callback,
         )
-        response = await self._client.chat_with_tokens_async(messages=messages, temperature=0.1, timeout=90)
+        response = await self._client.chat_with_tokens_async(
+            messages=messages,
+            temperature=0.1,
+            timeout=90,
+            actor_role="controller",
+            actor_name="orchestrator_controller",
+        )
         parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
         tokens = {
             "prompt_tokens": int(getattr(response, "prompt_tokens", 0) or 0)

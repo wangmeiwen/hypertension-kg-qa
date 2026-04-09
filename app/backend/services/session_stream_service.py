@@ -27,6 +27,8 @@ from app.common.session_logger import (
 
 logger = logging.getLogger(__name__)
 
+MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
+
 
 def _sanitize_text(value: Any, max_len: int) -> str:
     """清洗输入并返回可用结果。
@@ -72,7 +74,7 @@ def _build_reply_digest(reply: str, max_len: int = 180) -> str:
     Returns:
         str: 文本结果。
     """
-    text = str(reply or "").replace("\n", " ").strip()
+    text = _strip_medical_disclaimer(reply).replace("\n", " ").strip()
     if not text:
         return ""
     if len(text) <= max_len:
@@ -87,6 +89,31 @@ def _build_reply_digest(reply: str, max_len: int = 180) -> str:
     if segments:
         return _sanitize_text(" | ".join(segments), max_len)
     return _sanitize_text(f"{text[:80]}...{text[-28:]}", max_len)
+
+
+def _strip_medical_disclaimer(reply: Any) -> str:
+    """移除回答末尾固定医疗免责文本，便于摘要提取和重复检测。"""
+    text = str(reply or "").rstrip()
+    if not text:
+        return ""
+    if text.endswith(MEDICAL_DISCLAIMER_TEXT):
+        return text[: -len(MEDICAL_DISCLAIMER_TEXT)].rstrip()
+    return text
+
+
+def append_medical_disclaimer_if_needed(reply: Any, question_scope: Any) -> str:
+    """仅对医疗回答统一追加固定免责文本，并避免重复追加。"""
+    text = str(reply or "").rstrip()
+    if not text:
+        return ""
+    if _normalize_question_scope(question_scope) != "medical_qa":
+        return text
+    if text.endswith(MEDICAL_DISCLAIMER_TEXT):
+        return text
+    base_text = _strip_medical_disclaimer(text).rstrip()
+    if not base_text:
+        return MEDICAL_DISCLAIMER_TEXT
+    return f"{base_text}\n\n{MEDICAL_DISCLAIMER_TEXT}"
 
 
 def _sanitize_list(value: Any, max_items: int, max_len: int) -> List[str]:
@@ -980,6 +1007,7 @@ class SessionStreamService:
         done_tool_observations: List[Dict[str, Any]] = []
         done_evidence_summary: Dict[str, Any] = {}
         done_telemetry: Dict[str, Any] = {}
+        question_scope = _normalize_question_scope(_infer_question_scope(original_input_text or input_text))
         assistant_message_persisted = False
         assistant_message_id = 0
         memory_refresh_scheduled = False
@@ -1008,6 +1036,16 @@ class SessionStreamService:
                 "assistant_message_id": int(persisted_assistant_message_id or 0),
             }
 
+        def ensure_medical_disclaimer() -> str:
+            """统一为医疗回答补充免责文本，并返回新增片段。"""
+            nonlocal full_reply
+            updated_reply = append_medical_disclaimer_if_needed(full_reply, question_scope)
+            if updated_reply == full_reply:
+                return ""
+            added = updated_reply[len(full_reply):] if updated_reply.startswith(full_reply) else updated_reply
+            full_reply = updated_reply
+            return added
+
         def _turn_log_path() -> Path:
             """执行turn_log_path流程并返回结果。
             
@@ -1034,6 +1072,7 @@ class SessionStreamService:
                 return int(assistant_message_id or 0)
             if not full_reply:
                 return 0
+            ensure_medical_disclaimer()
             assistant_message = await self._await_call(
                 self._message_manager.add_message,
                 session_id,
@@ -1261,6 +1300,11 @@ class SessionStreamService:
 
                 if msg.get("type") == "done" and not full_reply:
                     full_reply = str(msg.get("msg") or "").strip()
+
+                if msg.get("type") == "done":
+                    disclaimer_chunk = ensure_medical_disclaimer()
+                    if disclaimer_chunk:
+                        yield json.dumps({"type": "reply", "msg": disclaimer_chunk}, ensure_ascii=False) + "\n"
 
                 yield json.dumps(msg, ensure_ascii=False) + "\n"
 

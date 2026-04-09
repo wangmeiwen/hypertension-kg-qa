@@ -539,6 +539,8 @@ def log_llm_call(
     finish_reason: str,
     error: str = "",
     trace_id: str = "",
+    actor_role: str = "",
+    actor_name: str = "",
 ) -> None:
     """
     记录 LLM 调用日志。
@@ -556,6 +558,8 @@ def log_llm_call(
         finish_reason: 结束原因。
         error: 错误信息。
         trace_id: 链路追踪 ID。
+        actor_role: 当前 LLM 调用发起方角色。
+        actor_name: 当前 LLM 调用发起方名称。
 
     Returns:
         None。
@@ -589,6 +593,8 @@ def log_llm_call(
         "latency_ms": round(float(latency_ms), 2),
         "finish_reason": str(finish_reason or ""),
         "error": str(error or ""),
+        "actor_role": str(actor_role or ""),
+        "actor_name": str(actor_name or ""),
     }
     _append_jsonl(day_file, payload)
     _bump_session_meta_count(sid, "llm_call_count")

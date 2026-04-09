@@ -324,284 +324,514 @@ class AdminSessionsService:
         return f"{turn_id}:{prefix}:{index}"
 
     @classmethod
-    def _tool_to_resource(cls, tool_name: str) -> tuple[str, str]:
-        """执行tool_to_resource流程并返回结果。
-        
-        Args:
-            tool_name: 函数输入参数。
-        
-        Returns:
-            tuple[str, str]: 执行结果。
-        """
-        lowered = str(tool_name or "").strip().lower()
-        if "neo4j" in lowered or lowered == "kg_query":
-            return "Neo4j", "调用图谱数据库"
-        if "milvus" in lowered or "rag" in lowered:
-            return "Milvus", "调用向量检索"
-        if "kg_entity_relation_search" in lowered:
-            return "图谱检索服务", "调用图谱检索工具"
-        if "dashscope" in lowered or "llm" in lowered:
-            return "DashScope", "调用大模型"
-        return "外部资源", "调用外部工具"
+    def _safe_json_text(cls, value: Any, limit: int = 1600) -> str:
+        """将对象安全序列化为文本。"""
+        try:
+            return cls._sanitize_text(json.dumps(value, ensure_ascii=False), limit) or "无"
+        except (TypeError, ValueError):
+            return cls._sanitize_text(value, limit) or "无"
+
+    @staticmethod
+    def _allowed_flow_lane(name: Any) -> str:
+        """将泳道名收敛到当前界面允许的 3 个泳道。"""
+        text = str(name or "").strip()
+        if text in {"图谱代理", "检索代理"}:
+            return text
+        if text in {"", "记忆压缩"}:
+            return "主控编排"
+        return "主控编排"
 
     @classmethod
-    def _build_detail(
+    def _lane_from_actor_role(cls, actor_role: Any) -> str:
+        """根据显式 actor_role 映射泳道。"""
+        token = str(actor_role or "").strip().lower()
+        mapping = {
+            "controller": "主控编排",
+            "graph": "图谱代理",
+            "retrieval": "检索代理",
+        }
+        return mapping.get(token, "")
+
+    @classmethod
+    def _resolve_llm_lane(cls, row: dict[str, Any]) -> tuple[str, str, str]:
+        """解析 LLM 日志的泳道来源，优先使用显式 actor_role。"""
+        actor_role = str(row.get("actor_role") or "").strip().lower()
+        explicit_lane = cls._lane_from_actor_role(actor_role)
+        if explicit_lane:
+            return explicit_lane, actor_role, "explicit_actor_role"
+
+        actor_name = str(row.get("actor_name") or "").strip().lower()
+        if "controller" in actor_name or "orchestrator" in actor_name:
+            return "主控编排", actor_role, "actor_name_fallback"
+        if "graph" in actor_name:
+            return "图谱代理", actor_role, "actor_name_fallback"
+        if "retrieval" in actor_name:
+            return "检索代理", actor_role, "actor_name_fallback"
+
+        messages_text = str(row.get("messages_compact") or "")
+        if "会话记忆更新器" in messages_text:
+            return "", actor_role, "ignored_memory_writer"
+        if "你是高血压问答系统的主控agent" in messages_text or "主控agent" in messages_text:
+            return "主控编排", actor_role, "legacy_controller_prompt"
+        if "Hypertension Graph Agent" in messages_text or "Graph Agent" in messages_text:
+            return "图谱代理", actor_role, "legacy_graph_prompt"
+        if "Hypertension Retrieval Agent" in messages_text or "Retrieval Agent" in messages_text:
+            return "检索代理", actor_role, "legacy_retrieval_prompt"
+
+        response_text = str(row.get("response_compact") or "")
+        if any(token in response_text for token in ('"action":"final_answer"', '"action": "final_answer"', '"action":"call_kg"', '"action": "call_kg"', '"action":"call_rag"', '"action": "call_rag"', '"action":"call_history_read"', '"action": "call_history_read"')):
+            return "主控编排", actor_role, "legacy_controller_action"
+
+        return "主控编排", actor_role, "default_controller_fallback"
+
+    @classmethod
+    def _infer_tool_lane(cls, observation: dict[str, Any]) -> str:
+        """根据工具观测信息推断工具所属泳道。"""
+        agent = str(observation.get("agent") or "").strip().lower()
+        tool_name = str(observation.get("tool_name") or observation.get("requested_tool_name") or "").strip().lower()
+        action = str(observation.get("action") or "").strip().lower()
+        if agent == "kg" or tool_name.startswith("kg_"):
+            return "图谱代理"
+        if agent == "rag" or "rag" in tool_name:
+            return "检索代理"
+        if action == "call_history_read" or "history_read" in tool_name or agent == "history":
+            return "主控编排"
+        return "主控编排"
+
+    @classmethod
+    def _build_tool_only_event(
         cls,
         *,
-        input_content: Any,
-        output_content: Any,
-        handoff: Any,
-        final_return: Any,
-        status: Any,
-        note: Any,
-    ) -> dict[str, str]:
-        """构建并返回目标数据。
-        
-        Args:
-            input_content: 函数输入参数。
-            output_content: 函数输入参数。
-            handoff: 函数输入参数。
-            final_return: 函数输入参数。
-            status: 函数输入参数。
-            note: 函数输入参数。
-        
-        Returns:
-            dict[str, str]: 结构化结果数据。
-        """
+        turn_id: str,
+        turn: dict[str, Any],
+        lane_name: str,
+        observation: dict[str, Any],
+        sequence_index: int,
+    ) -> dict[str, Any]:
+        """当某个泳道没有独立 LLM 事件时，为工具调用补一个兜底节点。"""
+        tool_log = observation.get("_tool_log") if isinstance(observation.get("_tool_log"), dict) else {}
+        result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        event_time = str(tool_log.get("ts") or turn.get("finished_at") or turn.get("started_at") or "")
+        summary = cls._sanitize_text(cls._summarize_tool_observation(observation), 180) or "该次工具调用暂无输出"
         return {
-            "输入内容": cls._humanize_payload(input_content),
-            "输出内容": cls._humanize_payload(output_content),
-            "输出承接方": cls._humanize_payload(handoff),
-            "最终返回": cls._humanize_payload(final_return),
-            "状态": cls._humanize_payload(status),
-            "补充说明": cls._humanize_payload(note),
+            "event_id": cls._safe_event_id(turn_id, "tool_action", sequence_index),
+            "event_time": event_time,
+            "lane": lane_name,
+            "stage": "工具行动",
+            "title": f"{lane_name}工具行动",
+            "summary": summary,
+            "actor": lane_name,
+            "kind": "tool_action",
+            "status": "失败" if cls._sanitize_text(result_obj.get("error"), 120) else "完成",
+            "detail": {
+                "model_input_prompt": "该代理本次未记录独立模型输入",
+                "model_output_text": "该代理本次未记录独立模型输出",
+                "tool_call_inputs": "本次未调用工具",
+                "tool_call_results": "本次未调用工具",
+                "tool_call_count": 0,
+                "merge_strategy": "tool_only",
+            },
+            "source_actor_role": str(observation.get("agent") or "").strip().lower(),
+            "lane_inference_reason": "tool_only_fallback",
+            "_tool_entries": [],
         }
 
     @classmethod
-    def _build_flow_events(cls, turn: dict[str, Any]) -> list[dict[str, Any]]:
-        """构建并返回目标数据。
-        
-        Args:
-            turn: 函数输入参数。
-        
-        Returns:
-            list[dict[str, Any]]: 处理后的列表结果。
-        """
-        turn_id = str(turn.get("turn_id") or "")
-        started_at = str(turn.get("started_at") or "")
-        finished_at = str(turn.get("finished_at") or started_at)
-        question = str(turn.get("question") or "")
-        memory_before = turn.get("memory_before") if isinstance(turn.get("memory_before"), dict) else {}
-        orchestrator_decision = turn.get("orchestrator_decision") if isinstance(turn.get("orchestrator_decision"), dict) else {}
-        agent_lanes = turn.get("agent_lanes") if isinstance(turn.get("agent_lanes"), dict) else {}
-        tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
-        memory_compression = turn.get("memory_compression") if isinstance(turn.get("memory_compression"), list) else []
-        timeline = turn.get("timeline") if isinstance(turn.get("timeline"), list) else []
-
-        events: list[dict[str, Any]] = []
-
-        events.append(
-            {
-                "event_id": cls._safe_event_id(turn_id, "memory-read", 0),
-                "event_time": started_at,
-                "lane": "主控编排",
-                "stage": "读取会话记忆",
-                "title": "载入当前会话记忆",
-                "summary": cls._sanitize_text(
-                    f"QA 条数：{memory_before.get('qa_pair_count') or 0}；历史检索问题数：{memory_before.get('retrieval_question_count') or 0}",
-                    120,
-                ),
-                "actor": "主控编排",
-                "kind": "memory_read",
-                "detail": cls._build_detail(
-                    input_content=question,
-                    output_content={
-                        "QA 条数": memory_before.get("qa_pair_count") or 0,
-                        "历史检索问题数": memory_before.get("retrieval_question_count") or 0,
-                        "问答记忆": memory_before.get("qa_memory_text") or "当前暂无问答对",
-                        "历史检索问题索引": memory_before.get("retrieval_question_index_text") or "当前暂无历史检索问题",
-                    },
-                    handoff="主控编排",
-                    final_return="显式 QA 记忆与历史检索问题索引已送入主控",
-                    status="完成",
-                    note="该阶段只读取显式问答记忆与历史检索问题索引，不再做旧摘要兼容",
-                ),
-            }
+    def _summarize_tool_observation(cls, observation: dict[str, Any]) -> str:
+        """提取工具观测摘要，用于泳道节点标题。"""
+        result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        payload = result_obj.get("result") if isinstance(result_obj.get("result"), dict) else {}
+        return (
+            cls._sanitize_text(payload.get("summary"), 240)
+            or cls._sanitize_text(payload.get("message"), 240)
+            or cls._sanitize_text(result_obj.get("error"), 240)
+            or "本次工具调用暂无输出"
         )
 
-        if orchestrator_decision:
-            controller_mode = cls._normalize_controller_mode(orchestrator_decision.get("controller_mode"))
-            controller_label = cls._controller_mode_label(controller_mode)
-            answer_mode = orchestrator_decision.get("answer_mode") or "unknown"
-            final_source = orchestrator_decision.get("final_source") or "controller"
-            compression_count = int(orchestrator_decision.get("compression_count") or 0)
-            aborted_for_prompt_budget = bool(orchestrator_decision.get("aborted_for_prompt_budget"))
-            events.append(
-                {
-                    "event_id": cls._safe_event_id(turn_id, "decision", 0),
-                    "event_time": finished_at,
-                    "lane": "主控编排",
-                    "stage": "主控决策",
-                    "title": "确定响应路径",
-                    "summary": cls._sanitize_text(
-                        (
-                            f"主控模式：{controller_label}；回答模式：{answer_mode}；来源：{final_source}；"
-                            f"压缩次数：{compression_count}"
-                            + ("；已因超限中止" if aborted_for_prompt_budget else "")
-                        ),
-                        120,
-                    ),
-                    "actor": "主控编排",
-                    "kind": "decision",
-                    "detail": cls._build_detail(
-                        input_content=question,
-                        output_content={
-                            "主控模式": controller_label,
-                            "回答模式": answer_mode,
-                            "回答来源": final_source,
-                            "检索轮次": orchestrator_decision.get("retrieval_round") or 0,
-                            "提示词预算": orchestrator_decision.get("prompt_budget_limit") or 0,
-                            "压缩次数": compression_count,
-                            "压缩前分词数": orchestrator_decision.get("prompt_token_count_before_last_decision") or 0,
-                            "压缩后分词数": orchestrator_decision.get("prompt_token_count_after_last_compression") or 0,
-                            "是否超限中止": "是" if aborted_for_prompt_budget else "否",
-                        },
-                        handoff="图谱代理 / 检索代理",
-                        final_return="主控已将问题分发到后续执行链路",
-                        status="完成",
-                        note="主控统一根据显式 QA 记忆、历史检索问题索引和当前工具结果做决策",
-                    ),
-                }
-            )
+    @classmethod
+    def _decode_logged_text(cls, value: Any) -> str:
+        """尽量还原日志里被 JSON 编码过的文本。"""
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            decoded = json.loads(text)
+            if isinstance(decoded, str):
+                return decoded
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        return text
 
-        event_index = 0
-        for lane_name in ("主控编排", "图谱代理", "检索代理"):
-            cards = agent_lanes.get(lane_name) if isinstance(agent_lanes.get(lane_name), list) else []
-            for card in cards:
-                row = card if isinstance(card, dict) else {}
-                title = str(row.get("title") or lane_name)
-                if lane_name == "主控编排" and title in {"主控路由判定"}:
-                    continue
-                event_time = str(row.get("occurred_at") or row.get("started_at") or row.get("finished_at") or finished_at)
-                output_handoff = "主控编排"
-                if lane_name == "主控编排":
-                    output_handoff = "图谱代理 / 检索代理"
-                elif lane_name in {"图谱代理", "检索代理"}:
-                    output_handoff = "主控编排"
-                events.append(
-                    {
-                        "event_id": cls._safe_event_id(turn_id, "lane", event_index),
-                        "event_time": event_time,
-                        "lane": lane_name,
-                        "stage": title,
-                        "title": title,
-                        "summary": cls._sanitize_text(row.get("decision_preview") or row.get("prompt_preview") or title, 120),
-                        "actor": lane_name,
-                        "kind": "lane_event",
-                        "detail": cls._build_detail(
-                            input_content=row.get("full_prompt") or row.get("prompt_preview") or "无",
-                            output_content=row.get("full_decision") or row.get("decision_preview") or "无",
-                            handoff=output_handoff,
-                            final_return=row.get("decision_preview") or row.get("full_decision") or "无",
-                            status=row.get("status") or "完成",
-                            note=f"{lane_name} 在本轮中的执行节点",
-                        ),
-                    }
+    @classmethod
+    def _extract_json_object(cls, value: Any) -> dict[str, Any]:
+        """从日志文本中提取首个 JSON 对象。"""
+        raw = cls._decode_logged_text(value).strip()
+        if not raw:
+            return {}
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            if lines:
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            raw = "\n".join(lines).strip()
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start < 0 or end <= start:
+                return {}
+            try:
+                parsed = json.loads(raw[start : end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+
+    @classmethod
+    def _extract_controller_action(cls, response_compact: Any) -> str:
+        """从主控模型输出中提取 action。"""
+        parsed = cls._extract_json_object(response_compact)
+        return str(parsed.get("action") or "").strip()
+
+    @classmethod
+    def _expected_tool_lane_for_action(cls, action_name: str) -> str:
+        """将主控动作映射为其后续工具结果应落入的泳道。"""
+        action = str(action_name or "").strip().lower()
+        if action == "call_rag":
+            return "检索代理"
+        if action == "call_kg":
+            return "图谱代理"
+        if action == "call_history_read":
+            return "主控编排"
+        return ""
+
+    @classmethod
+    def _read_session_llm_records(cls, session_id: str, request_id: str) -> list[dict[str, Any]]:
+        """读取指定请求的 LLM 日志。"""
+        sid = cls._safe_log_id(session_id)
+        safe_request_id = str(request_id or "").strip()
+        if not safe_request_id:
+            return []
+        llm_dir = cls._project_root() / "logs" / "sessions" / sid / "llm"
+        if not llm_dir.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        for file_path in sorted(llm_dir.glob("*.jsonl")):
+            try:
+                for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if not line.strip():
+                        continue
+                    payload = json.loads(line)
+                    if not isinstance(payload, dict):
+                        continue
+                    if str(payload.get("request_id") or "") != safe_request_id:
+                        continue
+                    rows.append(payload)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "admin_sessions_read_llm_records_skip_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
+                    sid,
+                    safe_request_id,
+                    str(file_path),
+                    type(exc).__name__,
+                    exc,
                 )
-                event_index += 1
+                continue
+        rows.sort(key=lambda item: str(item.get("ts") or ""))
+        return rows
 
-        for obs_index, observation in enumerate(tool_observations):
+    @classmethod
+    def _read_session_tool_records(cls, session_id: str, request_id: str) -> list[dict[str, Any]]:
+        """读取指定请求的工具日志。"""
+        sid = cls._safe_log_id(session_id)
+        safe_request_id = str(request_id or "").strip()
+        if not safe_request_id:
+            return []
+        tools_dir = cls._project_root() / "logs" / "sessions" / sid / "tools"
+        if not tools_dir.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        for file_path in sorted(tools_dir.glob("*.jsonl")):
+            try:
+                for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if not line.strip():
+                        continue
+                    payload = json.loads(line)
+                    if not isinstance(payload, dict):
+                        continue
+                    if str(payload.get("request_id") or "") != safe_request_id:
+                        continue
+                    rows.append(payload)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "admin_sessions_read_tool_records_skip_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
+                    sid,
+                    safe_request_id,
+                    str(file_path),
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
+        rows.sort(key=lambda item: str(item.get("ts") or ""))
+        return rows
+
+    @classmethod
+    def _bind_tool_logs(
+        cls,
+        tool_observations: list[dict[str, Any]],
+        tool_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """将工具观测和工具日志按顺序绑定，补齐调用输入。"""
+        available_rows = [row for row in tool_rows if isinstance(row, dict)]
+        used_indexes: set[int] = set()
+        bound_rows: list[dict[str, Any]] = []
+        for observation in tool_observations:
             row = observation if isinstance(observation, dict) else {}
-            tool_name = str(row.get("tool_name") or row.get("requested_tool_name") or "")
-            if not tool_name:
-                continue
-            resource_name, stage_name = cls._tool_to_resource(tool_name)
-            result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
-            agent_name = str(row.get("agent") or "")
-            handoff = "主控编排"
-            if agent_name == "kg":
-                handoff = "图谱代理"
-            elif agent_name == "rag":
-                handoff = "检索代理"
-            events.append(
-                {
-                    "event_id": cls._safe_event_id(turn_id, "resource", obs_index),
-                    "event_time": finished_at,
-                    "lane": "外部资源",
-                    "stage": stage_name,
-                    "title": f"{resource_name} 请求",
-                    "summary": cls._sanitize_text(
-                        f"{tool_name}：{cls._humanize_payload(result_obj.get('result') if isinstance(result_obj.get('result'), dict) else result_obj)}",
-                        120,
-                    ),
-                    "actor": resource_name,
-                    "kind": "resource_call",
-                    "detail": cls._build_detail(
-                        input_content=row.get("subquery") or row.get("question") or row.get("action") or tool_name,
-                        output_content=result_obj.get("result") if isinstance(result_obj.get("result"), dict) else result_obj,
-                        handoff=handoff,
-                        final_return=result_obj.get("message") or result_obj.get("summary") or cls._humanize_payload(result_obj),
-                        status="成功" if bool(result_obj.get("ok", True)) else "失败",
-                        note=f"调用工具：{tool_name}",
-                    ),
-                }
-            )
+            tool_name = str(row.get("tool_name") or row.get("requested_tool_name") or "").strip()
+            matched_index: int | None = None
+            if tool_name:
+                for idx, tool_row in enumerate(available_rows):
+                    if idx in used_indexes:
+                        continue
+                    if str(tool_row.get("tool_name") or "").strip() == tool_name:
+                        matched_index = idx
+                        break
+            if matched_index is None:
+                for idx, tool_row in enumerate(available_rows):
+                    if idx in used_indexes:
+                        continue
+                    matched_index = idx
+                    break
+            matched_row = available_rows[matched_index] if matched_index is not None else {}
+            if matched_index is not None:
+                used_indexes.add(matched_index)
+            bound_rows.append({**row, "_tool_log": matched_row if isinstance(matched_row, dict) else {}})
+        return bound_rows
 
-        for stage_index, stage in enumerate(memory_compression):
-            row = stage if isinstance(stage, dict) else {}
-            stage_name = str(row.get("stage_name") or "记忆压缩")
-            description = str(row.get("description") or "")
-            content_lines = row.get("content_lines") if isinstance(row.get("content_lines"), list) else []
-            events.append(
-                {
-                    "event_id": cls._safe_event_id(turn_id, "compression", stage_index),
-                    "event_time": str(row.get("event_time") or finished_at),
-                    "lane": "外部资源",
-                    "stage": stage_name,
-                    "title": stage_name,
-                    "summary": cls._sanitize_text(description or cls._join_lines(content_lines, limit=2, item_limit=80), 120),
-                    "actor": "会话记忆",
-                    "kind": "memory_compression",
-                    "detail": cls._build_detail(
-                        input_content=question if stage_name == "原始消息增量" else cls._join_lines(content_lines, limit=5, item_limit=120),
-                        output_content=content_lines,
-                        handoff="写回会话记忆",
-                        final_return=cls._join_lines(content_lines, limit=5, item_limit=120),
-                        status="完成",
-                        note=description or "该阶段展示本轮记忆压缩的状态变化",
-                    ),
-                }
-            )
+    @classmethod
+    def _format_tool_input(cls, tool_row: dict[str, Any], observation: dict[str, Any], index: int) -> str:
+        """格式化工具调用输入文本。"""
+        tool_name = str(
+            observation.get("tool_name")
+            or observation.get("requested_tool_name")
+            or tool_row.get("tool_name")
+            or "unknown_tool"
+        ).strip()
+        question = str(observation.get("subquery") or observation.get("question") or "").strip()
+        arguments = tool_row.get("arguments") if isinstance(tool_row.get("arguments"), dict) else {}
+        rows = [f"{index}. 工具：{tool_name}"]
+        if question:
+            rows.append(f"子问题：{cls._sanitize_text(question, 280)}")
+        if arguments:
+            rows.append(f"参数：{cls._safe_json_text(arguments, 1200)}")
+        return "\n".join(rows)
 
-        for time_index, event in enumerate(timeline):
-            row = event if isinstance(event, dict) else {}
-            title = str(row.get("title") or "")
-            detail = str(row.get("detail") or "")
-            if not title:
+    @classmethod
+    def _format_tool_result(cls, observation: dict[str, Any], index: int) -> str:
+        """格式化工具调用结果文本。"""
+        result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        payload = result_obj.get("result")
+        payload_dict = payload if isinstance(payload, dict) else {}
+        summary = cls._sanitize_text(
+            result_obj.get("summary")
+            or result_obj.get("message")
+            or payload_dict.get("summary")
+            or payload_dict.get("message")
+            or payload_dict.get("answer")
+            or "",
+            320,
+        )
+        error_text = cls._sanitize_text(result_obj.get("error") or "", 320)
+        query_records = observation.get("query_records") if isinstance(observation.get("query_records"), list) else []
+        lines = [f"{index}. 状态：{'成功' if bool(result_obj.get('ok', True)) else '失败'}"]
+        if summary:
+            lines.append(f"摘要：{summary}")
+        if error_text:
+            lines.append(f"错误：{error_text}")
+        for query_index, item in enumerate(query_records[:3], start=1):
+            if not isinstance(item, dict):
                 continue
-            events.append(
-                {
-                    "event_id": cls._safe_event_id(turn_id, "timeline", time_index),
-                    "event_time": str(row.get("event_time") or finished_at),
-                    "lane": "主控编排",
-                    "stage": title,
-                    "title": title,
-                    "summary": cls._sanitize_text(detail or title, 120),
-                    "actor": "主控编排",
-                    "kind": "timeline",
-                    "detail": cls._build_detail(
-                        input_content=question,
-                        output_content=detail or title,
-                        handoff="当前时间线节点",
-                        final_return=detail or title,
-                        status="完成",
-                        note="该事件来自本轮处理的关键时间线",
-                    ),
-                }
+            query = cls._sanitize_text(item.get("query"), 200)
+            result_content = cls._sanitize_text(item.get("result_content"), 360)
+            if query:
+                lines.append(f"检索{query_index} Query：{query}")
+            if result_content:
+                lines.append(f"检索{query_index} 结果：{result_content}")
+        if len(lines) == 1:
+            lines.append("本次未返回可展示的结果摘要")
+        return "\n".join(lines)
+
+    @classmethod
+    def _build_flow_events(
+        cls,
+        *,
+        session_id: str,
+        request_id: str,
+        turn: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """基于每次 LLM 调用构建新的泳道图事件。"""
+        turn_id = str(turn.get("turn_id") or "")
+        llm_rows = cls._read_session_llm_records(session_id, request_id)
+        if not llm_rows:
+            return []
+        tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
+        tool_rows = cls._read_session_tool_records(session_id, request_id)
+        bound_tool_rows = cls._bind_tool_logs(tool_observations, tool_rows)
+
+        events: list[dict[str, Any]] = []
+        lane_event_indexes: dict[str, list[int]] = {"主控编排": [], "图谱代理": [], "检索代理": []}
+        pending_tool_anchor_indexes: dict[str, list[int]] = {"主控编排": [], "图谱代理": [], "检索代理": []}
+        for index, row in enumerate(llm_rows):
+            lane_name_raw, source_actor_role, lane_inference_reason = cls._resolve_llm_lane(
+                row if isinstance(row, dict) else {}
             )
+            if not lane_name_raw:
+                continue
+            lane_name = cls._allowed_flow_lane(lane_name_raw)
+            response_text = str(row.get("response_compact") or row.get("error") or "").strip()
+            controller_action = cls._extract_controller_action(row.get("response_compact"))
+            event = {
+                "event_id": cls._safe_event_id(turn_id, "llm_action", index),
+                "event_time": str(row.get("ts") or turn.get("finished_at") or turn.get("started_at") or ""),
+                "lane": lane_name,
+                "stage": "模型行动",
+                "title": f"{lane_name}模型行动",
+                "summary": cls._sanitize_text(response_text or "该次模型调用暂无输出", 180),
+                "actor": lane_name,
+                "kind": "llm_action",
+                "status": "失败" if str(row.get("error") or "").strip() else "完成",
+                "detail": {
+                    "model_input_prompt": str(row.get("messages_compact") or "无"),
+                    "model_output_text": response_text or "无",
+                    "tool_call_inputs": "本次未调用工具",
+                    "tool_call_results": "本次未调用工具",
+                    "tool_call_count": 0,
+                    "merge_strategy": "llm_only",
+                },
+                "source_actor_role": source_actor_role,
+                "lane_inference_reason": lane_inference_reason,
+                "sequence_order": (index + 1) * 10,
+                "_controller_action": controller_action,
+                "_tool_entries": [],
+            }
+            lane_event_indexes[lane_name].append(len(events))
+            events.append(event)
+            if lane_name == "主控编排":
+                expected_lane = cls._expected_tool_lane_for_action(controller_action)
+                if expected_lane:
+                    pending_tool_anchor_indexes[expected_lane].append(len(events) - 1)
+
+        tool_only_sequence = 0
+        anchor_offsets: dict[int, int] = {}
+        for observation in bound_tool_rows:
+            lane_name = cls._allowed_flow_lane(cls._infer_tool_lane(observation))
+            candidate_indexes = lane_event_indexes.get(lane_name) or []
+            tool_log = observation.get("_tool_log") if isinstance(observation.get("_tool_log"), dict) else {}
+            tool_time = str(tool_log.get("ts") or "").strip()
+            preferred_anchor_index = None
+            pending_anchor_list = pending_tool_anchor_indexes.get(lane_name) or []
+            if pending_anchor_list:
+                preferred_anchor_index = pending_anchor_list.pop(0)
+            matching_indexes = (
+                [idx for idx in candidate_indexes if str(events[idx].get("event_time") or "") <= tool_time]
+                if tool_time
+                else []
+            )
+            is_history_observation = lane_name == "主控编排" and (
+                str(observation.get("action") or "").strip().lower() == "call_history_read"
+                or "history_read" in str(observation.get("tool_name") or "").strip().lower()
+            )
+            should_create_tool_only = preferred_anchor_index is not None and (
+                not candidate_indexes or is_history_observation
+            )
+            if should_create_tool_only:
+                tool_only_sequence += 1
+                events.append(
+                    cls._build_tool_only_event(
+                        turn_id=turn_id,
+                        turn=turn,
+                        lane_name=lane_name,
+                        observation=observation,
+                        sequence_index=tool_only_sequence,
+                    )
+                )
+                target_index = len(events) - 1
+                lane_event_indexes[lane_name].append(target_index)
+                base_sequence = int(events[preferred_anchor_index].get("sequence_order") or 0)
+                anchor_offsets[preferred_anchor_index] = int(anchor_offsets.get(preferred_anchor_index) or 0) + 1
+                events[target_index]["sequence_order"] = base_sequence + anchor_offsets[preferred_anchor_index]
+                merge_strategy = "tool_only"
+            elif candidate_indexes:
+                target_index = matching_indexes[-1] if matching_indexes else candidate_indexes[-1]
+                merge_strategy = "timestamp_merge" if matching_indexes else "sequential_merge"
+            else:
+                tool_only_sequence += 1
+                events.append(
+                    cls._build_tool_only_event(
+                        turn_id=turn_id,
+                        turn=turn,
+                        lane_name=lane_name,
+                        observation=observation,
+                        sequence_index=tool_only_sequence,
+                    )
+                )
+                target_index = len(events) - 1
+                lane_event_indexes[lane_name].append(target_index)
+                fallback_base = int(events[-2].get("sequence_order") or 0) if len(events) >= 2 else 0
+                events[target_index]["sequence_order"] = fallback_base + 1
+                merge_strategy = "tool_only"
+            events[target_index]["_tool_entries"].append({**observation, "_merge_strategy": merge_strategy})
+
+        for event in events:
+            tool_entries = event.pop("_tool_entries", [])
+            if not isinstance(tool_entries, list):
+                tool_entries = []
+            tool_inputs = [
+                cls._format_tool_input(
+                    item.get("_tool_log") if isinstance(item.get("_tool_log"), dict) else {},
+                    item if isinstance(item, dict) else {},
+                    index,
+                )
+                for index, item in enumerate(tool_entries, start=1)
+                if isinstance(item, dict)
+            ]
+            tool_results = [
+                cls._format_tool_result(item if isinstance(item, dict) else {}, index)
+                for index, item in enumerate(tool_entries, start=1)
+                if isinstance(item, dict)
+            ]
+            tool_count = len(tool_entries)
+            merge_strategy = "llm_only"
+            if tool_entries:
+                merge_strategy = (
+                    "tool_only"
+                    if all(str(item.get("_merge_strategy") or "") == "tool_only" for item in tool_entries)
+                    else (
+                        "timestamp_merge"
+                        if all(str(item.get("_merge_strategy") or "") == "timestamp_merge" for item in tool_entries)
+                        else "sequential_merge"
+                    )
+                )
+                summary = cls._sanitize_text(
+                    f"{event.get('summary') or '该次模型调用暂无输出'} | 工具调用 {tool_count} 次",
+                    180,
+                )
+                event["summary"] = summary
+            event["detail"] = {
+                "model_input_prompt": str(event.get("detail", {}).get("model_input_prompt") or "无"),
+                "model_output_text": str(event.get("detail", {}).get("model_output_text") or "无"),
+                "tool_call_inputs": "\n\n".join(tool_inputs) if tool_inputs else "本次未调用工具",
+                "tool_call_results": "\n\n".join(tool_results) if tool_results else "本次未调用工具",
+                "tool_call_count": tool_count,
+                "merge_strategy": merge_strategy,
+            }
+            event.pop("_controller_action", None)
 
         events.sort(
             key=lambda item: (
+                int(item.get("sequence_order") or 0),
                 str(item.get("event_time") or ""),
                 cls._lane_order(str(item.get("lane") or "")),
                 str(item.get("event_id") or ""),
@@ -645,6 +875,7 @@ class AdminSessionsService:
             merged_for_events = {**merged_turn, "orchestrator_decision": normalized_decision}
             normalized_turns.append(
                 {
+                    "request_id": str(merged_turn.get("request_id") or ""),
                     "turn_id": str(merged_turn.get("turn_id") or ""),
                     "session_id": str(session_id or ""),
                     "user_message_id": int(merged_turn.get("user_message_id") or 0),
@@ -654,12 +885,18 @@ class AdminSessionsService:
                     "started_at": str(merged_turn.get("started_at") or ""),
                     "finished_at": str(merged_turn.get("finished_at") or ""),
                     "status": str(merged_turn.get("status") or "done"),
+                    "duration_ms": float(merged_turn.get("duration_ms") or 0.0),
                     "llm_calls": int(merged_turn.get("llm_calls") or 0),
                     "total_tokens": int(merged_turn.get("total_tokens") or 0),
                     "memory_before": merged_turn.get("memory_before") if isinstance(merged_turn.get("memory_before"), dict) else {},
                     "orchestrator_decision": normalized_decision,
+                    "tool_observations": merged_turn.get("tool_observations") if isinstance(merged_turn.get("tool_observations"), list) else [],
                     "agent_lanes": merged_turn.get("agent_lanes") if isinstance(merged_turn.get("agent_lanes"), dict) else {},
-                    "flow_events": self._build_flow_events(merged_for_events),
+                    "flow_events": self._build_flow_events(
+                        session_id=str(session_id or ""),
+                        request_id=str(merged_turn.get("request_id") or ""),
+                        turn=merged_for_events,
+                    ),
                     "memory_compression": merged_turn.get("memory_compression") if isinstance(merged_turn.get("memory_compression"), list) else [],
                     "timeline": merged_turn.get("timeline") if isinstance(merged_turn.get("timeline"), list) else [],
                 }

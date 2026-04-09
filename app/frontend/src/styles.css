@@ -1943,15 +1943,20 @@ body {
 
 .session-detail-modal .modal-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding-bottom: 16px;
   border-bottom: 1px solid #e5e7eb;
   margin-bottom: 16px;
+  gap: 20px;
 }
 
 .session-detail-modal .modal-header h3 {
   margin: 0;
+}
+
+.session-detail-meta-header .session-meta-grid {
+  flex: 1;
 }
 
 .session-detail-modal .close-btn {
@@ -3630,6 +3635,10 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+.docling-upload .upload-area input[type="file"] {
+  display: none;
+}
+
 .format-tags {
   display: flex;
   flex-wrap: wrap;
@@ -4250,18 +4259,19 @@ body {
   border: 1px solid #d9e8ef;
   border-radius: 16px;
   background: linear-gradient(180deg, #f8fdff 0%, #ffffff 100%);
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: visible;
+  position: relative;
 }
 
 .flow-board-header {
   display: grid;
-  grid-template-columns: 84px repeat(5, minmax(0, 1fr));
+  grid-template-columns: 84px repeat(3, minmax(0, 1fr));
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 12;
   background: #f5fcfe;
   border-bottom: 1px solid #d9e8ef;
+  box-shadow: 0 6px 12px rgba(13, 89, 109, 0.08);
 }
 
 .flow-header-cell {
@@ -4270,6 +4280,7 @@ body {
   font-weight: 700;
   color: #0d596d;
   border-right: 1px solid #d9e8ef;
+  background: #f5fcfe;
 }
 
 .flow-header-cell:last-child {
@@ -4290,8 +4301,8 @@ body {
 
 .flow-event-row {
   display: grid;
-  grid-template-columns: 84px repeat(5, minmax(0, 1fr));
-  min-height: 112px;
+  grid-template-columns: 84px repeat(3, minmax(0, 1fr));
+  min-height: 156px;
   border-bottom: 1px solid #e6f0f4;
 }
 
@@ -4332,11 +4343,12 @@ body {
 .flow-event-node {
   width: 100%;
   text-align: left;
-  padding: 10px 10px 9px;
+  padding: 14px 14px 12px;
   cursor: pointer;
   transition: all 0.2s ease;
   box-shadow: 0 8px 20px rgba(8, 145, 178, 0.06);
   min-width: 0;
+  min-height: 128px;
 }
 
 .flow-event-node:hover {
@@ -4368,9 +4380,9 @@ body {
   font-size: 12px;
   color: #34505b;
   line-height: 1.55;
-  min-height: 38px;
+  min-height: 56px;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
@@ -4421,13 +4433,14 @@ body {
 .event-detail-grid {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .event-detail-field {
-  padding: 14px;
+  padding: 16px;
   min-width: 0;
-  max-height: 420px;
+  min-height: 180px;
+  max-height: 520px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -5216,7 +5229,7 @@ label:focus-within {
 
   .flow-board-header,
   .flow-event-row {
-    grid-template-columns: 68px repeat(5, minmax(0, 1fr));
+    grid-template-columns: 68px repeat(3, minmax(0, 1fr));
   }
 
   .session-turn-list-top {

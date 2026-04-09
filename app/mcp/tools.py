@@ -356,7 +356,12 @@ class KgEntityRelationSearchTool:
         ]
 
         try:
-            response = self._llm.chat_with_tokens(messages, temperature=0.1)
+            response = self._llm.chat_with_tokens(
+                messages,
+                temperature=0.1,
+                actor_role="graph",
+                actor_name="kg_entity_disambiguation",
+            )
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             logger.warning(
                 "entity_disambiguation_call_failed: error_type=%s error=%s",
