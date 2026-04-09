@@ -336,7 +336,7 @@ class GraphAdminService:
         """从上传文件抽取并导入图谱。"""
         filename = file.filename or "uploaded_file"
         suffix = Path(filename).suffix.lower()
-        supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm"}
+        supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".jpg", ".jpeg", ".png"}
         if suffix not in supported_suffixes:
             return {"ok": False, "error": f"不支持的文件格式: {suffix}，仅支持 {', '.join(sorted(supported_suffixes))}"}
         chunk_limit = 20000

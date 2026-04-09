@@ -3,6 +3,7 @@ import { doclingParseDocument, doclingParseAndEmbed } from "./api";
 
 // 模块职责：提供 Docling 文档解析入口，支持仅解析与解析后嵌入两种流程。
 export default function DoclingParser() {
+  const FILE_SIZE_LIMIT = 50 * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState(null);
   const [parsing, setParsing] = useState(false);
   const [embedding, setEmbedding] = useState(false);
@@ -23,6 +24,11 @@ export default function DoclingParser() {
       const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
       if (!allowedFormats.includes(ext)) {
         setError(`不支持的文件格式: ${ext}。支持的格式: ${allowedFormats.join(", ")}`);
+        setSelectedFile(null);
+        return;
+      }
+      if (file.size > FILE_SIZE_LIMIT) {
+        setError("文件大小不能超过 50MB");
         setSelectedFile(null);
         return;
       }
@@ -85,7 +91,9 @@ export default function DoclingParser() {
             <span className="format-tag">HTML</span>
             <span className="format-tag">TXT</span>
             <span className="format-tag">Markdown</span>
-            <span className="format-tag">图片</span>
+            <span className="format-tag">JPG</span>
+            <span className="format-tag">JPEG</span>
+            <span className="format-tag">PNG</span>
           </div>
         </div>
 
@@ -107,6 +115,7 @@ export default function DoclingParser() {
             </div>
           )}
         </div>
+        <p className="form-hint">文件大小不能超过 50MB，JPG/JPEG/PNG 图片会在 OCR 前自动压缩。</p>
 
         <div className="upload-actions">
           <button

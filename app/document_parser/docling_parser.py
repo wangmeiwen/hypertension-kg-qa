@@ -16,17 +16,25 @@ Docling 文档解析模块。
 - fitz (PyMuPDF): PDF 解析库
 """
 
+import importlib.metadata
+import io
 import logging
 import os
-import io
+import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-from docling.document_converter import DocumentConverter
+from docling.document_converter import (
+    DocumentConverter,
+    ImageFormatOption,
+    PdfFormatOption,
+)
+from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import ConversionResult
+from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
 from langchain_docling import DoclingLoader
 
 # GLM-OCR 客户端按需加载
@@ -34,6 +42,10 @@ from langchain_docling import DoclingLoader
 
 class _PdfContainsImagesError(RuntimeError):
     """用于标记 PDF 含图片，需要从 PyMuPDF 回退到 Docling。"""
+
+
+DOCLING_GLM_PLUGIN_ENTRYPOINT = "hypertension_docling_glm"
+DOCLING_GLM_OCR_KIND = "glm_vision"
 
 
 @dataclass
@@ -81,17 +93,62 @@ class DoclingParser:
         Args:
             enable_image_ocr: 是否启用图片 OCR 功能，默认为 True
         """
-        self.converter = DocumentConverter()
         self.enable_image_ocr = enable_image_ocr
         self.ocr_client = None
 
         if enable_image_ocr:
+            self._ensure_docling_plugin_ready()
             try:
                 from app.document_parser.glm_ocr_client import get_glm_ocr_client
+
                 self.ocr_client = get_glm_ocr_client()
             except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-                logger.warning("智谱OCR客户端初始化失败: %s", e)
-                self.enable_image_ocr = False
+                raise RuntimeError(f"GLM OCR 插件未就绪: 智谱OCR客户端初始化失败: {e}") from e
+
+        self.converter = self._build_converter()
+        logger.info(
+            "DoclingParser initialized: ocr_engine=%s external_plugins=%s picture_ocr_enabled=%s",
+            DOCLING_GLM_OCR_KIND if enable_image_ocr else "disabled",
+            bool(enable_image_ocr),
+            bool(enable_image_ocr and self.ocr_client),
+        )
+
+    def _ensure_repo_root_on_sys_path(self) -> Path:
+        repo_root = Path(__file__).resolve().parents[2]
+        repo_root_str = str(repo_root)
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+        return repo_root
+
+    def _ensure_docling_plugin_ready(self) -> None:
+        self._ensure_repo_root_on_sys_path()
+        entry_points = importlib.metadata.entry_points(group="docling")
+        if not any(ep.name == DOCLING_GLM_PLUGIN_ENTRYPOINT for ep in entry_points):
+            raise RuntimeError(
+                f"Docling 外部 OCR 插件未找到: {DOCLING_GLM_PLUGIN_ENTRYPOINT}"
+            )
+
+    def _build_pdf_pipeline_options(self) -> ThreadedPdfPipelineOptions:
+        from app.document_parser.docling_glm_ocr_plugin import GlmVisionOcrOptions
+
+        return ThreadedPdfPipelineOptions(
+            allow_external_plugins=True,
+            do_ocr=self.enable_image_ocr,
+            ocr_options=GlmVisionOcrOptions(),
+        )
+
+    def _build_converter(self) -> DocumentConverter:
+        if not self.enable_image_ocr:
+            return DocumentConverter()
+
+        pdf_options = self._build_pdf_pipeline_options()
+        image_options = self._build_pdf_pipeline_options()
+        return DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
+                InputFormat.IMAGE: ImageFormatOption(pipeline_options=image_options),
+            }
+        )
     
     def parse_file(self, file_path: Union[str, Path]) -> ParsedDocument:
         """
@@ -195,7 +252,10 @@ class DoclingParser:
                 "binary_hash": None,
                 "num_pages": len(doc),
                 "num_tables": 0,
-                "num_images": 0
+                "num_images": 0,
+                "ocr_engine": "pymupdf_backend_text",
+                "picture_ocr_enabled": False,
+                "docling_external_plugins_enabled": False,
             }
             
             return ParsedDocument(
@@ -291,6 +351,7 @@ class DoclingParser:
                         ocr_result = self.ocr_client.recognize_image_bytes(image_bytes)
                         ocr_text = ocr_result.get("text", "")
                         image_info["ocr_text"] = ocr_text
+                        image_info["ocr_source"] = "glm_docling_picture_pass"
                         if ocr_text:
                             ocr_texts.append(f"[图片{idx + 1} OCR结果]:\n{ocr_text}")
                             logger.info("第 %d 张图片OCR识别完成", idx + 1)
@@ -317,7 +378,10 @@ class DoclingParser:
             "binary_hash": doc.origin.binary_hash if doc.origin else None,
             "num_pages": len(doc.pages),
             "num_tables": len(doc.tables),
-            "num_images": len(doc.pictures)
+            "num_images": len(doc.pictures),
+            "ocr_engine": DOCLING_GLM_OCR_KIND if self.enable_image_ocr else "disabled",
+            "picture_ocr_enabled": bool(self.enable_image_ocr and self.ocr_client),
+            "docling_external_plugins_enabled": bool(self.enable_image_ocr),
         }
         
         # 识别格式
@@ -402,7 +466,10 @@ class DoclingParser:
             ".html": "html",
             ".htm": "html",
             ".txt": "txt",
-            ".md": "markdown"
+            ".md": "markdown",
+            ".jpg": "image",
+            ".jpeg": "image",
+            ".png": "image",
         }
         return format_map.get(suffix, "unknown")
     

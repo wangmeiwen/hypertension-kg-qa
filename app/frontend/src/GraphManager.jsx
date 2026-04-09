@@ -1019,12 +1019,13 @@ export default function GraphManager() {
                   <label>上传文件</label>
                   <input
                     type="file"
-                    accept=".txt,.md,.pdf,.docx,.doc,.pptx,.ppt,.html,.htm"
+                    accept=".txt,.md,.pdf,.docx,.doc,.pptx,.ppt,.html,.htm,.jpg,.jpeg,.png"
                     onChange={handleImportFileChange}
                     disabled={importLoading}
                   />
-                  <p className="form-hint">支持 txt、md、pdf、docx、pptx、html</p>
+                  <p className="form-hint">支持 txt、md、pdf、docx、pptx、html、jpg、jpeg、png</p>
                   <p className="form-hint">文件大小不能超过 50MB</p>
+                  <p className="form-hint">JPG/JPEG/PNG 图片会在 OCR 前自动压缩到模型可处理范围</p>
                 </div>
                 {importResult && (
                   <div className="embed-result-section">

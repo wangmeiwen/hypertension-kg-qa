@@ -87,6 +87,8 @@ class AdminDocumentsService:
 
         try:
             content = await file.read()
+            if len(content) > 50 * 1024 * 1024:
+                return {"ok": False, "error": "文件大小不能超过 50MB"}
             from app.document_parser.docling_parser import DoclingParser
 
             parser = await self._await_call(DoclingParser)
@@ -113,13 +115,15 @@ class AdminDocumentsService:
         if not file.filename:
             return {"ok": False, "error": "文件名不能为空"}
 
-        allowed_extensions = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".txt", ".md"}
+        allowed_extensions = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".txt", ".md", ".jpg", ".jpeg", ".png"}
         file_ext = Path(file.filename).suffix.lower()
         if file_ext not in allowed_extensions:
             return {"ok": False, "error": f"不支持的文件格式: {file_ext}。支持的格式: {', '.join(allowed_extensions)}"}
 
         try:
             content = await file.read()
+            if len(content) > 50 * 1024 * 1024:
+                return {"ok": False, "error": "文件大小不能超过 50MB"}
             from app.common.config import Config
             from app.document_parser.docling_parser import DoclingParser
             from app.document_parser.document_segmentation import DocumentSegmentation

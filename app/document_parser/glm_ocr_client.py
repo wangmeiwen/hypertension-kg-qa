@@ -22,6 +22,11 @@ from app.common.config import Config
 
 logger = logging.getLogger(__name__)
 
+OCR_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+OCR_MIN_IMAGE_SIDE = 768
+OCR_RESIZE_FACTOR = 0.85
+OCR_JPEG_QUALITIES = (92, 84, 76, 68, 60, 52, 44, 36)
+
 
 class GlmOcrClient:
     """
@@ -76,7 +81,6 @@ class GlmOcrClient:
                     ],
                 }
             ],
-            thinking={"type": "enabled"},
         )
 
         text = ""
@@ -108,6 +112,66 @@ class GlmOcrClient:
         err_text = str(exc).lower()
         markers = ["length", "max token", "max_tokens", "context length", "too long", "token", "413", "payload"]
         return any(marker in err_text for marker in markers)
+
+    def _prepare_image_for_ocr(self, image_bytes: bytes) -> tuple[bytes, Dict[str, Any]]:
+        # 统一在 OCR 客户端内做图片压缩/缩放，避免各入口各自实现一套。
+        """将图片压缩到 OCR 可处理范围内，并返回调试元数据。"""
+        original_bytes = len(image_bytes or b"")
+        metadata: Dict[str, Any] = {
+            "original_bytes": original_bytes,
+            "prepared_bytes": original_bytes,
+            "preprocess_applied": False,
+            "warnings": [],
+        }
+        if not image_bytes or original_bytes <= OCR_IMAGE_MAX_BYTES:
+            return image_bytes, metadata
+
+        try:
+            from PIL import Image, ImageOps
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            raise RuntimeError(f"当前环境无法自动压缩超限图片: {exc}") from exc
+
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as opened:
+                prepared = ImageOps.exif_transpose(opened)
+                prepared.load()
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            raise ValueError(f"图片无法解析，无法自动压缩后执行 OCR: {exc}") from exc
+
+        if prepared.mode in {"RGBA", "LA"} or (prepared.mode == "P" and "transparency" in prepared.info):
+            background = Image.new("RGB", prepared.size, (255, 255, 255))
+            alpha = prepared.getchannel("A") if "A" in prepared.getbands() else None
+            background.paste(prepared.convert("RGBA"), mask=alpha)
+            current = background
+        else:
+            current = prepared.convert("RGB")
+
+        resize_round = 0
+        while True:
+            for quality in OCR_JPEG_QUALITIES:
+                buf = io.BytesIO()
+                current.save(buf, format="JPEG", quality=quality, optimize=True)
+                candidate = buf.getvalue()
+                if len(candidate) <= OCR_IMAGE_MAX_BYTES:
+                    metadata["prepared_bytes"] = len(candidate)
+                    metadata["preprocess_applied"] = True
+                    if resize_round > 0:
+                        metadata["warnings"].append(f"image_resized_rounds:{resize_round}")
+                    if quality != OCR_JPEG_QUALITIES[0]:
+                        metadata["warnings"].append(f"jpeg_quality_reduced:{quality}")
+                    return candidate, metadata
+
+            width, height = current.size
+            if min(width, height) <= OCR_MIN_IMAGE_SIDE:
+                break
+            next_width = max(1, int(width * OCR_RESIZE_FACTOR))
+            next_height = max(1, int(height * OCR_RESIZE_FACTOR))
+            if next_width == width and next_height == height:
+                break
+            current = current.resize((next_width, next_height), Image.Resampling.LANCZOS)
+            resize_round += 1
+
+        raise ValueError("图片自动压缩后仍超过 5MB，无法执行 OCR")
 
     def _split_image_vertically(self, image_bytes: bytes, max_segment_height: int = 1500, overlap: int = 80) -> list[bytes]:
         # 将长图纵向切分为多个重叠子图，降低单次识别长度压力。
@@ -166,8 +230,9 @@ class GlmOcrClient:
         """
         segments = self._split_image_vertically(image_bytes)
         if len(segments) <= 1:
+            prepared_single, single_meta = self._prepare_image_for_ocr(image_bytes)
             single = self._recognize_single_pass(
-                image_bytes,
+                prepared_single,
                 "请提取图片中的全部可读文字，按原始阅读顺序输出，仅返回纯文本。",
             )
             return {
@@ -176,7 +241,10 @@ class GlmOcrClient:
                 "strategy": "single",
                 "segments_count": 1,
                 "truncated": single["finish_reason"] == "length",
-                "warnings": [],
+                "warnings": list(single_meta.get("warnings") or []),
+                "original_bytes": int(single_meta.get("original_bytes") or 0),
+                "prepared_bytes": int(single_meta.get("prepared_bytes") or 0),
+                "preprocess_applied": bool(single_meta.get("preprocess_applied")),
             }
 
         texts = []
@@ -190,11 +258,13 @@ class GlmOcrClient:
                 "按阅读顺序输出，仅返回纯文本，不要补充解释。"
             )
             try:
-                part = self._recognize_single_pass(segment_bytes, prompt)
+                prepared_segment, segment_meta = self._prepare_image_for_ocr(segment_bytes)
+                part = self._recognize_single_pass(prepared_segment, prompt)
                 part_text = str(part.get("text") or "").strip()
                 if part_text:
                     texts.append(part_text)
                 raws.append(part.get("raw", {}))
+                warnings.extend(list(segment_meta.get("warnings") or []))
                 if str(part.get("finish_reason") or "") == "length":
                     truncated = True
                     warnings.append(f"segment_{idx + 1}_truncated")
@@ -208,6 +278,9 @@ class GlmOcrClient:
             "segments_count": len(segments),
             "truncated": truncated,
             "warnings": warnings,
+            "original_bytes": len(image_bytes or b""),
+            "prepared_bytes": len(image_bytes or b""),
+            "preprocess_applied": True,
         }
 
     def recognize_image_bytes(self, image_bytes: bytes) -> Dict[str, Any]:
@@ -236,15 +309,22 @@ class GlmOcrClient:
                 "segments_count": 0,
                 "truncated": False,
                 "warnings": ["empty_image_bytes"],
+                "original_bytes": 0,
+                "prepared_bytes": 0,
+                "preprocess_applied": False,
             }
 
         prompt = "请提取图片中的全部可读文字，按原始阅读顺序输出，仅返回纯文本。"
+        prepared_bytes, prepare_meta = self._prepare_image_for_ocr(image_bytes)
         try:
-            first_pass = self._recognize_single_pass(image_bytes, prompt)
+            first_pass = self._recognize_single_pass(prepared_bytes, prompt)
             finish_reason = str(first_pass.get("finish_reason") or "")
             if finish_reason == "length":
-                segmented = self._recognize_with_segments(image_bytes)
-                segmented["warnings"] = ["single_pass_length"] + list(segmented.get("warnings") or [])
+                segmented = self._recognize_with_segments(prepared_bytes)
+                segmented["warnings"] = ["single_pass_length"] + list(prepare_meta.get("warnings") or []) + list(segmented.get("warnings") or [])
+                segmented["original_bytes"] = int(prepare_meta.get("original_bytes") or 0)
+                segmented["prepared_bytes"] = int(prepare_meta.get("prepared_bytes") or 0)
+                segmented["preprocess_applied"] = bool(prepare_meta.get("preprocess_applied"))
                 return segmented
             return {
                 "text": first_pass.get("text", ""),
@@ -252,12 +332,18 @@ class GlmOcrClient:
                 "strategy": "single",
                 "segments_count": 1,
                 "truncated": False,
-                "warnings": [],
+                "warnings": list(prepare_meta.get("warnings") or []),
+                "original_bytes": int(prepare_meta.get("original_bytes") or 0),
+                "prepared_bytes": int(prepare_meta.get("prepared_bytes") or 0),
+                "preprocess_applied": bool(prepare_meta.get("preprocess_applied")),
             }
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             if self._is_length_issue(exc):
-                segmented = self._recognize_with_segments(image_bytes)
-                segmented["warnings"] = [f"single_pass_exception:{exc}"] + list(segmented.get("warnings") or [])
+                segmented = self._recognize_with_segments(prepared_bytes)
+                segmented["warnings"] = [f"single_pass_exception:{exc}"] + list(prepare_meta.get("warnings") or []) + list(segmented.get("warnings") or [])
+                segmented["original_bytes"] = int(prepare_meta.get("original_bytes") or 0)
+                segmented["prepared_bytes"] = int(prepare_meta.get("prepared_bytes") or 0)
+                segmented["preprocess_applied"] = bool(prepare_meta.get("preprocess_applied"))
                 return segmented
             raise
 
@@ -277,4 +363,3 @@ def get_glm_ocr_client() -> GlmOcrClient:
         conf = Config()
         _glm_ocr_client = GlmOcrClient(api_key=conf.ZHIPU_API_KEY)
     return _glm_ocr_client
-
