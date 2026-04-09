@@ -13,6 +13,8 @@ from app.common.langsmith_tracing import set_trace_metadata
 class SessionTurnService:
     """封装会话校验、消息落库与 runtime context 构建。"""
 
+    DEFAULT_SESSION_TITLE = "新会话"
+
     def __init__(
         self,
         await_call: Any,
@@ -57,6 +59,14 @@ class SessionTurnService:
             tags=["api", "process_with_session"],
         )
 
+    @classmethod
+    def _build_session_title(cls, input_text: str) -> str:
+        """基于用户首问生成会话标题。"""
+        text = str(input_text or "").strip()
+        if not text:
+            return cls.DEFAULT_SESSION_TITLE
+        return text[:30] + "..." if len(text) > 30 else text
+
     async def prepare_session_turn(
         self,
         input_text: str,
@@ -68,18 +78,27 @@ class SessionTurnService:
         """准备会话轮次上下文，含会话校验与首条用户消息落库。"""
         safe_user_id = str(user_id or "").strip() or str(uuid.uuid4())
         safe_session_id = str(session_id or "").strip()
+        first_question_title = self._build_session_title(input_text)
 
         if not safe_session_id:
             created_session = await self._await_call(
                 self._session_manager.create_session,
                 safe_user_id,
-                input_text[:30] + "..." if len(input_text) > 30 else input_text,
+                first_question_title,
             )
             safe_session_id = str((created_session or {}).get("id") or "")
         else:
             existed = await self._await_call(self._session_manager.get_session, safe_session_id)
             if not existed or str(existed.get("user_id") or "") != safe_user_id:
                 return {"ok": False, "error": "session_not_found"}
+            existed_title = str(existed.get("title") or "").strip()
+            message_count = await self._await_call(self._message_manager.count_messages, safe_session_id)
+            if message_count == 0 and existed_title in {"", self.DEFAULT_SESSION_TITLE}:
+                await self._await_call(
+                    self._session_manager.update_session_title,
+                    safe_session_id,
+                    first_question_title,
+                )
 
         message_content = input_text
         if image_data:

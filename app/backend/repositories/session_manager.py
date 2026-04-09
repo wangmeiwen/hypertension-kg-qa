@@ -259,6 +259,15 @@ class MessageManager:
         ]
 
     @staticmethod
+    async def count_messages(session_id: str) -> int:
+        """统计会话下已持久化消息数量。"""
+        row = await fetch_one(
+            "SELECT COUNT(*) as count FROM messages WHERE session_id=:session_id",
+            {"session_id": session_id},
+        )
+        return int((row or {}).get("count") or 0)
+
+    @staticmethod
     async def delete_messages(session_id: str) -> bool:
         """删除数据。
 

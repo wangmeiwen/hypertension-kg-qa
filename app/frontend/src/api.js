@@ -108,6 +108,20 @@ export async function getSession(sessionId, userId) {
   return data.data;
 }
 
+// 更新指定会话标题。
+export async function updateSession(sessionId, userId, title) {
+  const response = await fetch(`${BASE_URL}/sessions/${sessionId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, title })
+  });
+  const data = await response.json();
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || `请求错误: ${response.status}`);
+  }
+  return data;
+}
+
 // 删除指定会话。
 export async function deleteSession(sessionId, userId) {
   const params = new URLSearchParams();

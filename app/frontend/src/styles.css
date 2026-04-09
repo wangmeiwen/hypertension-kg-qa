@@ -1054,12 +1054,24 @@ body {
   text-overflow: ellipsis;
 }
 
+.session-title-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  outline: none;
+  font-size: 14px;
+  color: #111827;
+  background: #ffffff;
+}
+
 .session-time {
   font-size: 12px;
   color: #9ca3af;
   margin-top: 2px;
 }
 
+.edit-btn,
 .delete-btn {
   width: 24px;
   height: 24px;
@@ -1075,8 +1087,14 @@ body {
   transition: opacity 0.2s;
 }
 
+.session-item:hover .edit-btn,
 .session-item:hover .delete-btn {
   opacity: 1;
+}
+
+.edit-btn:hover {
+  background: #dbeafe;
+  color: #2563eb;
 }
 
 .delete-btn:hover {

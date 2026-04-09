@@ -382,6 +382,7 @@ export default function App() {
   const [filePreview, setFilePreview] = useState(null);
   const [currentJobId, setCurrentJobId] = useState("");
   const [stoppingJob, setStoppingJob] = useState(false);
+  const [sessionListVersion, setSessionListVersion] = useState(0);
   const chatScrollRef = useRef(null);
 
   // 滚动聊天窗口到底部，保证最新消息可见。
@@ -571,6 +572,7 @@ export default function App() {
     let replyContent = "";
     let doneStatus = "done";
     let streamSessionId = currentSessionId;
+    let sessionListRefreshQueued = false;
     // 追加思考状态并同步到当前助手消息。
     const addThinkStatus = (value, stage = "") => {
       const nextStatuses = appendThinkStatus(thinkStatuses, value, stage);
@@ -588,6 +590,10 @@ export default function App() {
       if (normalizedSessionId) {
         streamSessionId = normalizedSessionId;
         setCurrentSessionId(normalizedSessionId);
+        if (!sessionListRefreshQueued) {
+          sessionListRefreshQueued = true;
+          setSessionListVersion((prev) => prev + 1);
+        }
       }
       const normalizedUserMessageId = Number(userMessageId || 0);
       const normalizedAssistantMessageId = Number(assistantMessageId || 0);
@@ -672,6 +678,9 @@ export default function App() {
       setLoading(false);
       setStoppingJob(false);
       setCurrentJobId("");
+      if (streamSessionId) {
+        setSessionListVersion((prev) => prev + 1);
+      }
     }
   };
 
@@ -788,6 +797,7 @@ export default function App() {
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
         onCreateSession={handleCreateSession}
+        refreshKey={sessionListVersion}
       />
       <div className="main-content">
         <header className="header">

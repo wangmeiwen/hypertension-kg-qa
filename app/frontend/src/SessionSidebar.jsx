@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { listSessions, deleteSession, createSession } from "./api";
+import { listSessions, deleteSession, createSession, updateSession } from "./api";
 
 // 模块职责：管理左侧会话列表，提供新建、切换和删除会话入口。
 export default function SessionSidebar({
@@ -7,7 +7,8 @@ export default function SessionSidebar({
   currentSessionId,
   onSelectSession,
   onCreateSession,
-  onSessionChange
+  onSessionChange,
+  refreshKey = 0,
 }) {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -34,7 +35,7 @@ export default function SessionSidebar({
 
   useEffect(() => {
     loadSessions();
-  }, [loadSessions]);
+  }, [loadSessions, refreshKey]);
 
   // 创建新会话并插入到列表顶部。
   const handleCreateSession = async () => {
@@ -47,6 +48,42 @@ export default function SessionSidebar({
       console.error(e);
     }
   };
+
+  // 进入标题编辑态。
+  const handleStartEdit = (e, session) => {
+    e.stopPropagation();
+    setEditingId(session.id);
+    setEditTitle(String(session.title || "").trim() || "新会话");
+    setError("");
+  };
+
+  // 退出标题编辑态。
+  const handleCancelEdit = useCallback(() => {
+    setEditingId(null);
+    setEditTitle("");
+  }, []);
+
+  // 提交新的会话标题。
+  const handleSaveTitle = useCallback(async (sessionId) => {
+    const normalizedTitle = String(editTitle || "").trim();
+    if (!normalizedTitle) {
+      handleCancelEdit();
+      return;
+    }
+    try {
+      await updateSession(sessionId, userId, normalizedTitle);
+      setSessions((prev) => prev.map((session) => (
+        session.id === sessionId
+          ? { ...session, title: normalizedTitle, updated_at: new Date().toISOString() }
+          : session
+      )));
+      handleCancelEdit();
+      onSessionChange?.();
+    } catch (e) {
+      setError("更新标题失败");
+      console.error(e);
+    }
+  }, [editTitle, handleCancelEdit, onSessionChange, userId]);
 
   // 删除会话并在必要时清理当前选中状态。
   const handleDeleteSession = async (e, sessionId) => {
@@ -153,7 +190,10 @@ export default function SessionSidebar({
             <div
               key={session.id}
               className={`session-item ${currentSessionId === session.id ? "active" : ""}`}
-              onClick={() => onSelectSession?.(session)}
+              onClick={() => {
+                if (editingId === session.id) return;
+                onSelectSession?.(session);
+              }}
             >
               <div className="session-icon">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -161,13 +201,45 @@ export default function SessionSidebar({
                 </svg>
               </div>
               <div className="session-info">
-                <div className="session-title">
-                  {truncateTitle(session.title)}
-                </div>
+                {editingId === session.id ? (
+                  <input
+                    className="session-title-input"
+                    value={editTitle}
+                    maxLength={60}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onBlur={() => void handleSaveTitle(session.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleSaveTitle(session.id);
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        handleCancelEdit();
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="session-title" title={session.title || "新会话"}>
+                    {truncateTitle(session.title)}
+                  </div>
+                )}
                 <div className="session-time">
                   {formatTime(session.updated_at)}
                 </div>
               </div>
+              <button
+                className="edit-btn"
+                onClick={(e) => handleStartEdit(e, session)}
+                title="修改标题"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                </svg>
+              </button>
               <button
                 className="delete-btn"
                 onClick={(e) => handleDeleteSession(e, session.id)}
