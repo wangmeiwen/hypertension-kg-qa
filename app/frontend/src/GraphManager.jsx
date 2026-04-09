@@ -19,6 +19,8 @@ import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "
 
 // 模块职责：提供图谱后台管理能力（节点、关系、查询、导入和嵌入）。
 export default function GraphManager() {
+  const IMPORT_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
+
   // 状态管理
   const [labels, setLabels] = useState([]);
   const [relTypes, setRelTypes] = useState([]);
@@ -60,7 +62,6 @@ export default function GraphManager() {
   const [embedResult, setEmbedResult] = useState(null);
   const [importLoading, setImportLoading] = useState(false);
   const [selectedImportFile, setSelectedImportFile] = useState(null);
-  const [importMaxChars, setImportMaxChars] = useState(12000);
   const [importResult, setImportResult] = useState(null);
 
   // 初始化加载
@@ -328,12 +329,19 @@ export default function GraphManager() {
   function openImportModal() {
     setSelectedImportFile(null);
     setImportResult(null);
+    setError("");
     setShowImportModal(true);
   }
 
   // 处理抽取入图谱的本地文件选择。
   function handleImportFileChange(e) {
     const file = e.target.files[0];
+    if (file && file.size > IMPORT_FILE_SIZE_LIMIT) {
+      setSelectedImportFile(null);
+      setError("文件大小不能超过 50MB");
+      return;
+    }
+    setError("");
     setSelectedImportFile(file || null);
   }
 
@@ -347,7 +355,7 @@ export default function GraphManager() {
     setImportLoading(true);
     setError("");
     try {
-      const result = await extractAndImportGraph(selectedImportFile, importMaxChars);
+      const result = await extractAndImportGraph(selectedImportFile);
       setImportResult(result);
       setSuccess("文件抽取并写入图谱成功");
       await Promise.all([loadLabels(), loadRelTypes(), loadNodes()]);
@@ -1016,17 +1024,7 @@ export default function GraphManager() {
                     disabled={importLoading}
                   />
                   <p className="form-hint">支持 txt、md、pdf、docx、pptx、html</p>
-                </div>
-                <div className="form-group">
-                  <label>抽取最大字符数</label>
-                  <input
-                    type="number"
-                    min={1000}
-                    max={50000}
-                    value={importMaxChars}
-                    onChange={(e) => setImportMaxChars(Number(e.target.value))}
-                    disabled={importLoading}
-                  />
+                  <p className="form-hint">文件大小不能超过 50MB</p>
                 </div>
                 {importResult && (
                   <div className="embed-result-section">

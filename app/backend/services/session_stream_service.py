@@ -267,7 +267,7 @@ def _infer_question_scope(input_text: str) -> str:
         )
     ):
         return "small_talk"
-    if re.search(r"高血压|用药|疗效|安全|指南|acei|arb|ccb", lowered):
+    if re.search(r"血压|用药|疗效|安全|指南|acei|arb|ccb", lowered):
         return "medical_qa"
     return "unknown"
 

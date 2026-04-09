@@ -513,10 +513,9 @@ export async function executeCypherQuery(query) {
 }
 
 // 上传文件并触发图谱抽取入库。
-export async function extractAndImportGraph(file, maxChars = 12000) {
+export async function extractAndImportGraph(file) {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("max_chars", String(maxChars));
 
   const response = await adminFetch(`${BASE_URL}/admin/graph/extract-and-import`, {
     method: "POST",

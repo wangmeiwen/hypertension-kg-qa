@@ -73,7 +73,6 @@ htmlcov/
 /docker/milvus/volumes2/
 /tests/langsmith/
 /docker/milvus/
-/tests/
 /docs/
 /.codex/
 /.claude/

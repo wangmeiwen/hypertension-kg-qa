@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 
 from app.backend.dependencies.admin_auth import require_admin_login
 from app.backend.services.graph_admin_service import GraphAdminService
@@ -65,9 +65,9 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
         return await service.execute_cypher(data)
 
     @router.post("/admin/graph/extract-and-import")
-    async def extract_and_import_graph(file: UploadFile = File(...), max_chars: int = Form(12000)) -> dict[str, Any]:
+    async def extract_and_import_graph(file: UploadFile = File(...)) -> dict[str, Any]:
         """从上传文件抽取并导入图谱。"""
-        return await service.extract_and_import_graph(file=file, max_chars=max_chars)
+        return await service.extract_and_import_graph(file=file)
 
     @router.post("/admin/graph/embed-to-milvus")
     async def embed_graph_to_milvus(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:

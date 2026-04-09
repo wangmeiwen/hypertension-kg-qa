@@ -215,6 +215,65 @@ def get_kg_collection_stats():
         return None
 
 
+def run_interactive_mode(default_dim: int = 1024) -> int:
+    """交互模式入口。"""
+    print("\n未检测到命令行参数，进入交互模式。")
+    print("请选择操作:")
+    print("  1) 查看集合统计")
+    print("  2) 重建集合")
+    print("  3) 仅删除集合")
+    print("  0) 退出")
+
+    try:
+        action = input("请输入选项 [1/2/3/0]: ").strip()
+    except EOFError:
+        print("❌ 未检测到可用输入流，请使用参数模式执行（--stats / --recreate / --drop-only）")
+        return 2
+
+    if action == "1":
+        get_kg_collection_stats()
+        return 0
+
+    if action == "2":
+        try:
+            dim_text = input(f"请输入向量维度（默认 {default_dim}）: ").strip()
+        except EOFError:
+            print("❌ 未检测到可用输入流，操作已取消")
+            return 2
+        if dim_text and not dim_text.isdigit():
+            print("❌ 向量维度必须是正整数")
+            return 1
+        embedding_dim = int(dim_text) if dim_text else default_dim
+        success = recreate_kg_collection(embedding_dim=embedding_dim, skip_confirm=False)
+        return 0 if success else 1
+
+    if action == "3":
+        config = get_kg_milvus_config()
+        client = MilvusClient(
+            uri=f"http://{config['host']}:{config['port']}",
+            db_name=config["database"]
+        )
+        try:
+            confirm = input(
+                f"⚠️  这将删除集合 '{config['collection_name']}' 中的所有数据，是否继续? (yes/no): "
+            ).strip().lower()
+        except EOFError:
+            print("❌ 未检测到可用输入流，操作已取消")
+            return 2
+        if confirm in ["yes", "y"]:
+            drop_collection(client, config["collection_name"])
+            return 0
+        print("❌ 操作已取消")
+        return 1
+
+    if action == "0":
+        print("已退出")
+        return 0
+
+    print("❌ 无效选项")
+    return 1
+
+
 def main():
     """主函数。
 
@@ -266,14 +325,10 @@ def main():
             db_name=config["database"]
         )
         drop_collection(client, config["collection_name"])
+        sys.exit(0)
     else:
-        # 默认操作：显示帮助
-        parser.print_help()
-        print("\n示例:")
-        print("  python drop_kg_milvus_collection.py --stats          # 查看统计")
-        print("  python drop_kg_milvus_collection.py --recreate       # 重建集合")
-        print("  python drop_kg_milvus_collection.py --recreate -y    # 强制重建（跳过确认）")
-        print("  python drop_kg_milvus_collection.py --drop-only      # 仅删除")
+        # 默认行为：无参数时进入交互模式
+        sys.exit(run_interactive_mode(default_dim=args.dim))
 
 
 if __name__ == "__main__":

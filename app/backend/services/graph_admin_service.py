@@ -332,9 +332,8 @@ class GraphAdminService:
             self._log_api_error("/admin/graph/execute-cypher", "execute_cypher", exc)
             return {"ok": False, "error": str(exc)}
 
-    async def extract_and_import_graph(self, file: UploadFile, max_chars: int = 12000) -> dict[str, Any]:
+    async def extract_and_import_graph(self, file: UploadFile) -> dict[str, Any]:
         """从上传文件抽取并导入图谱。"""
-        _ = max_chars
         filename = file.filename or "uploaded_file"
         suffix = Path(filename).suffix.lower()
         supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm"}
@@ -410,6 +409,8 @@ class GraphAdminService:
             file_bytes = await file.read()
             if not file_bytes:
                 return {"ok": False, "error": "上传文件为空"}
+            if len(file_bytes) > 50 * 1024 * 1024:
+                return {"ok": False, "error": "文件大小不能超过 50MB"}
 
             parser_used = "plain_text"
             parse_warning = ""
