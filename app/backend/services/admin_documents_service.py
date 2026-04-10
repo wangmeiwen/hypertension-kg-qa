@@ -451,6 +451,10 @@ class AdminDocumentsService:
 
         parser = DoclingParser(enable_image_ocr=True, strict_image_ocr=True, progress_callback=stage_callback)
         parsed = parser.parse_bytes(file_bytes, filename)
+        metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
+        parser_used = "docling_with_pymupdf_fallback" if metadata.get("pdf_fallback_used") else "docling"
+        parse_warning = str(metadata.get("pdf_fallback_reason") or "")
+        docling_failed_pages = list(metadata.get("docling_failed_pages") or [])
 
         conf = Config()
         stage_callback("enter", "segment_text", "正在切分文本块")
@@ -491,6 +495,10 @@ class AdminDocumentsService:
             "pages": embed_result.get("pages", 0),
             "tables": embed_result.get("tables", 0),
             "images": embed_result.get("images", 0),
+            "parser_used": parser_used,
+            "parse_warning": parse_warning,
+            "docling_failed_pages": docling_failed_pages,
+            "pdf_fallback_used": bool(metadata.get("pdf_fallback_used")),
             "parent_chunks_count": len(hierarchical_chunks),
             "sub_chunks_count": embed_result.get("sub_chunks_count", 0),
             "milvus_row_count": collection_stats.get("row_count", 0) if collection_stats.get("success") else None,

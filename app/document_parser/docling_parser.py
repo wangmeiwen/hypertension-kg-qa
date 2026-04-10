@@ -20,6 +20,7 @@ import importlib.metadata
 import io
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Callable
@@ -32,16 +33,12 @@ from docling.document_converter import (
     ImageFormatOption,
     PdfFormatOption,
 )
-from docling.datamodel.base_models import InputFormat
+from docling.datamodel.base_models import ConversionStatus, InputFormat
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
 from langchain_docling import DoclingLoader
 
 # GLM-OCR 客户端按需加载
-
-
-class _PdfContainsImagesError(RuntimeError):
-    """用于标记 PDF 含图片，需要从 PyMuPDF 回退到 Docling。"""
 
 
 DOCLING_GLM_PLUGIN_ENTRYPOINT = "hypertension_docling_glm"
@@ -168,8 +165,8 @@ class DoclingParser:
         Returns:
             解析后的文档数据
         """
-        result = self.converter.convert(str(file_path))
-        return self._convert_result(result, str(file_path))
+        file_path = Path(file_path)
+        return self.parse_bytes(file_path.read_bytes(), file_path.name)
 
     def parse_bytes(self, file_bytes: bytes, filename: str) -> ParsedDocument:
         """
@@ -184,14 +181,8 @@ class DoclingParser:
         """
         suffix = Path(filename).suffix.lower()
         
-        # PDF 文件优先使用 PyMuPDF 直接解析
         if suffix == ".pdf":
-            try:
-                return self._parse_pdf_with_pymupdf(file_bytes, filename)
-            except _PdfContainsImagesError as e:
-                logger.info("PDF 检测到图片，切换到 Docling 解析: %s", e)
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-                logger.warning("PyMuPDF 解析失败，回退到 Docling: %s", e)
+            return self._parse_pdf_with_docling_fallback(file_bytes, filename)
         
         # 其他格式使用 Docling
         import tempfile
@@ -202,84 +193,51 @@ class DoclingParser:
         try:
             if self.progress_callback:
                 self.progress_callback("enter", "parse_document", "Docling 正在解析文档结构")
-            result = self.converter.convert(tmp_path)
+            result = self.converter.convert(tmp_path, raises_on_error=False)
             return self._convert_result(result, filename)
         finally:
             # 清理临时文件
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-    
-    def _parse_pdf_with_pymupdf(self, file_bytes: bytes, filename: str) -> ParsedDocument:
-        """
-        使用 PyMuPDF 直接解析 PDF。
 
-        Args:
-            file_bytes: PDF 文件字节内容
-            filename: 文件名
+    def _parse_pdf_with_docling_fallback(self, file_bytes: bytes, filename: str) -> ParsedDocument:
+        """PDF 先走 Docling，失败页再降级到 PyMuPDF + 图片 OCR。"""
+        import tempfile
 
-        Returns:
-            解析后的文档数据
-        """
-        import fitz  # PyMuPDF
-        
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
         try:
-            pages = []
-            text_parts = []
-            markdown_parts = []
-            
-            for page_num in range(len(doc)):
-                page = doc[page_num]
+            if self.progress_callback:
+                self.progress_callback("enter", "parse_document", "Docling 正在解析 PDF")
+            result = self.converter.convert(tmp_path, raises_on_error=False)
+            status_name = self._get_conversion_status_name(result)
 
-                # 一旦检测到图片，立即退出 PyMuPDF 流程并回退到 Docling。
-                if page.get_images(full=True):
-                    raise _PdfContainsImagesError(f"第 {page_num + 1} 页检测到图片")
-                
-                # 获取页面文本
-                page_text = page.get_text("text")
-                text_parts.append(page_text)
-                
-                # 简单拼接 Markdown 预览
-                markdown_parts.append(f"## 第 {page_num + 1} 页\n\n{page_text}")
-                
-                # 页面信息
-                pages.append({
-                    "page_no": page_num + 1,
-                    "size": [page.rect.width, page.rect.height],
-                    "cells": 0,
-                    "items": 0
-                })
-            
-            # 合并文本
-            text = "\n\n".join(text_parts)
-            markdown = "\n\n".join(markdown_parts)
-            
-            # 元数据
-            metadata = {
-                "filename": filename,
-                "mimetype": "application/pdf",
-                "binary_hash": None,
-                "num_pages": len(doc),
-                "num_tables": 0,
-                "num_images": 0,
-                "ocr_engine": "pymupdf_backend_text",
-                "picture_ocr_enabled": False,
-                "docling_external_plugins_enabled": False,
-            }
-            
-            return ParsedDocument(
-                source=filename,
-                format="pdf",
-                markdown=markdown,
-                text=text,
-                pages=pages,
-                tables=[],
-                images=[],
-                metadata=metadata
-            )
+            if status_name == "success":
+                return self._convert_result(
+                    result,
+                    filename,
+                    metadata_overrides={
+                        "pdf_primary_backend": "docling",
+                        "pdf_fallback_used": False,
+                        "pdf_fallback_reason": "",
+                        "docling_pdf_status": status_name,
+                        "docling_failed_pages": [],
+                        "page_source_map": {str(page.page_no): "docling" for page in result.pages},
+                    },
+                )
+
+            if self.progress_callback:
+                self.progress_callback(
+                    "heartbeat",
+                    "parse_document",
+                    "Docling 部分页渲染失败，正在降级补齐失败页" if status_name == "partial_success" else "Docling 渲染失败，正在降级到 PyMuPDF",
+                )
+            return self._merge_pdf_with_pymupdf_fallback(file_bytes, filename, result, status_name)
         finally:
-            doc.close()
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
     
     def parse_url(self, url: str) -> ParsedDocument:
         """
@@ -294,7 +252,13 @@ class DoclingParser:
         result = self.converter.convert(url)
         return self._convert_result(result, url)
 
-    def _convert_result(self, result: ConversionResult, source: str) -> ParsedDocument:
+    def _convert_result(
+        self,
+        result: ConversionResult,
+        source: str,
+        *,
+        metadata_overrides: Optional[Dict[str, Any]] = None,
+    ) -> ParsedDocument:
         """
         转换 Docling 结果为标准格式，并对图片进行 OCR 识别。
 
@@ -310,101 +274,15 @@ class DoclingParser:
         if self.progress_callback:
             self.progress_callback("heartbeat", "parse_document", "Docling 文档结构解析完成，正在整理正文")
         
-        # 导出为 Markdown
-        markdown = doc.export_to_markdown()
-        
-        # 导出为纯文本
-        text = doc.export_to_text()
-        
-        # 提取页面信息
-        pages = []
-        for page in doc.pages.values():
-            pages.append({
-                "page_no": page.page_no,
-                "size": page.size.as_tuple() if page.size else None,
-                "cells": len(page.cells) if hasattr(page, 'cells') and page.cells else 0,
-                "items": len(page.items) if hasattr(page, 'items') and page.items else 0
-            })
-        
-        # 提取表格信息
-        tables = []
-        for table in doc.tables:
-            caption_obj = getattr(table, "caption", None)
-            caption_text = getattr(caption_obj, "text", None) if caption_obj else None
-            tables.append({
-                "caption": caption_text,
-                "data": table.export_to_dataframe().to_dict() if table.export_to_dataframe() is not None else None
-            })
-        
-        # 提取图片信息并进行OCR识别
-        images = []
-        ocr_texts = []  # 存储所有图片的OCR结果
-        total_pictures = len(doc.pictures)
-
-        if total_pictures == 0 and self.progress_callback:
-            self.progress_callback("complete", "parse_document", "文档正文解析完成")
-
-        for idx, picture in enumerate(doc.pictures):
-            picture_caption = getattr(picture, "caption", None)
-            picture_caption_text = getattr(picture_caption, "text", None) if picture_caption else None
-            picture_annotations = getattr(picture, "annotations", None) or []
-            image_info = {
-                "caption": picture_caption_text,
-                "annotations": [
-                    {
-                        "kind": getattr(ann, "kind", ""),
-                        "text": getattr(ann, "text", "")
-                    } for ann in picture_annotations
-                ] if picture_annotations else []
-            }
-            
-            # 如果启用了OCR，尝试识别图片中的文字
-            if self.enable_image_ocr and self.ocr_client:
-                try:
-                    if self.progress_callback:
-                        if idx == 0:
-                            self.progress_callback("complete", "parse_document", "文档正文解析完成")
-                            self.progress_callback("enter", "ocr_images", f"正在对第 {idx + 1}/{total_pictures} 张图片进行 OCR")
-                        else:
-                            self.progress_callback("heartbeat", "ocr_images", f"正在对第 {idx + 1}/{total_pictures} 张图片进行 OCR")
-                    # 尝试获取图片的二进制数据
-                    image_bytes = self._extract_image_bytes(picture, doc)
-                    if image_bytes:
-                        logger.info("正在对第 %d 张图片进行OCR识别...", idx + 1)
-                        ocr_result = self.ocr_client.recognize_image_bytes(image_bytes)
-                        ocr_text = ocr_result.get("text", "")
-                        image_info["ocr_text"] = ocr_text
-                        image_info["ocr_source"] = "glm_docling_picture_pass"
-                        if ocr_text:
-                            ocr_texts.append(f"[图片{idx + 1} OCR结果]:\n{ocr_text}")
-                            logger.info("第 %d 张图片OCR识别完成", idx + 1)
-                        if self.progress_callback:
-                            self.progress_callback("heartbeat", "ocr_images", f"第 {idx + 1}/{total_pictures} 张图片 OCR 已完成")
-                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-                    logger.warning("第 %d 张图片OCR识别失败: %s", idx + 1, e)
-                    image_info["ocr_error"] = str(e)
-                    if self.progress_callback:
-                        self.progress_callback("heartbeat", "ocr_images", f"第 {idx + 1}/{total_pictures} 张图片 OCR 失败: {e}")
-                    if self.strict_image_ocr:
-                        raise RuntimeError(f"第 {idx + 1} 张图片 OCR 失败: {e}") from e
-            
-            images.append(image_info)
-
-        if total_pictures > 0 and self.enable_image_ocr and self.ocr_client and self.progress_callback:
-            self.progress_callback("complete", "ocr_images", "文档图片 OCR 完成")
-        
-        # 如果有OCR结果，追加到文本中
-        if ocr_texts:
-            ocr_section = "\n\n" + "=" * 50 + "\n[图片OCR识别内容]\n" + "=" * 50 + "\n\n"
-            ocr_section += "\n\n".join(ocr_texts)
-            text += ocr_section
-            markdown += "\n\n## 图片OCR识别内容\n\n" + "\n\n".join([
-                f"### 图片{i+1}\n{t.replace(f'[图片{i+1} OCR结果]:' + chr(10), '')}" 
-                for i, t in enumerate(ocr_texts)
-            ])
+        page_text_map = self._build_docling_page_text_map(doc)
+        page_markdown_map = self._build_docling_page_markdown_map(doc)
+        pages = self._build_docling_pages(doc)
+        tables = self._extract_tables(doc)
+        images, ocr_texts_by_page = self._extract_docling_images(doc)
+        text, markdown = self._compose_document_from_page_maps(page_text_map, page_markdown_map, ocr_texts_by_page)
         
         # 元数据
-        metadata = {
+        metadata: Dict[str, Any] = {
             "filename": doc.origin.filename if doc.origin else None,
             "mimetype": doc.origin.mimetype if doc.origin else None,
             "binary_hash": doc.origin.binary_hash if doc.origin else None,
@@ -415,6 +293,8 @@ class DoclingParser:
             "picture_ocr_enabled": bool(self.enable_image_ocr and self.ocr_client),
             "docling_external_plugins_enabled": bool(self.enable_image_ocr),
         }
+        if metadata_overrides:
+            metadata.update(metadata_overrides)
         
         # 识别格式
         format_type = self._detect_format(source)
@@ -429,6 +309,322 @@ class DoclingParser:
             images=images,
             metadata=metadata
         )
+
+    def _get_conversion_status_name(self, result: ConversionResult) -> str:
+        """统一提取 ConversionResult 状态。"""
+        status = getattr(result, "status", None)
+        if isinstance(status, ConversionStatus):
+            return status.value.lower()
+        if status is None:
+            return "unknown"
+        status_text = str(status)
+        if "." in status_text:
+            status_text = status_text.split(".")[-1]
+        return status_text.lower()
+
+    def _extract_failed_page_numbers(self, result: ConversionResult, total_pages: int) -> list[int]:
+        """根据 Docling 返回结果推导失败页。"""
+        success_pages = {int(page.page_no) for page in getattr(result, "pages", []) if getattr(page, "page_no", None)}
+        failed_pages = sorted(page_no for page_no in range(1, total_pages + 1) if page_no not in success_pages)
+        if failed_pages:
+            return failed_pages
+
+        page_numbers: set[int] = set()
+        for error in getattr(result, "errors", []) or []:
+            message = str(getattr(error, "error_message", "") or "")
+            match = re.search(r"Page\s+(\d+)", message)
+            if match:
+                page_numbers.add(int(match.group(1)))
+        return sorted(page_numbers)
+
+    def _merge_pdf_with_pymupdf_fallback(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        result: ConversionResult,
+        status_name: str,
+    ) -> ParsedDocument:
+        """Docling 失败后，对失败页或整份 PDF 执行 PyMuPDF + 图片 OCR 降级。"""
+        import fitz
+
+        pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
+        try:
+            total_pages = len(pdf_doc)
+            failed_page_numbers = self._extract_failed_page_numbers(result, total_pages)
+            if status_name == "failure" and not failed_page_numbers:
+                failed_page_numbers = list(range(1, total_pages + 1))
+
+            doc = result.document
+            success_page_numbers = {
+                int(page.page_no)
+                for page in getattr(result, "pages", [])
+                if getattr(page, "page_no", None) and int(page.page_no) not in failed_page_numbers
+            }
+            page_text_map = self._build_docling_page_text_map(doc)
+            page_markdown_map = self._build_docling_page_markdown_map(doc)
+            page_items = {int(page["page_no"]): page for page in self._build_docling_pages(doc)}
+            tables = self._extract_tables(doc)
+            # 对于进入 PDF 降级路径的文档，不再对 Docling 的 picture 对象做二次图片提取/OCR。
+            # 原因是这批 picture 对象本身就可能处于部分失败状态，继续强行提取会在严格模式下把整次降级补齐提前打断。
+            # 在该路径下，仅对失败页使用 PyMuPDF 提取图片并执行 OCR；成功页沿用 Docling 已经给出的正文结果。
+            docling_ocr_texts_by_page: Dict[int, List[str]] = {}
+            images: List[Dict[str, Any]] = []
+            page_source_map: dict[str, str] = {}
+
+            for page_no in range(1, total_pages + 1):
+                if page_no in success_page_numbers:
+                    page_source_map[str(page_no)] = "docling"
+                    continue
+
+                if self.progress_callback:
+                    self.progress_callback(
+                        "heartbeat",
+                        "parse_document",
+                        f"Docling 渲染失败，正在降级补齐第 {page_no}/{total_pages} 页",
+                    )
+                fallback_payload = self._extract_pdf_page_with_pymupdf(pdf_doc, page_no, total_pages)
+                page_text_map[page_no] = fallback_payload["text"]
+                page_markdown_map[page_no] = fallback_payload["markdown"]
+                page_items[page_no] = fallback_payload["page"]
+                images.extend(fallback_payload["images"])
+                if fallback_payload["ocr_texts"]:
+                    docling_ocr_texts_by_page.setdefault(page_no, []).extend(fallback_payload["ocr_texts"])
+                page_source_map[str(page_no)] = fallback_payload["page_source"]
+
+            text, markdown = self._compose_document_from_page_maps(
+                page_text_map,
+                page_markdown_map,
+                docling_ocr_texts_by_page,
+            )
+            pages = [page_items[page_no] for page_no in sorted(page_items.keys())]
+            metadata = {
+                "filename": filename,
+                "mimetype": "application/pdf",
+                "binary_hash": getattr(getattr(doc, "origin", None), "binary_hash", None),
+                "num_pages": total_pages,
+                "num_tables": len(tables),
+                "num_images": len(images),
+                "ocr_engine": DOCLING_GLM_OCR_KIND if self.enable_image_ocr else "disabled",
+                "picture_ocr_enabled": bool(self.enable_image_ocr and self.ocr_client),
+                "docling_external_plugins_enabled": bool(self.enable_image_ocr),
+                "pdf_primary_backend": "docling",
+                "pdf_fallback_used": True,
+                "pdf_fallback_reason": "Docling 渲染失败后已对失败页降级到 PyMuPDF + 图片 OCR",
+                "docling_pdf_status": status_name,
+                "docling_failed_pages": failed_page_numbers,
+                "page_source_map": page_source_map,
+            }
+            if self.progress_callback:
+                self.progress_callback("complete", "parse_document", "PDF 页面补齐完成")
+            return ParsedDocument(
+                source=filename,
+                format="pdf",
+                markdown=markdown,
+                text=text,
+                pages=pages,
+                tables=tables,
+                images=images,
+                metadata=metadata,
+            )
+        finally:
+            pdf_doc.close()
+
+    def _build_docling_page_text_map(self, doc) -> Dict[int, str]:
+        """构建按页纯文本映射。"""
+        page_text_map: Dict[int, str] = {}
+        for page_no in sorted(doc.pages.keys()):
+            page_text_map[int(page_no)] = doc.export_to_text(page_no=page_no)
+        return page_text_map
+
+    def _build_docling_page_markdown_map(self, doc) -> Dict[int, str]:
+        """构建按页 Markdown 映射。"""
+        page_markdown_map: Dict[int, str] = {}
+        for page_no in sorted(doc.pages.keys()):
+            page_markdown_map[int(page_no)] = doc.export_to_markdown(page_no=page_no)
+        return page_markdown_map
+
+    def _build_docling_pages(self, doc) -> List[Dict[str, Any]]:
+        """提取页面信息。"""
+        pages = []
+        for page in doc.pages.values():
+            pages.append(
+                {
+                    "page_no": page.page_no,
+                    "size": page.size.as_tuple() if page.size else None,
+                    "cells": len(page.cells) if hasattr(page, "cells") and page.cells else 0,
+                    "items": len(page.items) if hasattr(page, "items") and page.items else 0,
+                }
+            )
+        return pages
+
+    def _extract_tables(self, doc) -> List[Dict[str, Any]]:
+        """提取表格信息。"""
+        tables = []
+        for table in doc.tables:
+            caption_obj = getattr(table, "caption", None)
+            caption_text = getattr(caption_obj, "text", None) if caption_obj else None
+            dataframe = table.export_to_dataframe()
+            tables.append(
+                {
+                    "caption": caption_text,
+                    "data": dataframe.to_dict() if dataframe is not None else None,
+                }
+            )
+        return tables
+
+    def _resolve_picture_page_no(self, picture) -> Optional[int]:
+        """解析图片所属页码。"""
+        for prov in getattr(picture, "prov", None) or []:
+            page_no = getattr(prov, "page_no", None)
+            if page_no:
+                return int(page_no)
+        return None
+
+    def _extract_docling_images(self, doc) -> tuple[List[Dict[str, Any]], Dict[int, List[str]]]:
+        """提取 Docling 图片信息并做 OCR。"""
+        images: List[Dict[str, Any]] = []
+        ocr_texts_by_page: Dict[int, List[str]] = {}
+        total_pictures = len(doc.pictures)
+
+        if total_pictures == 0 and self.progress_callback:
+            self.progress_callback("complete", "parse_document", "文档正文解析完成")
+
+        for idx, picture in enumerate(doc.pictures):
+            page_no = self._resolve_picture_page_no(picture)
+            picture_caption = getattr(picture, "caption", None)
+            picture_caption_text = getattr(picture_caption, "text", None) if picture_caption else None
+            picture_annotations = getattr(picture, "annotations", None) or []
+            image_info = {
+                "page_no": page_no,
+                "caption": picture_caption_text,
+                "annotations": [
+                    {
+                        "kind": getattr(ann, "kind", ""),
+                        "text": getattr(ann, "text", ""),
+                    }
+                    for ann in picture_annotations
+                ] if picture_annotations else [],
+            }
+
+            if self.enable_image_ocr and self.ocr_client:
+                try:
+                    if self.progress_callback:
+                        if idx == 0:
+                            self.progress_callback("complete", "parse_document", "文档正文解析完成")
+                            self.progress_callback("enter", "ocr_images", f"正在对第 {idx + 1}/{total_pictures} 张图片进行 OCR")
+                        else:
+                            self.progress_callback("heartbeat", "ocr_images", f"正在对第 {idx + 1}/{total_pictures} 张图片进行 OCR")
+                    image_bytes = self._extract_image_bytes(picture, doc)
+                    if not image_bytes:
+                        raise RuntimeError(f"第 {idx + 1} 张图片无法提取图像数据")
+                    logger.info("正在对第 %d 张图片进行OCR识别...", idx + 1)
+                    ocr_result = self.ocr_client.recognize_image_bytes(image_bytes)
+                    ocr_text = ocr_result.get("text", "")
+                    image_info["ocr_text"] = ocr_text
+                    image_info["ocr_source"] = "glm_docling_picture_pass"
+                    if ocr_text:
+                        ocr_texts_by_page.setdefault(page_no or 0, []).append(f"[图片{idx + 1} OCR结果]:\n{ocr_text}")
+                        logger.info("第 %d 张图片OCR识别完成", idx + 1)
+                    if self.progress_callback:
+                        self.progress_callback("heartbeat", "ocr_images", f"第 {idx + 1}/{total_pictures} 张图片 OCR 已完成")
+                except Exception as e:
+                    logger.warning("第 %d 张图片OCR识别失败: %s", idx + 1, e)
+                    image_info["ocr_error"] = str(e)
+                    if self.progress_callback:
+                        self.progress_callback("heartbeat", "ocr_images", f"第 {idx + 1}/{total_pictures} 张图片 OCR 失败: {e}")
+                    if self.strict_image_ocr:
+                        raise RuntimeError(f"第 {idx + 1} 张图片 OCR 失败: {e}") from e
+
+            images.append(image_info)
+
+        if total_pictures > 0 and self.enable_image_ocr and self.ocr_client and self.progress_callback:
+            self.progress_callback("complete", "ocr_images", "文档图片 OCR 完成")
+        return images, ocr_texts_by_page
+
+    def _compose_document_from_page_maps(
+        self,
+        page_text_map: Dict[int, str],
+        page_markdown_map: Dict[int, str],
+        ocr_texts_by_page: Dict[int, List[str]],
+    ) -> tuple[str, str]:
+        """按页拼装正文和 Markdown。"""
+        ordered_pages = sorted(set(page_text_map.keys()) | set(page_markdown_map.keys()))
+        text_parts: List[str] = []
+        markdown_parts: List[str] = []
+
+        for page_no in ordered_pages:
+            page_text = (page_text_map.get(page_no) or "").strip()
+            page_markdown = (page_markdown_map.get(page_no) or "").strip()
+            page_ocr_texts = ocr_texts_by_page.get(page_no, [])
+            if page_ocr_texts:
+                ocr_section_text = "\n\n" + "\n\n".join(page_ocr_texts)
+                page_text = f"{page_text}{ocr_section_text}".strip()
+                ocr_markdown = "\n\n".join(
+                    f"### 图片{index + 1}\n{text.replace(f'[图片{index + 1} OCR结果]:' + chr(10), '')}"
+                    for index, text in enumerate(page_ocr_texts)
+                )
+                page_markdown = f"{page_markdown}\n\n## 第 {page_no} 页图片OCR识别内容\n\n{ocr_markdown}".strip()
+            text_parts.append(page_text)
+            markdown_parts.append(page_markdown)
+        return "\n\n".join(part for part in text_parts if part), "\n\n".join(part for part in markdown_parts if part)
+
+    def _extract_pdf_page_with_pymupdf(self, doc, page_no: int, total_pages: int) -> Dict[str, Any]:
+        """使用 PyMuPDF 提取单页正文并对该页图片执行 OCR。"""
+        page = doc[page_no - 1]
+        page_text = page.get_text("text") or ""
+        page_images = []
+        ocr_texts = []
+        seen_xrefs: set[int] = set()
+        raw_images = page.get_images(full=True)
+
+        for index, image_meta in enumerate(raw_images, start=1):
+            xref = int(image_meta[0])
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+            image_info = {
+                "page_no": page_no,
+                "image_index": index,
+                "xref": xref,
+            }
+            try:
+                image_payload = doc.extract_image(xref)
+                image_bytes = image_payload.get("image")
+                image_info["ext"] = image_payload.get("ext")
+                image_info["width"] = image_payload.get("width")
+                image_info["height"] = image_payload.get("height")
+                if not image_bytes:
+                    raise RuntimeError(f"第 {page_no} 页第 {index} 张图片无法提取图像数据")
+                if self.enable_image_ocr and self.ocr_client:
+                    if self.progress_callback:
+                        self.progress_callback("enter" if index == 1 else "heartbeat", "ocr_images", f"正在对第 {page_no}/{total_pages} 页第 {index} 张图片进行 OCR")
+                    ocr_result = self.ocr_client.recognize_image_bytes(image_bytes)
+                    ocr_text = ocr_result.get("text", "")
+                    image_info["ocr_text"] = ocr_text
+                    image_info["ocr_source"] = "glm_pymupdf_image_pass"
+                    if ocr_text:
+                        ocr_texts.append(f"[第 {page_no} 页图片{index} OCR结果]:\n{ocr_text}")
+            except Exception as exc:
+                image_info["ocr_error"] = str(exc)
+                if self.strict_image_ocr:
+                    raise RuntimeError(f"第 {page_no} 页第 {index} 张图片 OCR 失败: {exc}") from exc
+            page_images.append(image_info)
+
+        markdown = f"## 第 {page_no} 页\n\n{page_text}".strip()
+        page_source = "pymupdf_fallback_with_image_ocr" if any(item.get("ocr_text") for item in page_images) else "pymupdf_fallback"
+        return {
+            "text": page_text,
+            "markdown": markdown,
+            "page": {
+                "page_no": page_no,
+                "size": [page.rect.width, page.rect.height],
+                "cells": 0,
+                "items": 0,
+            },
+            "images": page_images,
+            "ocr_texts": ocr_texts,
+            "page_source": page_source,
+        }
     
     def _extract_image_bytes(self, picture, doc) -> Optional[bytes]:
         """

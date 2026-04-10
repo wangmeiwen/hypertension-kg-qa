@@ -654,9 +654,17 @@ class GraphAdminService:
             )
 
         ocr_engine = None
+        docling_failed_pages: list[int] = []
+        pdf_fallback_used = False
         if parsed and parser_used == "docling":
             metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
             ocr_engine = metadata.get("ocr_engine")
+            docling_failed_pages = list(metadata.get("docling_failed_pages") or [])
+            pdf_fallback_used = bool(metadata.get("pdf_fallback_used"))
+            if metadata.get("pdf_fallback_used"):
+                parser_used = "docling_with_pymupdf_fallback"
+                if not parse_warning:
+                    parse_warning = str(metadata.get("pdf_fallback_reason") or "")
 
         response_data: dict[str, Any] = {
             "file_name": filename,
@@ -664,6 +672,8 @@ class GraphAdminService:
             "parser_used": parser_used,
             "ocr_engine": ocr_engine,
             "parse_warning": parse_warning,
+            "docling_failed_pages": docling_failed_pages,
+            "pdf_fallback_used": pdf_fallback_used,
             "chunk_count": len(chunks),
             "entity_count": total_entities,
             "relation_count": total_relations,

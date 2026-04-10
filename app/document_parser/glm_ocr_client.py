@@ -123,12 +123,14 @@ class GlmOcrClient:
             "preprocess_applied": False,
             "warnings": [],
         }
-        if not image_bytes or original_bytes <= OCR_IMAGE_MAX_BYTES:
+        if not image_bytes:
             return image_bytes, metadata
 
         try:
             from PIL import Image, ImageOps
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            if original_bytes <= OCR_IMAGE_MAX_BYTES:
+                return image_bytes, metadata
             raise RuntimeError(f"当前环境无法自动压缩超限图片: {exc}") from exc
 
         try:
@@ -136,6 +138,8 @@ class GlmOcrClient:
                 prepared = ImageOps.exif_transpose(opened)
                 prepared.load()
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            if original_bytes <= OCR_IMAGE_MAX_BYTES:
+                return image_bytes, metadata
             raise ValueError(f"图片无法解析，无法自动压缩后执行 OCR: {exc}") from exc
 
         if prepared.mode in {"RGBA", "LA"} or (prepared.mode == "P" and "transparency" in prepared.info):
@@ -145,6 +149,20 @@ class GlmOcrClient:
             current = background
         else:
             current = prepared.convert("RGB")
+
+        normalized_buf = io.BytesIO()
+        current.save(normalized_buf, format="JPEG", quality=OCR_JPEG_QUALITIES[0], optimize=True)
+        normalized_bytes = normalized_buf.getvalue()
+        if normalized_bytes and len(normalized_bytes) <= OCR_IMAGE_MAX_BYTES:
+            metadata["prepared_bytes"] = len(normalized_bytes)
+            metadata["preprocess_applied"] = normalized_bytes != image_bytes
+            if metadata["preprocess_applied"]:
+                metadata["warnings"].append("image_reencoded:jpeg")
+            return normalized_bytes, metadata
+
+        if original_bytes <= OCR_IMAGE_MAX_BYTES:
+            metadata["preprocess_applied"] = True
+            metadata["warnings"].append("image_reencoded_then_compressed")
 
         resize_round = 0
         while True:
@@ -268,7 +286,7 @@ class GlmOcrClient:
                 if str(part.get("finish_reason") or "") == "length":
                     truncated = True
                     warnings.append(f"segment_{idx + 1}_truncated")
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            except Exception as exc:
                 warnings.append(f"segment_{idx + 1}_failed:{exc}")
 
         return {
@@ -337,7 +355,7 @@ class GlmOcrClient:
                 "prepared_bytes": int(prepare_meta.get("prepared_bytes") or 0),
                 "preprocess_applied": bool(prepare_meta.get("preprocess_applied")),
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except Exception as exc:
             if self._is_length_issue(exc):
                 segmented = self._recognize_with_segments(prepared_bytes)
                 segmented["warnings"] = [f"single_pass_exception:{exc}"] + list(prepare_meta.get("warnings") or []) + list(segmented.get("warnings") or [])
