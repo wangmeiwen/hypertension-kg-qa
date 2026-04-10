@@ -3194,6 +3194,86 @@ body {
   overflow: hidden;
 }
 
+.graph-tasks-section {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.graph-task-caption {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.graph-task-empty {
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.graph-task-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+
+.graph-task-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.graph-task-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.graph-task-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.graph-task-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.graph-task-body p {
+  margin: 8px 0;
+  font-size: 14px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.graph-job-warnings {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 13px;
+}
+
+.graph-job-warnings ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.graph-job-warnings li {
+  margin: 4px 0;
+}
+
 .graph-preview-section .kgCanvasShell {
   border: none;
   border-radius: 0;
@@ -4045,6 +4125,43 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: #166534;
+}
+
+.task-progress-panel {
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 12px;
+  border: 1px solid #cfe8f3;
+  background: linear-gradient(135deg, #f8fcff 0%, #eef8ff 100%);
+}
+
+.job-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.job-status-chip.status-queued,
+.job-status-chip.status-running {
+  color: #0f4c81;
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+}
+
+.job-status-chip.status-succeeded {
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+}
+
+.job-status-chip.status-failed {
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
 }
 
 .embed-details {

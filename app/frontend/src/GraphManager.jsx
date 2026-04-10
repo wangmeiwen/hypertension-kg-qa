@@ -11,15 +11,22 @@ import {
   createGraphRelationship,
   deleteGraphRelationship,
   executeCypherQuery,
-  extractAndImportGraph,
-  embedGraphToMilvus,
-  getGraphEmbedStatus
+  submitGraphExtractImport,
+  submitGraphEmbedMilvus,
+  getGraphEmbedStatus,
+  getGraphJobStatus,
+  getRecentGraphJobs
 } from "./api";
 import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "./KnowledgeGraphCanvas";
 
 // 模块职责：提供图谱后台管理能力（节点、关系、查询、导入和嵌入）。
 export default function GraphManager() {
   const IMPORT_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
+  const GRAPH_JOB_POLL_MS = 20000;
+  const JOB_STATUS_QUEUED = "queued";
+  const JOB_STATUS_RUNNING = "running";
+  const JOB_STATUS_SUCCEEDED = "succeeded";
+  const JOB_STATUS_FAILED = "failed";
 
   // 状态管理
   const [labels, setLabels] = useState([]);
@@ -60,9 +67,13 @@ export default function GraphManager() {
   const [embedLoading, setEmbedLoading] = useState(false);
   const [selectedLabelsForEmbed, setSelectedLabelsForEmbed] = useState([]);
   const [embedResult, setEmbedResult] = useState(null);
-  const [importLoading, setImportLoading] = useState(false);
   const [selectedImportFile, setSelectedImportFile] = useState(null);
   const [importResult, setImportResult] = useState(null);
+  const [activeImportJob, setActiveImportJob] = useState(null);
+  const [activeEmbedJob, setActiveEmbedJob] = useState(null);
+  const [recentJobs, setRecentJobs] = useState([]);
+  const [isSubmittingImport, setIsSubmittingImport] = useState(false);
+  const [isSubmittingEmbed, setIsSubmittingEmbed] = useState(false);
 
   // 初始化加载
   useEffect(() => {
@@ -70,6 +81,7 @@ export default function GraphManager() {
     loadRelTypes();
     loadNodes();
     loadGraphPreview("", DEFAULT_GRAPH_LIMIT);
+    loadRecentJobs();
   }, []);
 
   // 加载节点标签
@@ -285,13 +297,209 @@ export default function GraphManager() {
     }
   }
 
+  async function loadRecentJobs() {
+    try {
+      const data = await getRecentGraphJobs(8);
+      setRecentJobs(data);
+    } catch (err) {
+      console.error("加载最近图谱任务失败:", err);
+    }
+  }
+
   // 打开嵌入模态框
   function openEmbedModal() {
     loadEmbedStatus();
     setSelectedLabelsForEmbed([]);
-    setEmbedResult(null);
     setShowEmbedModal(true);
   }
+
+  function isJobRunning(job) {
+    return job && [JOB_STATUS_QUEUED, JOB_STATUS_RUNNING].includes(job.status);
+  }
+
+  function getJobStatusLabel(job) {
+    if (!job) return "";
+    if (job.status === JOB_STATUS_QUEUED) return "排队中";
+    if (job.status === JOB_STATUS_RUNNING) return "处理中";
+    if (job.status === JOB_STATUS_SUCCEEDED) return "已完成";
+    if (job.status === JOB_STATUS_FAILED) return "失败";
+    return job.status;
+  }
+
+  function getJobTypeLabel(jobType) {
+    if (jobType === "graph_extract_import") return "文件抽取入图谱";
+    if (jobType === "graph_embed_milvus") return "嵌入 Milvus";
+    return jobType || "未知任务";
+  }
+
+  function getJobStageLabel(stage) {
+    const labelMap = {
+      validate_file: "文件校验",
+      parse_document: "文档解析",
+      ocr_images: "图片 OCR",
+      kg_primary_extract: "主抽取",
+      kg_omission_judge: "漏抽判定",
+      kg_supplement_extract: "补抽",
+      build_neo4j_queries: "构建 Neo4j 查询",
+      write_neo4j: "写入 Neo4j",
+      finalize: "整理结果",
+      read_graph: "读取图谱"
+    };
+    return labelMap[stage] || stage || "-";
+  }
+
+  function formatTaskTime(isoText) {
+    if (!isoText) return "-";
+    const date = new Date(isoText);
+    if (Number.isNaN(date.getTime())) return isoText;
+    return date.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function formatDuration(seconds) {
+    const safeSeconds = Math.max(0, Number(seconds) || 0);
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const remainSeconds = Math.floor(safeSeconds % 60);
+    if (hours > 0) return `${hours}小时 ${minutes}分 ${remainSeconds}秒`;
+    if (minutes > 0) return `${minutes}分 ${remainSeconds}秒`;
+    return `${remainSeconds}秒`;
+  }
+
+  function getStageElapsedSeconds(job) {
+    if (!job?.stage_started_at) return null;
+    const startedAt = new Date(job.stage_started_at);
+    if (Number.isNaN(startedAt.getTime())) return null;
+    const referenceText = isJobRunning(job) ? null : (job.finished_at || job.last_heartbeat_at);
+    const referenceTime = referenceText ? new Date(referenceText).getTime() : Date.now();
+    return Math.max(0, Math.floor((referenceTime - startedAt.getTime()) / 1000));
+  }
+
+  function getJobWarnings(job) {
+    if (!Array.isArray(job?.warnings)) return [];
+    return job.warnings;
+  }
+
+  function renderJobTelemetry(job) {
+    if (!job) return null;
+    const warnings = getJobWarnings(job);
+    const stageElapsed = getStageElapsedSeconds(job);
+    return (
+      <div className="embed-details">
+        <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
+        <p><strong>当前阶段:</strong> {getJobStageLabel(job.stage)}</p>
+        <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
+        <p><strong>阶段已运行:</strong> {stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
+        <p><strong>最近心跳:</strong> {formatTaskTime(job.last_heartbeat_at)}</p>
+        <p><strong>任务ID:</strong> {job.job_id}</p>
+        {warnings.length > 0 && (
+          <div className="graph-job-warnings">
+            <strong>阶段提醒:</strong>
+            <ul>
+              {warnings.slice(-3).map((warning, index) => (
+                <li key={`${warning.timestamp || "warning"}-${index}`}>
+                  {warning.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function buildJobSummary(job) {
+    const result = job?.result || {};
+    if (job?.job_type === "graph_extract_import" && job?.status === JOB_STATUS_SUCCEEDED) {
+      return `实体 ${result.entity_count || 0} 个，关系 ${result.relation_count || 0} 条，解析后文本长度 ${result.parsed_text_length || 0}`;
+    }
+    if (job?.job_type === "graph_embed_milvus" && job?.status === JOB_STATUS_SUCCEEDED) {
+      const totalDocuments = result?.stats?.total_documents || 0;
+      const relationships = result?.stats?.relationships || 0;
+      return `总文档 ${totalDocuments} 条，关系 ${relationships} 条`;
+    }
+    if (job?.status === JOB_STATUS_FAILED) {
+      return job?.error ? String(job.error).split("\n")[0] : "任务执行失败";
+    }
+    return job?.progress_text || "等待后台处理";
+  }
+
+  function getImportActionLabel() {
+    if (isSubmittingImport) return "提交中...";
+    if (isJobRunning(activeImportJob)) return "后台处理中...";
+    if (activeImportJob?.status === JOB_STATUS_SUCCEEDED) return "再次导入";
+    if (activeImportJob?.status === JOB_STATUS_FAILED) return "重新导入";
+    return "开始抽取并写入";
+  }
+
+  function getEmbedActionLabel() {
+    if (isSubmittingEmbed) return "提交中...";
+    if (isJobRunning(activeEmbedJob)) return "后台嵌入中...";
+    if (activeEmbedJob?.status === JOB_STATUS_SUCCEEDED) return "再次嵌入";
+    if (activeEmbedJob?.status === JOB_STATUS_FAILED) return "重新嵌入";
+    return "开始嵌入";
+  }
+
+  async function refreshGraphSurfaces() {
+    await Promise.all([loadLabels(), loadRelTypes(), loadNodes(), loadEmbedStatus()]);
+    await loadGraphPreview(searchKeyword, graphLimit);
+    await loadRecentJobs();
+  }
+
+  useEffect(() => {
+    if (!activeImportJob || !isJobRunning(activeImportJob)) {
+      return undefined;
+    }
+    const timer = window.setInterval(async () => {
+      try {
+        const nextJob = await getGraphJobStatus(activeImportJob.job_id);
+        setActiveImportJob(nextJob);
+        if (nextJob.status === JOB_STATUS_SUCCEEDED) {
+          setImportResult(nextJob.result || null);
+          setSuccess("文件抽取并写入图谱成功");
+          await refreshGraphSurfaces();
+          window.setTimeout(() => setSuccess(""), 5000);
+        } else if (nextJob.status === JOB_STATUS_FAILED) {
+          setError(nextJob.error || "文件抽取导入失败");
+        }
+      } catch (err) {
+        setError(err.message);
+      }
+    }, GRAPH_JOB_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [activeImportJob?.job_id, activeImportJob?.status, searchKeyword, graphLimit]);
+
+  useEffect(() => {
+    if (!activeEmbedJob || !isJobRunning(activeEmbedJob)) {
+      return undefined;
+    }
+    const timer = window.setInterval(async () => {
+      try {
+        const nextJob = await getGraphJobStatus(activeEmbedJob.job_id);
+        setActiveEmbedJob(nextJob);
+        if (nextJob.status === JOB_STATUS_SUCCEEDED) {
+          setEmbedResult(nextJob.result || null);
+          setSuccess("知识图谱嵌入成功！");
+          await refreshGraphSurfaces();
+          window.setTimeout(() => setSuccess(""), 5000);
+        } else if (nextJob.status === JOB_STATUS_FAILED) {
+          setError(nextJob.error || "知识图谱嵌入失败");
+        }
+      } catch (err) {
+        setError(err.message);
+      }
+    }, GRAPH_JOB_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [activeEmbedJob?.job_id, activeEmbedJob?.status, searchKeyword, graphLimit]);
+
+  useEffect(() => {
+    if (!recentJobs.some((job) => isJobRunning(job))) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      loadRecentJobs();
+    }, GRAPH_JOB_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [recentJobs]);
 
   // 执行嵌入
   async function handleEmbedToMilvus() {
@@ -299,18 +507,21 @@ export default function GraphManager() {
       return;
     }
     setEmbedLoading(true);
+    setIsSubmittingEmbed(true);
     setError("");
     try {
       const labelsToEmbed = selectedLabelsForEmbed.length > 0 ? selectedLabelsForEmbed : null;
-      const result = await embedGraphToMilvus(labelsToEmbed, 100);
-      setEmbedResult(result);
-      setSuccess("知识图谱嵌入成功！");
-      loadEmbedStatus();
+      const job = await submitGraphEmbedMilvus(labelsToEmbed, 100);
+      setActiveEmbedJob(job);
+      setEmbedResult(null);
+      await loadRecentJobs();
+      setSuccess("嵌入任务已提交到后台");
       setTimeout(() => setSuccess(""), 5000);
     } catch (err) {
       setError(err.message);
     } finally {
       setEmbedLoading(false);
+      setIsSubmittingEmbed(false);
     }
   }
 
@@ -327,8 +538,6 @@ export default function GraphManager() {
 
   // 打开文件抽取入图谱弹窗并重置状态。
   function openImportModal() {
-    setSelectedImportFile(null);
-    setImportResult(null);
     setError("");
     setShowImportModal(true);
   }
@@ -342,6 +551,10 @@ export default function GraphManager() {
       return;
     }
     setError("");
+    setImportResult(null);
+    if (!isJobRunning(activeImportJob)) {
+      setActiveImportJob(null);
+    }
     setSelectedImportFile(file || null);
   }
 
@@ -352,20 +565,32 @@ export default function GraphManager() {
       setError("请先选择文件");
       return;
     }
-    setImportLoading(true);
     setError("");
+    setIsSubmittingImport(true);
     try {
-      const result = await extractAndImportGraph(selectedImportFile);
-      setImportResult(result);
-      setSuccess("文件抽取并写入图谱成功");
-      await Promise.all([loadLabels(), loadRelTypes(), loadNodes()]);
-      await loadGraphPreview(searchKeyword, graphLimit);
+      const job = await submitGraphExtractImport(selectedImportFile);
+      setActiveImportJob(job);
+      setImportResult(null);
+      await loadRecentJobs();
+      setSuccess("抽取导入任务已提交到后台");
       setTimeout(() => setSuccess(""), 5000);
     } catch (err) {
       setError(err.message);
     } finally {
-      setImportLoading(false);
+      setIsSubmittingImport(false);
     }
+  }
+
+  function handleSuspendImportToBackground() {
+    setShowImportModal(false);
+    setSuccess("抽取导入任务已挂起到后台，可在最近任务中查看进度");
+    window.setTimeout(() => setSuccess(""), 5000);
+  }
+
+  function handleSuspendEmbedToBackground() {
+    setShowEmbedModal(false);
+    setSuccess("嵌入任务已挂起到后台，可在最近任务中查看进度");
+    window.setTimeout(() => setSuccess(""), 5000);
   }
 
   // 打开编辑节点模态框
@@ -494,6 +719,57 @@ export default function GraphManager() {
             文件抽取入图谱
           </button>
         </div>
+      </div>
+
+      <div className="graph-tasks-section">
+        <div className="panel-header">
+          <div>
+            <h3>最近任务</h3>
+            <p className="graph-task-caption">关闭弹窗后，图谱导入和嵌入任务仍会继续在后台执行。</p>
+          </div>
+          <button type="button" onClick={loadRecentJobs} className="btn btn-secondary">
+            刷新任务
+          </button>
+        </div>
+        {recentJobs.length === 0 ? (
+          <div className="graph-task-empty">暂无最近任务</div>
+        ) : (
+          <div className="graph-task-list">
+            {recentJobs.map((job) => (
+              <div key={job.job_id} className="graph-task-card">
+                <div className="graph-task-header">
+                  <div>
+                    <div className="graph-task-title">{getJobTypeLabel(job.job_type)}</div>
+                    <div className="graph-task-meta">任务ID：{job.job_id}</div>
+                  </div>
+                  <div className={`job-status-chip status-${job.status}`}>
+                    {getJobStatusLabel(job)}
+                  </div>
+                </div>
+                <div className="graph-task-body">
+                  <p><strong>当前进度：</strong>{job.progress_text || "等待后台处理"}</p>
+                  <p><strong>当前阶段：</strong>{getJobStageLabel(job.stage)}</p>
+                  <p><strong>阶段详情：</strong>{job.stage_detail || "-"}</p>
+                  <p><strong>阶段已运行：</strong>{getStageElapsedSeconds(job) == null ? "-" : formatDuration(getStageElapsedSeconds(job))}</p>
+                  <p><strong>最近心跳：</strong>{formatTaskTime(job.last_heartbeat_at)}</p>
+                  <p><strong>创建时间：</strong>{formatTaskTime(job.created_at)}</p>
+                  <p><strong>完成时间：</strong>{formatTaskTime(job.finished_at)}</p>
+                  <p><strong>结果摘要：</strong>{buildJobSummary(job)}</p>
+                  {getJobWarnings(job).length > 0 && (
+                    <div className="graph-job-warnings">
+                      <strong>阶段提醒：</strong>
+                      <ul>
+                        {getJobWarnings(job).slice(-2).map((warning, index) => (
+                          <li key={`${warning.timestamp || "warning"}-${index}`}>{warning.message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="graph-preview-section">
@@ -972,12 +1248,18 @@ export default function GraphManager() {
               </div>
 
               {/* 嵌入结果 */}
-              {embedResult && (
-                <div className="embed-result-section">
-                  <h4>嵌入结果</h4>
-                  <div className="alert alert-success">{embedResult.message}</div>
-                  <div className="embed-details">
-                    <p><strong>实体统计:</strong></p>
+                {embedResult && (
+                  <div className="embed-result-section">
+                    <h4>嵌入结果</h4>
+                    {activeEmbedJob && (
+                      <div className={`job-status-chip status-${activeEmbedJob.status}`}>
+                        {getJobStatusLabel(activeEmbedJob)}
+                        {activeEmbedJob.progress_text ? `：${activeEmbedJob.progress_text}` : ""}
+                      </div>
+                    )}
+                    <div className="alert alert-success">{embedResult.message}</div>
+                    <div className="embed-details">
+                      <p><strong>实体统计:</strong></p>
                     <ul>
                       {Object.entries(embedResult.stats.entities).map(([label, count]) => (
                         <li key={label}>{label}: {count} 个</li>
@@ -989,22 +1271,50 @@ export default function GraphManager() {
                   </div>
                 </div>
               )}
+              {activeEmbedJob && !embedResult && (
+                <div className="embed-result-section">
+                  <h4>嵌入任务状态</h4>
+                  <div className={`job-status-chip status-${activeEmbedJob.status}`}>
+                    {getJobStatusLabel(activeEmbedJob)}
+                  </div>
+                  {renderJobTelemetry(activeEmbedJob)}
+                </div>
+              )}
             </div>
-            <div className="modal-footer">
-              <button type="button" onClick={() => setShowEmbedModal(false)} className="btn btn-secondary">
-                关闭
-              </button>
-              <button
-                type="button"
-                onClick={handleEmbedToMilvus}
-                className="btn btn-success"
-                disabled={embedLoading}
-              >
-                {embedLoading ? "嵌入中..." : "开始嵌入"}
-              </button>
+              <div className="modal-footer">
+                <button type="button" onClick={() => setShowEmbedModal(false)} className="btn btn-secondary">
+                  关闭
+                </button>
+                {isJobRunning(activeEmbedJob) ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-success"
+                      disabled
+                    >
+                      正在嵌入...
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSuspendEmbedToBackground}
+                      className="btn btn-primary"
+                    >
+                      挂起到后台
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleEmbedToMilvus}
+                    className="btn btn-success"
+                    disabled={embedLoading || isSubmittingEmbed}
+                  >
+                    {getEmbedActionLabel()}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
       )}
       {showImportModal && (
         <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
@@ -1021,23 +1331,35 @@ export default function GraphManager() {
                     type="file"
                     accept=".txt,.md,.pdf,.docx,.doc,.pptx,.ppt,.html,.htm,.jpg,.jpeg,.png"
                     onChange={handleImportFileChange}
-                    disabled={importLoading}
+                    disabled={isJobRunning(activeImportJob)}
                   />
                   <p className="form-hint">支持 txt、md、pdf、docx、pptx、html、jpg、jpeg、png</p>
                   <p className="form-hint">文件大小不能超过 50MB</p>
                   <p className="form-hint">JPG/JPEG/PNG 图片会在 OCR 前自动压缩到模型可处理范围</p>
                 </div>
+                {activeImportJob && (
+                  <div className="task-progress-panel">
+                    <div className={`job-status-chip status-${activeImportJob.status}`}>
+                      {getJobStatusLabel(activeImportJob)}
+                    </div>
+                    {renderJobTelemetry(activeImportJob)}
+                  </div>
+                )}
                 {importResult && (
                   <div className="embed-result-section">
                     <h4>导入结果</h4>
                     <div className="alert alert-success">{importResult.message}</div>
                     <div className="embed-details">
                       <p><strong>文件名:</strong> {importResult.file_name}</p>
-                      <p><strong>解析文本长度:</strong> {importResult.text_length}</p>
+                      <p><strong>解析器:</strong> {importResult.parser_used || "-"}</p>
+                      <p><strong>OCR 引擎:</strong> {importResult.ocr_engine || "-"}</p>
+                      <p><strong>解析后文本长度:</strong> {importResult.parsed_text_length}</p>
+                      <p className="form-hint">表示 OCR/解析后实际提取出的文本字符数，不代表图片大小或版面复杂度</p>
                       <p><strong>抽取实体数:</strong> {importResult.entity_count}</p>
                       <p><strong>抽取关系数:</strong> {importResult.relation_count}</p>
                       <p><strong>节点批次数:</strong> {importResult.node_batches}</p>
                       <p><strong>关系批次数:</strong> {importResult.relation_batches}</p>
+                      {importResult.parse_warning && <p><strong>解析提醒:</strong> {importResult.parse_warning}</p>}
                     </div>
                   </div>
                 )}
@@ -1046,9 +1368,32 @@ export default function GraphManager() {
                 <button type="button" onClick={() => setShowImportModal(false)} className="btn btn-secondary">
                   关闭
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={importLoading || !selectedImportFile}>
-                  {importLoading ? "处理中..." : "开始抽取并写入"}
-                </button>
+                {isJobRunning(activeImportJob) ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled
+                    >
+                      正在抽取并写入...
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSuspendImportToBackground}
+                      className="btn btn-success"
+                    >
+                      挂起到后台
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={isSubmittingImport || !selectedImportFile}
+                  >
+                    {getImportActionLabel()}
+                  </button>
+                )}
               </div>
             </form>
           </div>

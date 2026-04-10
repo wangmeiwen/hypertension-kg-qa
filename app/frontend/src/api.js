@@ -513,17 +513,37 @@ export async function executeCypherQuery(query) {
 }
 
 // 上传文件并触发图谱抽取入库。
-export async function extractAndImportGraph(file) {
+export async function submitGraphExtractImport(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await adminFetch(`${BASE_URL}/admin/graph/extract-and-import`, {
+  const response = await adminFetch(`${BASE_URL}/admin/graph/jobs/extract-import`, {
     method: "POST",
     body: formData
   });
   const data = await response.json();
   if (!data?.ok) {
     throw new Error(data?.error || "文件抽取导入失败");
+  }
+  return data.data;
+}
+
+// 查询图谱后台任务状态。
+export async function getGraphJobStatus(jobId) {
+  const response = await adminFetch(`${BASE_URL}/admin/graph/jobs/${jobId}`);
+  const data = await response.json();
+  if (!data?.ok) {
+    throw new Error(data?.error || "获取图谱任务状态失败");
+  }
+  return data.data;
+}
+
+// 查询最近图谱后台任务。
+export async function getRecentGraphJobs(limit = 10) {
+  const response = await adminFetch(`${BASE_URL}/admin/graph/jobs?limit=${encodeURIComponent(limit)}`);
+  const data = await response.json();
+  if (!data?.ok) {
+    throw new Error(data?.error || "获取最近图谱任务失败");
   }
   return data.data;
 }
@@ -567,12 +587,12 @@ export async function doclingParseAndEmbed(file) {
 // ==================== 知识图谱嵌入 Milvus API ====================
 
 // 将图谱实体/关系嵌入到 Milvus，labels 为空时嵌入全部标签。
-export async function embedGraphToMilvus(labels = null, batchSize = 100) {
+export async function submitGraphEmbedMilvus(labels = null, batchSize = 100) {
   const payload = {};
   if (labels) payload.labels = labels;
   if (batchSize) payload.batch_size = batchSize;
 
-  const response = await adminFetch(`${BASE_URL}/admin/graph/embed-to-milvus`, {
+  const response = await adminFetch(`${BASE_URL}/admin/graph/jobs/embed-milvus`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -583,6 +603,14 @@ export async function embedGraphToMilvus(labels = null, batchSize = 100) {
     throw new Error(data?.error || "知识图谱嵌入失败");
   }
   return data.data;
+}
+
+export async function extractAndImportGraph(file) {
+  return submitGraphExtractImport(file);
+}
+
+export async function embedGraphToMilvus(labels = null, batchSize = 100) {
+  return submitGraphEmbedMilvus(labels, batchSize);
 }
 
 // 查询图谱嵌入状态和统计信息。

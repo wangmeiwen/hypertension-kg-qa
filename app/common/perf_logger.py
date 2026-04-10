@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger("perf")
+PERF_LOG_MIN_DURATION_MS = 1000.0
 _PHONE_PATTERN = re.compile(r"(?<!\d)(1\d{10})(?!\d)")
 _EMAIL_PATTERN = re.compile(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 _IDCARD_PATTERN = re.compile(r"(?<!\d)(\d{17}[\dXx]|\d{15})(?!\d)")
@@ -110,7 +111,7 @@ def _ensure_logger_configured() -> None:
 @contextmanager
 def log_duration(operation: str, **kwargs):
     """
-    记录代码块耗时毫秒（仅输出一次）。
+    记录代码块耗时毫秒（仅输出一次，默认过滤 1 秒内记录）。
 
     Args:
         operation: 操作名称，用于日志标识。
@@ -129,6 +130,8 @@ def log_duration(operation: str, **kwargs):
         yield
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
+        if elapsed_ms < PERF_LOG_MIN_DURATION_MS:
+            return
         if kv:
             logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f} {kv}")
         else:

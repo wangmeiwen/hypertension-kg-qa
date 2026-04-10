@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Callable
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,13 @@ class DoclingParser:
         ocr_client: OCR 客户端实例
     """
 
-    def __init__(self, enable_image_ocr: bool = True):
+    def __init__(
+        self,
+        enable_image_ocr: bool = True,
+        *,
+        strict_image_ocr: bool = False,
+        progress_callback: Optional[Callable[..., None]] = None,
+    ):
         """
         初始化 Docling 解析器。
 
@@ -94,6 +100,8 @@ class DoclingParser:
             enable_image_ocr: 是否启用图片 OCR 功能，默认为 True
         """
         self.enable_image_ocr = enable_image_ocr
+        self.strict_image_ocr = strict_image_ocr
+        self.progress_callback = progress_callback
         self.ocr_client = None
 
         if enable_image_ocr:
@@ -192,6 +200,8 @@ class DoclingParser:
             tmp_path = tmp.name
         
         try:
+            if self.progress_callback:
+                self.progress_callback("enter", "parse_document", "Docling 正在解析文档结构")
             result = self.converter.convert(tmp_path)
             return self._convert_result(result, filename)
         finally:
@@ -296,6 +306,9 @@ class DoclingParser:
             解析后的文档数据
         """
         doc = result.document
+
+        if self.progress_callback:
+            self.progress_callback("heartbeat", "parse_document", "Docling 文档结构解析完成，正在整理正文")
         
         # 导出为 Markdown
         markdown = doc.export_to_markdown()
@@ -326,7 +339,11 @@ class DoclingParser:
         # 提取图片信息并进行OCR识别
         images = []
         ocr_texts = []  # 存储所有图片的OCR结果
-        
+        total_pictures = len(doc.pictures)
+
+        if total_pictures == 0 and self.progress_callback:
+            self.progress_callback("complete", "parse_document", "文档正文解析完成")
+
         for idx, picture in enumerate(doc.pictures):
             picture_caption = getattr(picture, "caption", None)
             picture_caption_text = getattr(picture_caption, "text", None) if picture_caption else None
@@ -344,8 +361,14 @@ class DoclingParser:
             # 如果启用了OCR，尝试识别图片中的文字
             if self.enable_image_ocr and self.ocr_client:
                 try:
+                    if self.progress_callback:
+                        if idx == 0:
+                            self.progress_callback("complete", "parse_document", "文档正文解析完成")
+                            self.progress_callback("enter", "ocr_images", f"正在对第 {idx + 1}/{total_pictures} 张图片进行 OCR")
+                        else:
+                            self.progress_callback("heartbeat", "ocr_images", f"正在对第 {idx + 1}/{total_pictures} 张图片进行 OCR")
                     # 尝试获取图片的二进制数据
-                    image_bytes = self._extract_image_bytes(picture)
+                    image_bytes = self._extract_image_bytes(picture, doc)
                     if image_bytes:
                         logger.info("正在对第 %d 张图片进行OCR识别...", idx + 1)
                         ocr_result = self.ocr_client.recognize_image_bytes(image_bytes)
@@ -355,11 +378,20 @@ class DoclingParser:
                         if ocr_text:
                             ocr_texts.append(f"[图片{idx + 1} OCR结果]:\n{ocr_text}")
                             logger.info("第 %d 张图片OCR识别完成", idx + 1)
+                        if self.progress_callback:
+                            self.progress_callback("heartbeat", "ocr_images", f"第 {idx + 1}/{total_pictures} 张图片 OCR 已完成")
                 except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-                    logger.error("第 %d 张图片OCR识别失败: %s", idx + 1, e)
+                    logger.warning("第 %d 张图片OCR识别失败: %s", idx + 1, e)
                     image_info["ocr_error"] = str(e)
+                    if self.progress_callback:
+                        self.progress_callback("heartbeat", "ocr_images", f"第 {idx + 1}/{total_pictures} 张图片 OCR 失败: {e}")
+                    if self.strict_image_ocr:
+                        raise RuntimeError(f"第 {idx + 1} 张图片 OCR 失败: {e}") from e
             
             images.append(image_info)
+
+        if total_pictures > 0 and self.enable_image_ocr and self.ocr_client and self.progress_callback:
+            self.progress_callback("complete", "ocr_images", "文档图片 OCR 完成")
         
         # 如果有OCR结果，追加到文本中
         if ocr_texts:
@@ -398,12 +430,13 @@ class DoclingParser:
             metadata=metadata
         )
     
-    def _extract_image_bytes(self, picture) -> Optional[bytes]:
+    def _extract_image_bytes(self, picture, doc) -> Optional[bytes]:
         """
         从 Docling picture 对象中提取图片二进制数据。
 
         Args:
             picture: Docling 的 Picture 对象
+            doc: 当前 DoclingDocument
 
         Returns:
             图片二进制数据，如果无法提取则返回 None
@@ -426,7 +459,12 @@ class DoclingParser:
             
             # 方法3: 尝试导出为PIL Image然后转为bytes
             if hasattr(picture, 'get_image'):
-                pil_img = picture.get_image()
+                pil_img = None
+                try:
+                    pil_img = picture.get_image(doc)
+                except TypeError:
+                    # 兼容旧版本 Docling 的无参签名
+                    pil_img = picture.get_image()
                 if pil_img:
                     img_buffer = io.BytesIO()
                     pil_img.save(img_buffer, format='PNG')
@@ -443,7 +481,7 @@ class DoclingParser:
             return None
             
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
-            logger.error("提取图片数据失败: %s", e)
+            logger.warning("提取图片数据失败: %s", e)
             return None
     
     def _detect_format(self, source: str) -> str:

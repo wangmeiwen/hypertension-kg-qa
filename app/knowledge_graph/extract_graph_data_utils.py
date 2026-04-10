@@ -21,7 +21,7 @@
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional, Tuple, Literal
+from typing import Any, Dict, List, Optional, Tuple, Literal, Callable
 import json
 import logging
 
@@ -39,7 +39,9 @@ conf = Config()
 my_llm = ChatOpenAI(
     api_key=conf.MODEL_API_KEY,
     base_url=conf.MODEL_BASE_URL,
-    model=conf.MODEL_NAME
+    model=conf.MODEL_NAME,
+    timeout=600,
+    max_retries=0,
 )
 
 
@@ -405,7 +407,26 @@ supplement_prompt = PromptTemplate(
 # 
 # 抽取主函数
 # 
-def extract_hypertension_knowledge(text: str, max_gleanings: int = 1) -> Dict[str, List[dict]]:
+def _emit_stage_event(
+    stage_callback: Optional[Callable[..., None]],
+    action: str,
+    stage: str,
+    detail: str,
+) -> None:
+    """安全触发阶段事件回调。"""
+    if not stage_callback:
+        return
+    try:
+        stage_callback(action, stage, detail, detail)
+    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        logger.debug("kg.stage_callback_failed", exc_info=True)
+
+
+def extract_hypertension_knowledge(
+    text: str,
+    max_gleanings: int = 1,
+    stage_callback: Optional[Callable[..., None]] = None,
+) -> Dict[str, List[dict]]:
     """
     从文本中抽取高血压知识图谱。
 
@@ -422,33 +443,59 @@ def extract_hypertension_knowledge(text: str, max_gleanings: int = 1) -> Dict[st
     judge_chain = omission_judge_prompt | my_llm | StrOutputParser()
     supplement_chain = supplement_prompt | my_llm | parser
 
+    _emit_stage_event(stage_callback, "enter", "kg_primary_extract", "正在执行图谱主抽取")
     with log_duration("kg.llm_extract.primary", text_len=len(text)):
         primary_result = primary_chain.invoke({"text": text})
+    _emit_stage_event(stage_callback, "complete", "kg_primary_extract", "图谱主抽取完成")
 
     merged_result = normalize_extraction_result(primary_result)
     glean_times = max(0, int(max_gleanings))
 
-    for _ in range(glean_times):
+    for round_index in range(glean_times):
         draft_json = json.dumps(merged_result, ensure_ascii=False)
+        _emit_stage_event(
+            stage_callback,
+            "enter",
+            "kg_omission_judge",
+            f"正在执行漏抽判定（第 {round_index + 1}/{glean_times} 轮）",
+        )
         with log_duration("kg.llm_extract.omission_judge", text_len=len(text)):
             judge_result = judge_chain.invoke({"text": text, "draft_json": draft_json})
+        _emit_stage_event(
+            stage_callback,
+            "complete",
+            "kg_omission_judge",
+            f"漏抽判定完成（第 {round_index + 1}/{glean_times} 轮）",
+        )
 
         judge_text = str(judge_result or "").strip().upper()
         if "YES" not in judge_text and "是" not in str(judge_result or ""):
             break
 
         try:
+            _emit_stage_event(
+                stage_callback,
+                "enter",
+                "kg_supplement_extract",
+                f"正在执行补抽（第 {round_index + 1}/{glean_times} 轮）",
+            )
             with log_duration("kg.llm_extract.supplement", text_len=len(text)):
                 delta_result = supplement_chain.invoke({"text": text, "draft_json": draft_json})
+            _emit_stage_event(
+                stage_callback,
+                "complete",
+                "kg_supplement_extract",
+                f"补抽完成（第 {round_index + 1}/{glean_times} 轮）",
+            )
             normalized_delta = normalize_extraction_result(delta_result)
             merged_result = merge_extraction_results(merged_result, normalized_delta)
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
             logger.exception(
-                "补抽阶段失败，返回主抽取结果。error_type=%s, error=%s",
+                "补抽阶段失败。error_type=%s, error=%s",
                 type(e).__name__,
                 str(e),
             )
-            break
+            raise
 
     return merged_result
 
@@ -772,7 +819,11 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
 # 
 # 文本 -> 图谱抽取 -> Neo4j 查询
 # 
-def extract_text_to_graph_queries(text: str, max_chars: int = 12000) -> dict:
+def extract_text_to_graph_queries(
+    text: str,
+    max_chars: int = 12000,
+    stage_callback: Optional[Callable[..., None]] = None,
+) -> dict:
     """
     从文本抽取图谱结果并构建可直接执行的 Neo4j 节点与关系查询。
 
@@ -796,9 +847,15 @@ def extract_text_to_graph_queries(text: str, max_chars: int = 12000) -> dict:
             }
 
         limited_text = clean_text[:max_chars]
-        extraction = normalize_extraction_result(extract_hypertension_knowledge(limited_text))
+        extraction = normalize_extraction_result(
+            extract_hypertension_knowledge(limited_text, stage_callback=stage_callback)
+        )
+        _emit_stage_event(stage_callback, "enter", "build_neo4j_queries", "正在构建 Neo4j 节点与关系查询")
         entity_map = build_entity_map(extraction["entities"])
         relation_list = build_relation_list(extraction["relations"])
+        node_queries = build_node_queries(entity_map)
+        relation_queries = build_relation_queries(relation_list)
+        _emit_stage_event(stage_callback, "complete", "build_neo4j_queries", "Neo4j 查询构建完成")
 
         logger.info(
             f"[PERF] kg.extract_text_to_graph_queries entities={len(entity_map)} relations={len(relation_list)}"
@@ -808,8 +865,8 @@ def extract_text_to_graph_queries(text: str, max_chars: int = 12000) -> dict:
             "extraction": extraction,
             "entity_map": entity_map,
             "relation_list": relation_list,
-            "node_queries": build_node_queries(entity_map),
-            "relation_queries": build_relation_queries(relation_list),
+            "node_queries": node_queries,
+            "relation_queries": relation_queries,
             "stats": {
                 "entities": len(entity_map),
                 "relations": len(relation_list)

@@ -69,10 +69,30 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
         """从上传文件抽取并导入图谱。"""
         return await service.extract_and_import_graph(file=file)
 
+    @router.post("/admin/graph/jobs/extract-import")
+    async def submit_extract_import_job(file: UploadFile = File(...)) -> dict[str, Any]:
+        """提交文件抽取入图谱后台任务。"""
+        return await service.submit_graph_extract_import_job(file=file)
+
+    @router.get("/admin/graph/jobs")
+    async def list_graph_jobs(limit: int = 10) -> dict[str, Any]:
+        """查询最近图谱后台任务。"""
+        return await service.list_graph_jobs(limit=limit)
+
+    @router.get("/admin/graph/jobs/{job_id}")
+    async def get_graph_job(job_id: str) -> dict[str, Any]:
+        """查询图谱后台任务状态。"""
+        return await service.get_graph_job(job_id=job_id)
+
     @router.post("/admin/graph/embed-to-milvus")
     async def embed_graph_to_milvus(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """将知识图谱嵌入到 Milvus。"""
         return await service.embed_graph_to_milvus(data)
+
+    @router.post("/admin/graph/jobs/embed-milvus")
+    async def submit_embed_milvus_job(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """提交图谱嵌入后台任务。"""
+        return await service.submit_graph_embed_milvus_job(data)
 
     @router.get("/admin/graph/embed-status")
     async def get_graph_embed_status() -> dict[str, Any]:

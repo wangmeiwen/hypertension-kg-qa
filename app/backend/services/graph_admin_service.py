@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import traceback
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
+from uuid import uuid4
 
 from fastapi import UploadFile
+
+logger = logging.getLogger(__name__)
 
 
 class GraphAdminService:
     """封装管理员图谱管理与导入嵌入业务。"""
+
+    JOB_STATUS_QUEUED = "queued"
+    JOB_STATUS_RUNNING = "running"
+    JOB_STATUS_SUCCEEDED = "succeeded"
+    JOB_STATUS_FAILED = "failed"
+    JOB_STATUS_CANCELLED = "cancelled"
+
+    IMPORT_JOB_TYPE = "graph_extract_import"
+    EMBED_JOB_TYPE = "graph_embed_milvus"
+    SOFT_TIMEOUT_SECONDS = 300
+    SOFT_TIMEOUT_REPEAT_SECONDS = 60
 
     def __init__(
         self,
@@ -39,6 +57,664 @@ class GraphAdminService:
         self._validate_cypher_identifier = validate_cypher_identifier
         self._sanitize_graph_properties = sanitize_graph_properties
         self._log_api_error = log_api_error
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._job_lock = asyncio.Lock()
+        self._max_retained_jobs = 100
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        """返回统一的 UTC ISO 时间文本。"""
+        return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+    @staticmethod
+    def _build_job_response(job: dict[str, Any]) -> dict[str, Any]:
+        """裁剪对外 job 响应。"""
+        return {
+            "job_id": job["job_id"],
+            "job_type": job["job_type"],
+            "status": job["status"],
+            "progress_text": job.get("progress_text") or "",
+            "created_at": job.get("created_at"),
+            "started_at": job.get("started_at"),
+            "finished_at": job.get("finished_at"),
+            "stage": job.get("stage"),
+            "stage_detail": job.get("stage_detail") or "",
+            "stage_started_at": job.get("stage_started_at"),
+            "last_heartbeat_at": job.get("last_heartbeat_at"),
+            "warnings": list(job.get("warnings") or []),
+            "trace": list(job.get("trace") or []),
+            "result": job.get("result"),
+            "error": job.get("error"),
+        }
+
+    @staticmethod
+    def _parse_utc_iso(value: Optional[str]) -> Optional[datetime]:
+        """将统一的 UTC ISO 时间文本解析为 datetime。"""
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    async def _register_job(self, job_type: str) -> dict[str, Any]:
+        """注册后台任务。"""
+        async with self._job_lock:
+            job_id = f"graph-job-{uuid4().hex}"
+            job = {
+                "job_id": job_id,
+                "job_type": job_type,
+                "status": self.JOB_STATUS_QUEUED,
+                "progress_text": "任务已提交，等待执行",
+                "created_at": self._utc_now_iso(),
+                "started_at": None,
+                "finished_at": None,
+                "stage": None,
+                "stage_detail": "",
+                "stage_started_at": None,
+                "last_heartbeat_at": None,
+                "warnings": [],
+                "trace": [],
+                "result": None,
+                "error": None,
+                "_task": None,
+                "_watchdog_task": None,
+                "_last_soft_timeout_notice_at": None,
+            }
+            self._jobs[job_id] = job
+            self._prune_jobs_locked()
+            return dict(job)
+
+    def _prune_jobs_locked(self) -> None:
+        """裁剪旧任务，避免进程内状态无限增长。"""
+        if len(self._jobs) <= self._max_retained_jobs:
+            return
+        removable = sorted(
+            self._jobs.values(),
+            key=lambda item: item.get("created_at") or "",
+        )
+        while len(removable) > 0 and len(self._jobs) > self._max_retained_jobs:
+            candidate = removable.pop(0)
+            if candidate.get("status") in {
+                self.JOB_STATUS_SUCCEEDED,
+                self.JOB_STATUS_FAILED,
+                self.JOB_STATUS_CANCELLED,
+            }:
+                self._jobs.pop(candidate["job_id"], None)
+
+    def _make_stage_event_callback(self, loop: asyncio.AbstractEventLoop, job_id: str) -> Callable[..., None]:
+        """生成线程安全的任务阶段事件回调。"""
+        def _progress(
+            action: str,
+            stage: Optional[str] = None,
+            detail: Optional[str] = None,
+            progress_text: Optional[str] = None,
+        ) -> None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_job_stage_event(
+                        job_id,
+                        action=action,
+                        stage=stage,
+                        detail=detail,
+                        progress_text=progress_text,
+                    ),
+                    loop,
+                )
+            except RuntimeError:
+                # 进程关闭或 loop 不可用时静默跳过，避免后台线程崩溃。
+                return
+        return _progress
+
+    async def _handle_job_stage_event(
+        self,
+        job_id: str,
+        *,
+        action: str,
+        stage: Optional[str] = None,
+        detail: Optional[str] = None,
+        progress_text: Optional[str] = None,
+    ) -> None:
+        """接收线程回传的阶段事件。"""
+        if action == "enter" and stage:
+            await self._enter_job_stage(job_id, stage, detail or progress_text or "")
+            return
+        if action == "heartbeat":
+            await self._heartbeat_job_stage(job_id, detail=detail or progress_text, progress_text=progress_text)
+            return
+        if action == "complete":
+            await self._complete_job_stage(job_id, detail=detail or progress_text)
+            return
+        if action == "warning":
+            message = detail or progress_text or ""
+            if message:
+                await self._add_job_warning(job_id, message)
+
+    async def _set_job_state(
+        self,
+        job_id: str,
+        *,
+        status: Optional[str] = None,
+        progress_text: Optional[str] = None,
+        result: Optional[dict[str, Any]] = None,
+        error: Optional[str] = None,
+        started: bool = False,
+        finished: bool = False,
+    ) -> None:
+        """更新任务状态。"""
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            if status:
+                job["status"] = status
+            if progress_text is not None:
+                job["progress_text"] = progress_text
+            if result is not None:
+                job["result"] = result
+            if error is not None:
+                job["error"] = error
+                self._mark_current_trace_finished(job, status or job.get("status") or self.JOB_STATUS_FAILED, error)
+            if started and not job.get("started_at"):
+                job["started_at"] = self._utc_now_iso()
+            if finished:
+                job["finished_at"] = self._utc_now_iso()
+
+    def _mark_current_trace_finished(self, job: dict[str, Any], status: str, error: Optional[str] = None) -> None:
+        """收口当前 trace 阶段。"""
+        trace = job.get("trace") or []
+        for item in reversed(trace):
+            if not item.get("finished_at"):
+                finished_at = self._utc_now_iso()
+                item["finished_at"] = finished_at
+                item["status"] = status
+                item["error"] = error
+                started_at = self._parse_utc_iso(item.get("started_at"))
+                finished_dt = self._parse_utc_iso(finished_at)
+                if started_at and finished_dt:
+                    item["duration_ms"] = int((finished_dt - started_at).total_seconds() * 1000)
+                break
+
+    async def _enter_job_stage(self, job_id: str, stage: str, detail: str = "") -> None:
+        """进入新阶段。"""
+        now_iso = self._utc_now_iso()
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            if job.get("stage") and job.get("stage") != stage:
+                self._mark_current_trace_finished(job, "succeeded")
+            job["stage"] = stage
+            job["stage_detail"] = detail or ""
+            job["stage_started_at"] = now_iso
+            job["last_heartbeat_at"] = now_iso
+            job["_last_soft_timeout_notice_at"] = None
+            job["progress_text"] = detail or stage
+            trace = job.setdefault("trace", [])
+            trace.append(
+                {
+                    "stage": stage,
+                    "detail": detail or "",
+                    "status": "running",
+                    "started_at": now_iso,
+                    "finished_at": None,
+                    "duration_ms": None,
+                    "error": None,
+                }
+            )
+
+    async def _heartbeat_job_stage(
+        self,
+        job_id: str,
+        *,
+        detail: Optional[str] = None,
+        progress_text: Optional[str] = None,
+    ) -> None:
+        """更新当前阶段心跳。"""
+        now_iso = self._utc_now_iso()
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            job["last_heartbeat_at"] = now_iso
+            if detail is not None:
+                job["stage_detail"] = detail
+            if progress_text is not None:
+                job["progress_text"] = progress_text
+            elif detail is not None:
+                job["progress_text"] = detail
+            trace = job.get("trace") or []
+            for item in reversed(trace):
+                if not item.get("finished_at"):
+                    if detail is not None:
+                        item["detail"] = detail
+                    break
+
+    async def _complete_job_stage(self, job_id: str, detail: Optional[str] = None) -> None:
+        """完成当前阶段。"""
+        now_iso = self._utc_now_iso()
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job or not job.get("stage"):
+                return
+            job["last_heartbeat_at"] = now_iso
+            if detail is not None:
+                job["stage_detail"] = detail
+                job["progress_text"] = detail
+                trace = job.get("trace") or []
+                for item in reversed(trace):
+                    if not item.get("finished_at"):
+                        item["detail"] = detail
+                        break
+            self._mark_current_trace_finished(job, "succeeded")
+
+    async def _add_job_warning(
+        self,
+        job_id: str,
+        message: str,
+        *,
+        elapsed_seconds: Optional[int] = None,
+    ) -> None:
+        """为任务追加 warning。"""
+        warning = {
+            "message": message,
+            "stage": None,
+            "timestamp": self._utc_now_iso(),
+            "elapsed_seconds": elapsed_seconds,
+        }
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            warning["stage"] = job.get("stage")
+            job.setdefault("warnings", []).append(warning)
+
+    async def _watch_job_soft_timeout(self, job_id: str) -> None:
+        """监控单阶段运行时长，超过阈值只提示不失败。"""
+        try:
+            while True:
+                await asyncio.sleep(5)
+                async with self._job_lock:
+                    job = self._jobs.get(job_id)
+                    if not job or job.get("status") != self.JOB_STATUS_RUNNING:
+                        return
+                    stage = job.get("stage")
+                    stage_started_at = self._parse_utc_iso(job.get("stage_started_at"))
+                    if not stage or stage_started_at is None:
+                        continue
+                    now_dt = datetime.now(stage_started_at.tzinfo)
+                    elapsed_seconds = int((now_dt - stage_started_at).total_seconds())
+                    if elapsed_seconds < self.SOFT_TIMEOUT_SECONDS:
+                        continue
+                    last_notice_at = self._parse_utc_iso(job.get("_last_soft_timeout_notice_at"))
+                    if last_notice_at and (now_dt - last_notice_at) < timedelta(seconds=self.SOFT_TIMEOUT_REPEAT_SECONDS):
+                        continue
+                    message = f"当前任务已在阶段 {stage} 持续 {elapsed_seconds} 秒"
+                    job["_last_soft_timeout_notice_at"] = self._utc_now_iso()
+                    job.setdefault("warnings", []).append(
+                        {
+                            "message": message,
+                            "stage": stage,
+                            "timestamp": job["_last_soft_timeout_notice_at"],
+                            "elapsed_seconds": elapsed_seconds,
+                        }
+                    )
+                    logger.warning(message)
+        except asyncio.CancelledError:
+            raise
+
+    async def get_graph_job(self, job_id: str) -> dict[str, Any]:
+        """获取后台任务状态。"""
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return {"ok": False, "error": "任务不存在或已过期"}
+            return {"ok": True, "data": self._build_job_response(job)}
+
+    async def list_graph_jobs(self, limit: int = 10) -> dict[str, Any]:
+        """返回最近图谱后台任务列表。"""
+        safe_limit = max(1, min(int(limit or 10), 50))
+        async with self._job_lock:
+            jobs = sorted(
+                (self._build_job_response(job) for job in self._jobs.values()),
+                key=lambda item: item.get("created_at") or "",
+                reverse=True,
+            )[:safe_limit]
+        return {"ok": True, "data": jobs}
+
+    async def _start_background_job(
+        self,
+        *,
+        job_type: str,
+        runner: Callable[[str], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """创建后台任务并立即返回任务信息。"""
+        job = await self._register_job(job_type)
+        job_id = job["job_id"]
+
+        async def _run() -> None:
+            await self._set_job_state(
+                job_id,
+                status=self.JOB_STATUS_RUNNING,
+                progress_text="任务开始执行",
+                started=True,
+            )
+            watchdog_task = asyncio.create_task(self._watch_job_soft_timeout(job_id), name=f"watchdog:{job_id}")
+            async with self._job_lock:
+                if job_id in self._jobs:
+                    self._jobs[job_id]["_watchdog_task"] = watchdog_task
+            try:
+                result = await runner(job_id)
+                await self._set_job_state(
+                    job_id,
+                    status=self.JOB_STATUS_SUCCEEDED,
+                    progress_text="任务执行完成",
+                    result=result,
+                    finished=True,
+                )
+            except asyncio.CancelledError:
+                await self._set_job_state(
+                    job_id,
+                    status=self.JOB_STATUS_CANCELLED,
+                    progress_text="任务已取消",
+                    error="任务已取消",
+                    finished=True,
+                )
+                raise
+            except Exception as exc:
+                await self._set_job_state(
+                    job_id,
+                    status=self.JOB_STATUS_FAILED,
+                    progress_text="任务执行失败",
+                    error=f"{exc}\n{traceback.format_exc()}",
+                    finished=True,
+                )
+            finally:
+                watchdog = None
+                async with self._job_lock:
+                    if job_id in self._jobs:
+                        watchdog = self._jobs[job_id].get("_watchdog_task")
+                        self._jobs[job_id]["_watchdog_task"] = None
+                if watchdog:
+                    watchdog.cancel()
+                    try:
+                        await watchdog
+                    except asyncio.CancelledError:
+                        pass
+
+        task = asyncio.create_task(_run(), name=f"{job_type}:{job_id}")
+        async with self._job_lock:
+            if job_id in self._jobs:
+                self._jobs[job_id]["_task"] = task
+        response_data = self._build_job_response(job)
+        response_data["message"] = "任务已提交到后台处理"
+        return {
+            "ok": True,
+            "data": response_data,
+        }
+
+    async def submit_graph_extract_import_job(self, file: UploadFile) -> dict[str, Any]:
+        """提交文件抽取导入后台任务。"""
+        filename = file.filename or "uploaded_file"
+        try:
+            file_bytes = await file.read()
+            if not file_bytes:
+                return {"ok": False, "error": "上传文件为空"}
+            if len(file_bytes) > 50 * 1024 * 1024:
+                return {"ok": False, "error": "文件大小不能超过 50MB"}
+            return await self._start_background_job(
+                job_type=self.IMPORT_JOB_TYPE,
+                runner=lambda job_id: self._extract_and_import_graph_sync(file_bytes, filename, job_id),
+            )
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            self._log_api_error("/admin/graph/jobs/extract-import", "extract_import_submit", exc, filename=filename)
+            return {"ok": False, "error": f"提交抽取导入任务失败: {exc}"}
+
+    async def submit_graph_embed_milvus_job(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """提交图谱嵌入后台任务。"""
+        try:
+            payload = data or {}
+            return await self._start_background_job(
+                job_type=self.EMBED_JOB_TYPE,
+                runner=lambda job_id: self._embed_graph_to_milvus_sync(payload, job_id),
+            )
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            self._log_api_error("/admin/graph/jobs/embed-milvus", "embed_graph_submit", exc)
+            return {"ok": False, "error": f"提交嵌入任务失败: {exc}"}
+
+    async def _extract_and_import_graph_sync(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:
+        """执行图谱抽取导入主体。"""
+        loop = asyncio.get_running_loop()
+        stage_callback = self._make_stage_event_callback(loop, job_id)
+        prepared = await asyncio.to_thread(
+            self._extract_and_prepare_graph_blocking,
+            file_bytes,
+            filename,
+            stage_callback,
+        )
+        chunk_results = prepared.pop("_chunk_results", [])
+        total_chunks = len(chunk_results)
+
+        await self._enter_job_stage(job_id, "write_neo4j", f"正在写入 Neo4j，共 {total_chunks} 段文本")
+        for chunk_result in chunk_results:
+            chunk_index = int(chunk_result.get("index") or 0)
+            node_queries = chunk_result.get("node_queries") or []
+            relation_queries = chunk_result.get("relation_queries") or []
+
+            if node_queries:
+                await self._heartbeat_job_stage(
+                    job_id,
+                    detail=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的节点",
+                    progress_text=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的节点",
+                )
+                await self._neo4j_client.run_multiple_cypher(node_queries)
+            if relation_queries:
+                await self._heartbeat_job_stage(
+                    job_id,
+                    detail=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的关系",
+                    progress_text=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的关系",
+                )
+                await self._neo4j_client.run_multiple_cypher(relation_queries)
+
+        await self._complete_job_stage(job_id, detail="Neo4j 写入完成")
+        await self._enter_job_stage(job_id, "finalize", "图谱抽取完成，正在整理结果")
+        await self._complete_job_stage(job_id, detail="任务执行完成")
+        return prepared
+
+    def _extract_and_prepare_graph_blocking(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        stage_callback: Callable[..., None],
+    ) -> dict[str, Any]:
+        """在线程中执行文档解析与图谱抽取。"""
+        suffix = Path(filename).suffix.lower()
+        supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".jpg", ".jpeg", ".png"}
+        if suffix not in supported_suffixes:
+            raise RuntimeError(f"不支持的文件格式: {suffix}，仅支持 {', '.join(sorted(supported_suffixes))}")
+        chunk_limit = 20000
+
+        def split_text_by_sentence(text: str, limit: int = 20000) -> list[str]:
+            """按句切分长文本。"""
+            chunks: list[str] = []
+            remaining = (text or "").strip()
+            sentence_ends = ["。", ".", "!", "！", "?", "？"]
+            while remaining:
+                if len(remaining) <= limit:
+                    chunks.append(remaining)
+                    break
+                window = remaining[:limit]
+                split_at = max(window.rfind(mark) for mark in sentence_ends)
+                if split_at < 0:
+                    split_at = limit
+                else:
+                    split_at += 1
+                chunk = remaining[:split_at].strip()
+                if not chunk:
+                    chunk = remaining[:limit]
+                    split_at = limit
+                chunks.append(chunk)
+                remaining = remaining[split_at:].strip()
+            return chunks
+
+        def extract_text_fallback(raw_bytes: bytes, raw_filename: str, raw_suffix: str) -> str:
+            """Docling 不可用时的兜底解析。"""
+            _ = raw_filename
+            if raw_suffix == ".pdf":
+                import fitz
+
+                doc = fitz.open(stream=raw_bytes, filetype="pdf")
+                try:
+                    return "\n".join(page.get_text("text") for page in doc)
+                finally:
+                    doc.close()
+            if raw_suffix == ".docx":
+                from io import BytesIO
+                from docx import Document
+
+                doc = Document(BytesIO(raw_bytes))
+                return "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text and p.text.strip())
+            if raw_suffix in {".html", ".htm"}:
+                from bs4 import BeautifulSoup
+
+                html = raw_bytes.decode("utf-8", errors="replace")
+                return BeautifulSoup(html, "html.parser").get_text(separator="\n", strip=True)
+            raise RuntimeError(f"当前环境无法使用 Docling，且该格式无内置回退解析器: {raw_suffix}")
+
+        if not file_bytes:
+            raise RuntimeError("上传文件为空")
+        if len(file_bytes) > 50 * 1024 * 1024:
+            raise RuntimeError("文件大小不能超过 50MB")
+
+        stage_callback("enter", "validate_file", "正在校验文件")
+        stage_callback("complete", "validate_file", "文件校验完成")
+
+        parser_used = "plain_text"
+        parse_warning = ""
+        parsed = None
+        text = ""
+
+        if suffix in {".txt", ".md"}:
+            stage_callback("enter", "parse_document", "正在解析纯文本内容")
+            text = file_bytes.decode("utf-8", errors="replace")
+            stage_callback("complete", "parse_document", "文档正文解析完成")
+        else:
+            try:
+                from app.document_parser.docling_parser import DoclingParser
+
+                parser = DoclingParser(enable_image_ocr=True, strict_image_ocr=True, progress_callback=stage_callback)
+                parsed = parser.parse_bytes(file_bytes, filename)
+                text = parsed.text
+                parser_used = "docling"
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as docling_error:
+                if "图片 OCR 失败" in str(docling_error):
+                    raise
+                self._log_api_error("/admin/graph/jobs/extract-import", "docling_parse_fallback", docling_error, filename=filename)
+                stage_callback("heartbeat", "parse_document", "Docling 不可用，正在执行回退解析")
+                text = extract_text_fallback(file_bytes, filename, suffix)
+                stage_callback("complete", "parse_document", "回退解析完成")
+                parser_used = "fallback"
+                parse_warning = f"Docling 不可用，已自动回退解析: {docling_error}"
+
+        if not text or not text.strip():
+            raise RuntimeError("文件解析后文本为空，无法抽取图谱")
+
+        if parse_warning:
+            stage_callback("warning", detail=parse_warning)
+
+        from app.knowledge_graph.extract_graph_data_utils import extract_text_to_graph_queries
+
+        chunks = split_text_by_sentence(text, chunk_limit)
+        total_entities = 0
+        total_relations = 0
+        total_node_batches = 0
+        total_relation_batches = 0
+
+        chunk_results: list[dict[str, Any]] = []
+        for index, chunk in enumerate(chunks, start=1):
+            stage_callback(
+                "heartbeat",
+                detail=f"文档解析完成，已提取约 {len(text)} 个字符，准备处理第 {index}/{len(chunks)} 段文本",
+                progress_text=f"正在处理第 {index}/{len(chunks)} 段文本",
+            )
+            graph_data = extract_text_to_graph_queries(chunk, len(chunk), stage_callback=stage_callback)
+            node_queries = graph_data["node_queries"]
+            relation_queries = graph_data["relation_queries"]
+            stats = graph_data["stats"]
+            total_entities += stats["entities"]
+            total_relations += stats["relations"]
+            total_node_batches += len(node_queries)
+            total_relation_batches += len(relation_queries)
+            chunk_results.append(
+                {
+                    "index": index,
+                    "node_queries": node_queries,
+                    "relation_queries": relation_queries,
+                }
+            )
+
+        ocr_engine = None
+        if parsed and parser_used == "docling":
+            metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
+            ocr_engine = metadata.get("ocr_engine")
+
+        response_data: dict[str, Any] = {
+            "file_name": filename,
+            "parsed_text_length": len(text),
+            "parser_used": parser_used,
+            "ocr_engine": ocr_engine,
+            "parse_warning": parse_warning,
+            "chunk_count": len(chunks),
+            "entity_count": total_entities,
+            "relation_count": total_relations,
+            "node_batches": total_node_batches,
+            "relation_batches": total_relation_batches,
+            "message": f"抽取并导入完成，实体 {total_entities} 个，关系 {total_relations} 条",
+        }
+        if parsed and parser_used == "docling":
+            response_data["parse_details"] = {
+                "format": parsed.format,
+                "pages": parsed.pages,
+                "tables_count": len(parsed.tables),
+                "images_count": len(parsed.images),
+                "metadata": parsed.metadata,
+                "text_preview": parsed.text[:2000] if parsed.text else "",
+            }
+        response_data["_chunk_results"] = chunk_results
+        return response_data
+
+    async def _embed_graph_to_milvus_sync(self, data: Optional[dict[str, Any]], job_id: str) -> dict[str, Any]:
+        """执行图谱嵌入主体。"""
+        await self._enter_job_stage(job_id, "read_graph", "准备读取图谱数据")
+        data = data or {}
+        labels = data.get("labels")
+        batch_size = data.get("batch_size", 100)
+        kg_store = self._get_shared_kg_milvus_store()
+        loop = asyncio.get_running_loop()
+
+        def progress_callback(text: str) -> None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._heartbeat_job_stage(job_id, detail=str(text or ""), progress_text=str(text or "")),
+                    loop,
+                )
+            except RuntimeError:
+                return
+
+        stats = await kg_store.rebuild_from_neo4j(
+            self._neo4j_client,
+            labels,
+            batch_size,
+            progress_callback=progress_callback,
+        )
+        await self._complete_job_stage(job_id, detail="Milvus 嵌入完成")
+        await self._enter_job_stage(job_id, "finalize", "Milvus 嵌入已完成，正在整理结果")
+        await self._complete_job_stage(job_id, detail="任务执行完成")
+        return {
+            "message": f"知识图谱嵌入成功，共 {stats['total_documents']} 条记录",
+            "stats": stats,
+            "timestamp": stats.get("timestamp"),
+        }
 
     async def get_graph_labels(self) -> dict[str, Any]:
         """获取所有节点标签。"""
@@ -333,180 +1009,12 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def extract_and_import_graph(self, file: UploadFile) -> dict[str, Any]:
-        """从上传文件抽取并导入图谱。"""
-        filename = file.filename or "uploaded_file"
-        suffix = Path(filename).suffix.lower()
-        supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".jpg", ".jpeg", ".png"}
-        if suffix not in supported_suffixes:
-            return {"ok": False, "error": f"不支持的文件格式: {suffix}，仅支持 {', '.join(sorted(supported_suffixes))}"}
-        chunk_limit = 20000
-
-        def split_text_by_sentence(text: str, limit: int = 20000) -> list[str]:
-            """拆分text_by_sentence相关信息并返回结果。
-            
-            Args:
-                text: 输入文本。
-                limit: 函数输入参数。
-            
-            Returns:
-                list[str]: 处理后的列表结果。
-            """
-            chunks: list[str] = []
-            remaining = (text or "").strip()
-            sentence_ends = ["。", ".", "!", "！", "?", "？"]
-            while remaining:
-                if len(remaining) <= limit:
-                    chunks.append(remaining)
-                    break
-                window = remaining[:limit]
-                split_at = max(window.rfind(mark) for mark in sentence_ends)
-                if split_at < 0:
-                    split_at = limit
-                else:
-                    split_at += 1
-                chunk = remaining[:split_at].strip()
-                if not chunk:
-                    chunk = remaining[:limit]
-                    split_at = limit
-                chunks.append(chunk)
-                remaining = remaining[split_at:].strip()
-            return chunks
-
-        def extract_text_fallback(file_bytes: bytes, raw_filename: str, raw_suffix: str) -> str:
-            """执行extract_text_fallback流程并返回结果。
-            
-            Args:
-                file_bytes: 函数输入参数。
-                raw_filename: 函数输入参数。
-                raw_suffix: 函数输入参数。
-            
-            Returns:
-                str: 文本结果。
-            """
-            _ = raw_filename
-            if raw_suffix == ".pdf":
-                import fitz
-
-                doc = fitz.open(stream=file_bytes, filetype="pdf")
-                try:
-                    return "\n".join(page.get_text("text") for page in doc)
-                finally:
-                    doc.close()
-            if raw_suffix == ".docx":
-                from io import BytesIO
-                from docx import Document
-
-                doc = Document(BytesIO(file_bytes))
-                return "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text and p.text.strip())
-            if raw_suffix in {".html", ".htm"}:
-                from bs4 import BeautifulSoup
-
-                html = file_bytes.decode("utf-8", errors="replace")
-                return BeautifulSoup(html, "html.parser").get_text(separator="\n", strip=True)
-            raise RuntimeError(f"当前环境无法使用 Docling，且该格式无内置回退解析器: {raw_suffix}")
-
-        try:
-            file_bytes = await file.read()
-            if not file_bytes:
-                return {"ok": False, "error": "上传文件为空"}
-            if len(file_bytes) > 50 * 1024 * 1024:
-                return {"ok": False, "error": "文件大小不能超过 50MB"}
-
-            parser_used = "plain_text"
-            parse_warning = ""
-            parsed = None
-
-            if suffix in {".txt", ".md"}:
-                text = file_bytes.decode("utf-8", errors="replace")
-            else:
-                try:
-                    from app.document_parser.docling_parser import DoclingParser
-
-                    parser = DoclingParser(enable_image_ocr=True)
-                    parsed = await self._await_call(parser.parse_bytes, file_bytes, filename)
-                    text = parsed.text
-                    parser_used = "docling"
-                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as docling_error:
-                    self._log_api_error("/admin/graph/extract-and-import", "docling_parse_fallback", docling_error, filename=filename)
-                    text = await self._await_call(extract_text_fallback, file_bytes, filename, suffix)
-                    parser_used = "fallback"
-                    parse_warning = f"Docling 不可用，已自动回退解析: {docling_error}"
-
-            if not text or not text.strip():
-                return {"ok": False, "error": "文件解析后文本为空，无法抽取图谱"}
-
-            from app.knowledge_graph.extract_graph_data_utils import extract_text_to_graph_queries
-
-            chunks = split_text_by_sentence(text, chunk_limit)
-            total_entities = 0
-            total_relations = 0
-            total_node_batches = 0
-            total_relation_batches = 0
-
-            for chunk in chunks:
-                graph_data = await self._await_call(extract_text_to_graph_queries, chunk, len(chunk))
-                node_queries = graph_data["node_queries"]
-                relation_queries = graph_data["relation_queries"]
-                if node_queries:
-                    await self._await_call(self._neo4j_client.run_multiple_cypher, node_queries)
-                if relation_queries:
-                    await self._await_call(self._neo4j_client.run_multiple_cypher, relation_queries)
-
-                stats = graph_data["stats"]
-                total_entities += stats["entities"]
-                total_relations += stats["relations"]
-                total_node_batches += len(node_queries)
-                total_relation_batches += len(relation_queries)
-
-            response_data: dict[str, Any] = {
-                "file_name": filename,
-                "text_length": len(text),
-                "parser_used": parser_used,
-                "parse_warning": parse_warning,
-                "chunk_limit": chunk_limit,
-                "chunks": len(chunks),
-                "entity_count": total_entities,
-                "relation_count": total_relations,
-                "node_batches": total_node_batches,
-                "relation_batches": total_relation_batches,
-                "message": f"抽取并导入完成，共分 {len(chunks)} 段，实体 {total_entities} 个，关系 {total_relations} 条",
-            }
-            if parsed and parser_used == "docling":
-                response_data["parse_details"] = {
-                    "format": parsed.format,
-                    "pages": parsed.pages,
-                    "tables_count": len(parsed.tables),
-                    "images_count": len(parsed.images),
-                    "metadata": parsed.metadata,
-                    "text_preview": parsed.text[:2000] if parsed.text else "",
-                }
-            return {"ok": True, "data": response_data}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            import traceback
-
-            self._log_api_error("/admin/graph/extract-and-import", "extract_import", exc, filename=filename)
-            return {"ok": False, "error": f"抽取写入失败: {str(exc)}\n{traceback.format_exc()}"}
+        """提交文件抽取导入后台任务。"""
+        return await self.submit_graph_extract_import_job(file=file)
 
     async def embed_graph_to_milvus(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        """将知识图谱嵌入到 Milvus。"""
-        try:
-            labels = data.get("labels") if data else None
-            batch_size = data.get("batch_size", 100) if data else 100
-            kg_store = await self._await_call(self._get_shared_kg_milvus_store)
-            stats = await self._await_call(kg_store.rebuild_from_neo4j, self._neo4j_client, labels, batch_size)
-            return {
-                "ok": True,
-                "data": {
-                    "message": f"知识图谱嵌入成功，共 {stats['total_documents']} 条记录",
-                    "stats": stats,
-                    "timestamp": stats.get("timestamp"),
-                },
-            }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            import traceback
-
-            self._log_api_error("/admin/graph/embed-to-milvus", "embed_graph", exc)
-            return {"ok": False, "error": f"嵌入失败: {str(exc)}\n{traceback.format_exc()}"}
+        """提交图谱嵌入后台任务。"""
+        return await self.submit_graph_embed_milvus_job(data=data)
 
     async def get_graph_embed_status(self) -> dict[str, Any]:
         """获取知识图谱嵌入状态。"""

@@ -22,7 +22,7 @@
 - igraph + leidenalg: Leiden 社区发现算法（可选）
 
 """
-
+import asyncio
 import hashlib
 import logging
 import os
@@ -585,7 +585,13 @@ class KgMilvusStore:
 
         return inserted
 
-    async def rebuild_from_neo4j(self, neo4j_client, labels: Optional[List[str]] = None, batch_size: int = 100) -> Dict[str, Any]:
+    async def rebuild_from_neo4j(
+        self,
+        neo4j_client,
+        labels: Optional[List[str]] = None,
+        batch_size: int = 100,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
         """
         从 Neo4j 重建图谱向量库。
 
@@ -600,18 +606,28 @@ class KgMilvusStore:
             Dict[str, Any]: 重建统计信息，包含实体数、关系数、总文档数和时间戳
         """
         with log_duration("kg_milvus.rebuild_from_neo4j", collection=self.collection_name, batch_size=batch_size):
-            self.clear_collection()
+            if progress_callback:
+                progress_callback("正在清理旧的 Milvus 集合")
+            await asyncio.to_thread(self.clear_collection)
             timestamp = datetime.now().isoformat()
 
             with log_duration("kg_milvus.build_entities"):
+                if progress_callback:
+                    progress_callback("正在读取 Neo4j 实体数据")
                 entity_rows = await self._build_entity_rows(neo4j_client, labels, timestamp)
             with log_duration("kg_milvus.build_relationships"):
+                if progress_callback:
+                    progress_callback("正在读取 Neo4j 关系数据")
                 rel_rows = await self._build_relationship_rows(neo4j_client, timestamp)
 
             with log_duration("kg_milvus.insert_entities", count=len(entity_rows)):
-                entity_inserted = self._upsert_rows(entity_rows, batch_size=batch_size)
+                if progress_callback:
+                    progress_callback("正在生成实体向量并写入 Milvus")
+                entity_inserted = await asyncio.to_thread(self._upsert_rows, entity_rows, batch_size)
             with log_duration("kg_milvus.insert_relationships", count=len(rel_rows)):
-                rel_inserted = self._upsert_rows(rel_rows, batch_size=batch_size)
+                if progress_callback:
+                    progress_callback("正在生成关系向量并写入 Milvus")
+                rel_inserted = await asyncio.to_thread(self._upsert_rows, rel_rows, batch_size)
 
             return {
                 "collection_name": self.collection_name,
@@ -1480,5 +1496,4 @@ class KgMilvusStore:
             "query_window_limit": max_query_window,
             "stats_may_be_truncated": len(result) >= max_query_window,
         }
-
 
