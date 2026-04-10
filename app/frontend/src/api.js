@@ -548,38 +548,41 @@ export async function getRecentGraphJobs(limit = 10) {
   return data.data;
 }
 
-// ==================== Docling 文档解析 API ====================
+// ==================== 文本嵌入后台任务 API ====================
 
-// 使用 Docling 解析文档并返回结构化内容。
-export async function doclingParseDocument(file) {
+// 提交文本嵌入后台任务。
+export async function submitTextEmbeddingJob(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await adminFetch(`${BASE_URL}/admin/docling/parse`, {
+  const response = await adminFetch(`${BASE_URL}/admin/text-embedding/jobs/embed`, {
     method: "POST",
     body: formData
   });
 
   const data = await response.json();
   if (!data?.ok) {
-    throw new Error(data?.error || "Docling 解析失败");
+    throw new Error(data?.error || "提交文本嵌入任务失败");
   }
   return data.data;
 }
 
-// 使用 Docling 解析文档后直接写入向量库。
-export async function doclingParseAndEmbed(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const response = await adminFetch(`${BASE_URL}/admin/docling/parse-and-embed`, {
-    method: "POST",
-    body: formData
-  });
-
+// 查询文本嵌入后台任务状态。
+export async function getTextEmbeddingJobStatus(jobId) {
+  const response = await adminFetch(`${BASE_URL}/admin/text-embedding/jobs/${jobId}`);
   const data = await response.json();
   if (!data?.ok) {
-    throw new Error(data?.error || "Docling 解析并嵌入失败");
+    throw new Error(data?.error || "获取文本嵌入任务状态失败");
+  }
+  return data.data;
+}
+
+// 查询最近文本嵌入后台任务。
+export async function getRecentTextEmbeddingJobs(limit = 10) {
+  const response = await adminFetch(`${BASE_URL}/admin/text-embedding/jobs?limit=${encodeURIComponent(limit)}`);
+  const data = await response.json();
+  if (!data?.ok) {
+    throw new Error(data?.error || "获取最近文本嵌入任务失败");
   }
   return data.data;
 }

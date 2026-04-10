@@ -24,14 +24,19 @@ def create_admin_documents_router(service: AdminDocumentsService) -> APIRouter:
         """获取文档向量库统计。"""
         return await service.get_document_stats()
 
-    @router.post("/admin/docling/parse")
-    async def docling_parse_document(file: UploadFile = File(...)) -> dict[str, Any]:
-        """使用 Docling 解析文档。"""
-        return await service.docling_parse_document(file)
+    @router.post("/admin/text-embedding/jobs/embed")
+    async def submit_text_embedding_job(file: UploadFile = File(...)) -> dict[str, Any]:
+        """提交文本嵌入后台任务。"""
+        return await service.submit_text_embedding_job(file)
 
-    @router.post("/admin/docling/parse-and-embed")
-    async def docling_parse_and_embed(file: UploadFile = File(...)) -> dict[str, Any]:
-        """Docling 解析并嵌入向量库。"""
-        return await service.docling_parse_and_embed(file)
+    @router.get("/admin/text-embedding/jobs")
+    async def list_text_embedding_jobs(limit: int = 10) -> dict[str, Any]:
+        """查询最近文本嵌入后台任务。"""
+        return await service.list_text_embedding_jobs(limit=limit)
+
+    @router.get("/admin/text-embedding/jobs/{job_id}")
+    async def get_text_embedding_job(job_id: str) -> dict[str, Any]:
+        """查询文本嵌入后台任务状态。"""
+        return await service.get_text_embedding_job(job_id=job_id)
 
     return router

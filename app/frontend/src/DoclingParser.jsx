@@ -1,15 +1,26 @@
-import React, { useState } from "react";
-import { doclingParseDocument, doclingParseAndEmbed } from "./api";
+import React, { useEffect, useState } from "react";
+import {
+  submitTextEmbeddingJob,
+  getTextEmbeddingJobStatus,
+  getRecentTextEmbeddingJobs,
+} from "./api";
 
-// 模块职责：提供 Docling 文档解析入口，支持仅解析与解析后嵌入两种流程。
+// 模块职责：提供文本嵌入入口，支持后台任务提交、挂起与最近任务查看。
 export default function DoclingParser() {
   const FILE_SIZE_LIMIT = 50 * 1024 * 1024;
+  const JOB_POLL_MS = 20000;
+  const JOB_STATUS_QUEUED = "queued";
+  const JOB_STATUS_RUNNING = "running";
+  const JOB_STATUS_SUCCEEDED = "succeeded";
+  const JOB_STATUS_FAILED = "failed";
+
   const [selectedFile, setSelectedFile] = useState(null);
-  const [parsing, setParsing] = useState(false);
-  const [embedding, setEmbedding] = useState(false);
-  const [result, setResult] = useState(null);
+  const [activeJob, setActiveJob] = useState(null);
+  const [isActiveJobSuspended, setIsActiveJobSuspended] = useState(false);
+  const [recentJobs, setRecentJobs] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState("markdown");
 
   const allowedFormats = [
     ".pdf", ".docx", ".doc", ".pptx", ".ppt",
@@ -17,7 +28,129 @@ export default function DoclingParser() {
     ".jpg", ".jpeg", ".png"
   ];
 
-  // 校验用户选择文件格式并重置结果状态。
+  useEffect(() => {
+    loadRecentJobs();
+  }, []);
+
+  useEffect(() => {
+    if (!activeJob || !isJobRunning(activeJob)) {
+      return undefined;
+    }
+    const timer = window.setInterval(async () => {
+      try {
+        const nextJob = await getTextEmbeddingJobStatus(activeJob.job_id);
+        setActiveJob(nextJob);
+        if (nextJob.status === JOB_STATUS_SUCCEEDED) {
+          setIsActiveJobSuspended(false);
+          setSuccess("文本嵌入任务执行成功");
+          await loadRecentJobs();
+          window.setTimeout(() => setSuccess(""), 5000);
+        } else if (nextJob.status === JOB_STATUS_FAILED) {
+          setIsActiveJobSuspended(false);
+          setError(nextJob.error || "文本嵌入任务执行失败");
+          await loadRecentJobs();
+        }
+      } catch (err) {
+        setError(err.message);
+      }
+    }, JOB_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [activeJob?.job_id, activeJob?.status]);
+
+  useEffect(() => {
+    if (!recentJobs.some((job) => isJobRunning(job))) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      loadRecentJobs();
+    }, JOB_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [recentJobs]);
+
+  function isJobRunning(job) {
+    return job && [JOB_STATUS_QUEUED, JOB_STATUS_RUNNING].includes(job.status);
+  }
+
+  function getJobStatusLabel(job) {
+    if (!job) return "";
+    if (job.status === JOB_STATUS_QUEUED) return "排队中";
+    if (job.status === JOB_STATUS_RUNNING) return "处理中";
+    if (job.status === JOB_STATUS_SUCCEEDED) return "已完成";
+    if (job.status === JOB_STATUS_FAILED) return "失败";
+    return job.status;
+  }
+
+  function getStageLabel(stage) {
+    const labelMap = {
+      validate_file: "文件校验",
+      parse_document: "文档解析",
+      ocr_images: "图片 OCR",
+      segment_text: "文本切分",
+      embed_vector_store: "写入文本向量数据库",
+      finalize: "整理结果",
+    };
+    return labelMap[stage] || stage || "-";
+  }
+
+  function formatTaskTime(isoText) {
+    if (!isoText) return "-";
+    const date = new Date(isoText);
+    if (Number.isNaN(date.getTime())) return isoText;
+    return date.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function formatDuration(seconds) {
+    const safeSeconds = Math.max(0, Number(seconds) || 0);
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const remainSeconds = Math.floor(safeSeconds % 60);
+    if (hours > 0) return `${hours}小时 ${minutes}分 ${remainSeconds}秒`;
+    if (minutes > 0) return `${minutes}分 ${remainSeconds}秒`;
+    return `${remainSeconds}秒`;
+  }
+
+  function getStageElapsedSeconds(job) {
+    if (!job?.stage_started_at) return null;
+    const startedAt = new Date(job.stage_started_at);
+    if (Number.isNaN(startedAt.getTime())) return null;
+    const referenceText = isJobRunning(job) ? null : (job.finished_at || job.last_heartbeat_at);
+    const referenceTime = referenceText ? new Date(referenceText).getTime() : Date.now();
+    return Math.max(0, Math.floor((referenceTime - startedAt.getTime()) / 1000));
+  }
+
+  function getWarnings(job) {
+    if (!Array.isArray(job?.warnings)) return [];
+    return job.warnings;
+  }
+
+  function getActionLabel() {
+    if (submitting) return "提交中...";
+    if (isJobRunning(activeJob)) return "后台处理中...";
+    if (activeJob?.status === JOB_STATUS_SUCCEEDED) return "再次嵌入";
+    if (activeJob?.status === JOB_STATUS_FAILED) return "重新嵌入";
+    return "嵌入到文本向量数据库";
+  }
+
+  function buildJobSummary(job) {
+    const result = job?.result || {};
+    if (job?.status === JOB_STATUS_SUCCEEDED) {
+      return `格式 ${result.format || "-"}，页数 ${result.pages || 0}，子块 ${result.sub_chunks_count || 0}，Milvus 行数 ${result.milvus_row_count || 0}`;
+    }
+    if (job?.status === JOB_STATUS_FAILED) {
+      return job?.error ? String(job.error).split("\n")[0] : "任务执行失败";
+    }
+    return job?.progress_text || "等待后台处理";
+  }
+
+  async function loadRecentJobs() {
+    try {
+      const data = await getRecentTextEmbeddingJobs(8);
+      setRecentJobs(data);
+    } catch (err) {
+      console.error("加载最近文本嵌入任务失败:", err);
+    }
+  }
+
   function handleFileSelect(e) {
     const file = e.target.files[0];
     if (file) {
@@ -34,53 +167,79 @@ export default function DoclingParser() {
       }
       setSelectedFile(file);
       setError("");
-      setResult(null);
+      if (!isJobRunning(activeJob)) {
+        setActiveJob(null);
+        setIsActiveJobSuspended(false);
+      }
     }
   }
 
-  // 执行纯解析流程，返回文本和结构化元数据。
-  async function handleParse() {
-    if (!selectedFile) return;
-    setParsing(true);
+  async function handleSubmit() {
+    if (!selectedFile) {
+      setError("请先选择文件");
+      return;
+    }
+    setSubmitting(true);
     setError("");
     try {
-      const data = await doclingParseDocument(selectedFile);
-      setResult(data);
+      const job = await submitTextEmbeddingJob(selectedFile);
+      setActiveJob(job);
+      setIsActiveJobSuspended(false);
+      await loadRecentJobs();
+      setSuccess("文本嵌入任务已提交到后台");
+      window.setTimeout(() => setSuccess(""), 5000);
     } catch (err) {
       setError(err.message);
     } finally {
-      setParsing(false);
+      setSubmitting(false);
     }
   }
 
-  // 执行解析并嵌入流程，解析结果直接进入向量检索链路。
-  async function handleParseAndEmbed() {
-    if (!selectedFile) return;
-    setEmbedding(true);
-    setError("");
-    try {
-      const data = await doclingParseAndEmbed(selectedFile);
-      setResult(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setEmbedding(false);
-    }
+  function handleSuspendToBackground() {
+    setIsActiveJobSuspended(true);
+    loadRecentJobs();
+    setSuccess("文本嵌入任务已挂起到后台，可在最近任务中查看进度");
+    window.setTimeout(() => setSuccess(""), 5000);
+  }
+
+  function renderJobTelemetry(job) {
+    if (!job) return null;
+    const warnings = getWarnings(job);
+    const stageElapsed = getStageElapsedSeconds(job);
+    return (
+      <div className="embed-details">
+        <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
+        <p><strong>当前阶段:</strong> {getStageLabel(job.stage)}</p>
+        <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
+        <p><strong>阶段已运行:</strong> {stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
+        <p><strong>最近心跳:</strong> {formatTaskTime(job.last_heartbeat_at)}</p>
+        <p><strong>任务ID:</strong> {job.job_id}</p>
+        {warnings.length > 0 && (
+          <div className="graph-job-warnings">
+            <strong>阶段提醒:</strong>
+            <ul>
+              {warnings.slice(-3).map((warning, index) => (
+                <li key={`${warning.timestamp || "warning"}-${index}`}>{warning.message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
     <div className="docling-parser">
       <div className="docling-header">
-        <h3>Docling 文档解析</h3>
+        <h3>文本嵌入</h3>
         <p className="docling-desc">
-          使用 IBM Docling 解析多种格式文档（PDF、DOCX、PPTX、HTML等），
-          提取文档布局、表格、图片等丰富内容
+          使用 Docling 解析多种格式文档并写入文本向量数据库，支持后台任务挂起、阶段跟踪和最近任务查看
         </p>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
+      {success && <div className="alert alert-success">{success}</div>}
 
-      {/* 文件上传区域 */}
       <div className="upload-section docling-upload">
         <div className="upload-info">
           <p><strong>支持的格式：</strong></p>
@@ -103,7 +262,7 @@ export default function DoclingParser() {
             id="docling-file-input"
             accept={allowedFormats.join(",")}
             onChange={handleFileSelect}
-            disabled={parsing || embedding}
+            disabled={isJobRunning(activeJob)}
           />
           <label htmlFor="docling-file-input" className="file-input-label">
             选择文件
@@ -117,141 +276,109 @@ export default function DoclingParser() {
         </div>
         <p className="form-hint">文件大小不能超过 50MB，JPG/JPEG/PNG 图片会在 OCR 前自动压缩。</p>
 
+        {activeJob && !isActiveJobSuspended && (
+          <div className="task-progress-panel">
+            <div className={`job-status-chip status-${activeJob.status}`}>
+              {getJobStatusLabel(activeJob)}
+            </div>
+            {renderJobTelemetry(activeJob)}
+          </div>
+        )}
+
+        {activeJob?.status === JOB_STATUS_SUCCEEDED && activeJob?.result && !isActiveJobSuspended && (
+          <div className="embed-result-section">
+            <h4>嵌入结果</h4>
+            <div className="alert alert-success">{activeJob.result.message}</div>
+            <div className="embed-details">
+              <p><strong>文件名:</strong> {activeJob.result.file_name}</p>
+              <p><strong>格式:</strong> {activeJob.result.format || "-"}</p>
+              <p><strong>页数:</strong> {activeJob.result.pages || 0}</p>
+              <p><strong>表格数:</strong> {activeJob.result.tables || 0}</p>
+              <p><strong>图片数:</strong> {activeJob.result.images || 0}</p>
+              <p><strong>父块数:</strong> {activeJob.result.parent_chunks_count || 0}</p>
+              <p><strong>子块数:</strong> {activeJob.result.sub_chunks_count || 0}</p>
+              <p><strong>Milvus 行数:</strong> {activeJob.result.milvus_row_count || 0}</p>
+            </div>
+          </div>
+        )}
+
         <div className="upload-actions">
-          <button
-            className="btn btn-primary"
-            onClick={handleParse}
-            disabled={!selectedFile || parsing || embedding}
-          >
-            {parsing ? "解析中..." : "仅解析"}
-          </button>
-          <button
-            className="btn btn-success"
-            onClick={handleParseAndEmbed}
-            disabled={!selectedFile || parsing || embedding}
-          >
-            {embedding ? "处理中..." : "解析并嵌入"}
-          </button>
+          {isJobRunning(activeJob) && isActiveJobSuspended ? (
+            <button className="btn btn-secondary" type="button" disabled>
+              任务已挂起到后台
+            </button>
+          ) : isJobRunning(activeJob) ? (
+            <>
+              <button className="btn btn-success" type="button" disabled>
+                后台处理中...
+              </button>
+              <button className="btn btn-primary" type="button" onClick={handleSuspendToBackground}>
+                挂起到后台
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn-success"
+              type="button"
+              onClick={handleSubmit}
+              disabled={!selectedFile || submitting}
+            >
+              {getActionLabel()}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* 解析结果 */}
-      {result && (
-        <div className="docling-result">
-          <div className="result-header">
-            <h4>解析结果</h4>
-            <div className="result-tabs">
-              {result.markdown && (
-                <button
-                  className={activeTab === "markdown" ? "active" : ""}
-                  onClick={() => setActiveTab("markdown")}
-                >
-                  Markdown
-                </button>
-              )}
-              {result.text && (
-                <button
-                  className={activeTab === "text" ? "active" : ""}
-                  onClick={() => setActiveTab("text")}
-                >
-                  纯文本
-                </button>
-              )}
-              <button
-                className={activeTab === "meta" ? "active" : ""}
-                onClick={() => setActiveTab("meta")}
-              >
-                元数据
-              </button>
-            </div>
+      <div className="graph-tasks-section">
+        <div className="panel-header">
+          <div>
+            <h3>最近任务</h3>
+            <p className="graph-task-caption">文本嵌入任务在后台继续执行，关闭当前聚焦后仍可在这里查看进度。</p>
           </div>
-
-          <div className="result-content">
-            {/* Markdown 内容 */}
-            {activeTab === "markdown" && result.markdown && (
-              <div className="markdown-content">
-                <pre>{result.markdown}</pre>
-              </div>
-            )}
-
-            {/* 纯文本内容 */}
-            {activeTab === "text" && result.text && (
-              <div className="text-content">
-                <pre>{result.text}</pre>
-              </div>
-            )}
-
-            {/* 元数据 */}
-            {activeTab === "meta" && (
-              <div className="meta-content">
-                <div className="meta-grid">
-                  <div className="meta-item">
-                    <label>文件名:</label>
-                    <span>{result.filename}</span>
+          <button type="button" onClick={loadRecentJobs} className="btn btn-secondary">
+            刷新任务
+          </button>
+        </div>
+        {recentJobs.length === 0 ? (
+          <div className="graph-task-empty">暂无最近任务</div>
+        ) : (
+          <div className="graph-task-list">
+            {recentJobs.map((job) => (
+              <div key={job.job_id} className="graph-task-card">
+                <div className="graph-task-header">
+                  <div>
+                    <div className="graph-task-title">文本嵌入任务</div>
+                    <div className="graph-task-meta">任务ID：{job.job_id}</div>
                   </div>
-                  <div className="meta-item">
-                    <label>格式:</label>
-                    <span>{result.format}</span>
+                  <div className={`job-status-chip status-${job.status}`}>
+                    {getJobStatusLabel(job)}
                   </div>
-                  <div className="meta-item">
-                    <label>页数:</label>
-                    <span>{result.pages?.length || 0}</span>
-                  </div>
-                  <div className="meta-item">
-                    <label>表格数:</label>
-                    <span>{result.tables_count}</span>
-                  </div>
-                  <div className="meta-item">
-                    <label>图片数:</label>
-                    <span>{result.images_count}</span>
-                  </div>
-                  {result.chunks_count !== undefined && (
-                    <div className="meta-item">
-                      <label>文本块数:</label>
-                      <span>{result.chunks_count}</span>
+                </div>
+                <div className="graph-task-body">
+                  <p><strong>当前进度：</strong>{job.progress_text || "等待后台处理"}</p>
+                  <p><strong>当前阶段：</strong>{getStageLabel(job.stage)}</p>
+                  <p><strong>阶段详情：</strong>{job.stage_detail || "-"}</p>
+                  <p><strong>阶段已运行：</strong>{getStageElapsedSeconds(job) == null ? "-" : formatDuration(getStageElapsedSeconds(job))}</p>
+                  <p><strong>最近心跳：</strong>{formatTaskTime(job.last_heartbeat_at)}</p>
+                  <p><strong>创建时间：</strong>{formatTaskTime(job.created_at)}</p>
+                  <p><strong>完成时间：</strong>{formatTaskTime(job.finished_at)}</p>
+                  <p><strong>结果摘要：</strong>{buildJobSummary(job)}</p>
+                  {getWarnings(job).length > 0 && (
+                    <div className="graph-job-warnings">
+                      <strong>阶段提醒：</strong>
+                      <ul>
+                        {getWarnings(job).slice(-2).map((warning, index) => (
+                          <li key={`${warning.timestamp || "warning"}-${index}`}>{warning.message}</li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </div>
-
-                {/* 页面详情 */}
-                {result.pages && result.pages.length > 0 && (
-                  <div className="pages-detail">
-                    <h5>页面详情</h5>
-                    <table className="pages-table">
-                      <thead>
-                        <tr>
-                          <th>页码</th>
-                          <th>尺寸</th>
-                          <th>单元格数</th>
-                          <th>元素数</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {result.pages.map((page, idx) => (
-                          <tr key={idx}>
-                            <td>{page.page_no}</td>
-                            <td>{page.size ? `${page.size[0]} x ${page.size[1]}` : "-"}</td>
-                            <td>{page.cells}</td>
-                            <td>{page.items}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* 完整元数据 */}
-                {result.metadata && (
-                  <div className="full-metadata">
-                    <h5>完整元数据</h5>
-                    <pre>{JSON.stringify(result.metadata, null, 2)}</pre>
-                  </div>
-                )}
               </div>
-            )}
+            ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

@@ -13,7 +13,7 @@ import {
 import GraphManager from "./GraphManager";
 import DoclingParser from "./DoclingParser";
 
-// 模块职责：管理员后台总面板，包含会话管理、Agent观测、图谱管理和 Docling 入口。
+// 模块职责：管理员后台总面板，包含会话管理、Agent观测、图谱管理和文本嵌入入口。
 export default function AdminDashboard({ onLogout }) {
   const [sessions, setSessions] = useState([]);
   const [total, setTotal] = useState(0);
@@ -448,7 +448,7 @@ export default function AdminDashboard({ onLogout }) {
           className={activeTab === "docling" ? "active" : ""}
           onClick={() => setActiveTab("docling")}
         >
-          Docling解析
+          文本嵌入
         </button>
       </div>
 
@@ -662,7 +662,7 @@ export default function AdminDashboard({ onLogout }) {
         </div>
       )}
 
-      {/* Docling 解析标签 */}
+      {/* 文本嵌入标签 */}
       {activeTab === "docling" && (
         <div className="docling-section">
           <DoclingParser />
