@@ -365,6 +365,37 @@ export default function GraphManager() {
     return `${remainSeconds}秒`;
   }
 
+  function formatCount(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "-";
+    return numeric.toLocaleString("zh-CN");
+  }
+
+  function getGraphImportTextProgress(job) {
+    if (!job || job.job_type !== "graph_extract_import") return null;
+    const totalChars = Number(job.total_chars || job.result?.parsed_text_length || 0);
+    if (!totalChars) return null;
+    const processedChars = Math.min(
+      totalChars,
+      Number(
+        job.processed_chars ??
+        job.result?.processed_text_length ??
+        (job.status === JOB_STATUS_SUCCEEDED ? totalChars : 0)
+      ) || 0
+    );
+    return {
+      totalChars,
+      processedChars,
+      totalChunks: Number(job.total_chunks || job.result?.chunk_count || 0) || 0,
+      completedChunks: Math.min(
+        Number(job.completed_chunks || 0) || 0,
+        Number(job.total_chunks || job.result?.chunk_count || 0) || 0,
+      ),
+      currentChunkIndex: Number(job.current_chunk_index || 0) || 0,
+      currentChunkChars: Number(job.current_chunk_chars || 0) || 0,
+    };
+  }
+
   function getStageElapsedSeconds(job) {
     if (!job?.stage_started_at) return null;
     const startedAt = new Date(job.stage_started_at);
@@ -383,11 +414,19 @@ export default function GraphManager() {
     if (!job) return null;
     const warnings = getJobWarnings(job);
     const stageElapsed = getStageElapsedSeconds(job);
+    const textProgress = getGraphImportTextProgress(job);
     return (
       <div className="embed-details">
         <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
         <p><strong>当前阶段:</strong> {getJobStageLabel(job.stage)}</p>
         <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
+        {textProgress && (
+          <>
+            <p><strong>总字数:</strong> {formatCount(textProgress.totalChars)}</p>
+            <p><strong>已处理字数:</strong> {formatCount(textProgress.processedChars)}</p>
+            <p><strong>分块进度:</strong> {textProgress.totalChunks > 0 ? `${textProgress.completedChunks}/${textProgress.totalChunks}` : "-"}</p>
+          </>
+        )}
         <p><strong>阶段已运行:</strong> {stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
         <p><strong>最近心跳:</strong> {formatTaskTime(job.last_heartbeat_at)}</p>
         <p><strong>任务ID:</strong> {job.job_id}</p>
@@ -409,8 +448,12 @@ export default function GraphManager() {
 
   function buildJobSummary(job) {
     const result = job?.result || {};
+    const textProgress = getGraphImportTextProgress(job);
     if (job?.job_type === "graph_extract_import" && job?.status === JOB_STATUS_SUCCEEDED) {
       return `实体 ${result.entity_count || 0} 个，关系 ${result.relation_count || 0} 条，解析后文本长度 ${result.parsed_text_length || 0}`;
+    }
+    if (job?.job_type === "graph_extract_import" && textProgress) {
+      return `已处理 ${formatCount(textProgress.processedChars)} / ${formatCount(textProgress.totalChars)} 字`;
     }
     if (job?.job_type === "graph_embed_milvus" && job?.status === JOB_STATUS_SUCCEEDED) {
       const totalDocuments = result?.stats?.total_documents || 0;
@@ -735,39 +778,49 @@ export default function GraphManager() {
           <div className="graph-task-empty">暂无最近任务</div>
         ) : (
           <div className="graph-task-list">
-            {recentJobs.map((job) => (
-              <div key={job.job_id} className="graph-task-card">
-                <div className="graph-task-header">
-                  <div>
-                    <div className="graph-task-title">{getJobTypeLabel(job.job_type)}</div>
-                    <div className="graph-task-meta">任务ID：{job.job_id}</div>
-                  </div>
-                  <div className={`job-status-chip status-${job.status}`}>
-                    {getJobStatusLabel(job)}
-                  </div>
-                </div>
-                <div className="graph-task-body">
-                  <p><strong>当前进度：</strong>{job.progress_text || "等待后台处理"}</p>
-                  <p><strong>当前阶段：</strong>{getJobStageLabel(job.stage)}</p>
-                  <p><strong>阶段详情：</strong>{job.stage_detail || "-"}</p>
-                  <p><strong>阶段已运行：</strong>{getStageElapsedSeconds(job) == null ? "-" : formatDuration(getStageElapsedSeconds(job))}</p>
-                  <p><strong>最近心跳：</strong>{formatTaskTime(job.last_heartbeat_at)}</p>
-                  <p><strong>创建时间：</strong>{formatTaskTime(job.created_at)}</p>
-                  <p><strong>完成时间：</strong>{formatTaskTime(job.finished_at)}</p>
-                  <p><strong>结果摘要：</strong>{buildJobSummary(job)}</p>
-                  {getJobWarnings(job).length > 0 && (
-                    <div className="graph-job-warnings">
-                      <strong>阶段提醒：</strong>
-                      <ul>
-                        {getJobWarnings(job).slice(-2).map((warning, index) => (
-                          <li key={`${warning.timestamp || "warning"}-${index}`}>{warning.message}</li>
-                        ))}
-                      </ul>
+            {recentJobs.map((job) => {
+              const textProgress = getGraphImportTextProgress(job);
+              return (
+                <div key={job.job_id} className="graph-task-card">
+                  <div className="graph-task-header">
+                    <div>
+                      <div className="graph-task-title">{getJobTypeLabel(job.job_type)}</div>
+                      <div className="graph-task-meta">任务ID：{job.job_id}</div>
                     </div>
-                  )}
+                    <div className={`job-status-chip status-${job.status}`}>
+                      {getJobStatusLabel(job)}
+                    </div>
+                  </div>
+                  <div className="graph-task-body">
+                    <p><strong>当前进度：</strong>{job.progress_text || "等待后台处理"}</p>
+                    <p><strong>当前阶段：</strong>{getJobStageLabel(job.stage)}</p>
+                    <p><strong>阶段详情：</strong>{job.stage_detail || "-"}</p>
+                    {textProgress && (
+                      <>
+                        <p><strong>总字数：</strong>{formatCount(textProgress.totalChars)}</p>
+                        <p><strong>已处理字数：</strong>{formatCount(textProgress.processedChars)}</p>
+                        <p><strong>分块进度：</strong>{textProgress.totalChunks > 0 ? `${textProgress.completedChunks}/${textProgress.totalChunks}` : "-"}</p>
+                      </>
+                    )}
+                    <p><strong>阶段已运行：</strong>{getStageElapsedSeconds(job) == null ? "-" : formatDuration(getStageElapsedSeconds(job))}</p>
+                    <p><strong>最近心跳：</strong>{formatTaskTime(job.last_heartbeat_at)}</p>
+                    <p><strong>创建时间：</strong>{formatTaskTime(job.created_at)}</p>
+                    <p><strong>完成时间：</strong>{formatTaskTime(job.finished_at)}</p>
+                    <p><strong>结果摘要：</strong>{buildJobSummary(job)}</p>
+                    {getJobWarnings(job).length > 0 && (
+                      <div className="graph-job-warnings">
+                        <strong>阶段提醒：</strong>
+                        <ul>
+                          {getJobWarnings(job).slice(-2).map((warning, index) => (
+                            <li key={`${warning.timestamp || "warning"}-${index}`}>{warning.message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

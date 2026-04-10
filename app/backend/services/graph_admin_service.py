@@ -81,6 +81,12 @@ class GraphAdminService:
             "stage_detail": job.get("stage_detail") or "",
             "stage_started_at": job.get("stage_started_at"),
             "last_heartbeat_at": job.get("last_heartbeat_at"),
+            "total_chars": job.get("total_chars"),
+            "processed_chars": job.get("processed_chars"),
+            "total_chunks": job.get("total_chunks"),
+            "completed_chunks": job.get("completed_chunks"),
+            "current_chunk_index": job.get("current_chunk_index"),
+            "current_chunk_chars": job.get("current_chunk_chars"),
             "warnings": list(job.get("warnings") or []),
             "trace": list(job.get("trace") or []),
             "result": job.get("result"),
@@ -113,6 +119,12 @@ class GraphAdminService:
                 "stage_detail": "",
                 "stage_started_at": None,
                 "last_heartbeat_at": None,
+                "total_chars": 0,
+                "processed_chars": 0,
+                "total_chunks": 0,
+                "completed_chunks": 0,
+                "current_chunk_index": 0,
+                "current_chunk_chars": 0,
                 "warnings": [],
                 "trace": [],
                 "result": None,
@@ -149,6 +161,7 @@ class GraphAdminService:
             stage: Optional[str] = None,
             detail: Optional[str] = None,
             progress_text: Optional[str] = None,
+            metrics: Optional[dict[str, Any]] = None,
         ) -> None:
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -158,6 +171,7 @@ class GraphAdminService:
                         stage=stage,
                         detail=detail,
                         progress_text=progress_text,
+                        metrics=metrics,
                     ),
                     loop,
                 )
@@ -174,21 +188,38 @@ class GraphAdminService:
         stage: Optional[str] = None,
         detail: Optional[str] = None,
         progress_text: Optional[str] = None,
+        metrics: Optional[dict[str, Any]] = None,
     ) -> None:
         """接收线程回传的阶段事件。"""
         if action == "enter" and stage:
-            await self._enter_job_stage(job_id, stage, detail or progress_text or "")
+            await self._enter_job_stage(job_id, stage, detail or progress_text or "", metrics=metrics)
             return
         if action == "heartbeat":
-            await self._heartbeat_job_stage(job_id, detail=detail or progress_text, progress_text=progress_text)
+            await self._heartbeat_job_stage(job_id, detail=detail or progress_text, progress_text=progress_text, metrics=metrics)
             return
         if action == "complete":
-            await self._complete_job_stage(job_id, detail=detail or progress_text)
+            await self._complete_job_stage(job_id, detail=detail or progress_text, metrics=metrics)
             return
         if action == "warning":
             message = detail or progress_text or ""
             if message:
                 await self._add_job_warning(job_id, message)
+
+    @staticmethod
+    def _apply_job_metrics(job: dict[str, Any], metrics: Optional[dict[str, Any]] = None) -> None:
+        """合并任务进度指标。"""
+        if not metrics:
+            return
+        for key in (
+            "total_chars",
+            "processed_chars",
+            "total_chunks",
+            "completed_chunks",
+            "current_chunk_index",
+            "current_chunk_chars",
+        ):
+            if key in metrics and metrics[key] is not None:
+                job[key] = metrics[key]
 
     async def _set_job_state(
         self,
@@ -235,13 +266,21 @@ class GraphAdminService:
                     item["duration_ms"] = int((finished_dt - started_at).total_seconds() * 1000)
                 break
 
-    async def _enter_job_stage(self, job_id: str, stage: str, detail: str = "") -> None:
+    async def _enter_job_stage(
+        self,
+        job_id: str,
+        stage: str,
+        detail: str = "",
+        *,
+        metrics: Optional[dict[str, Any]] = None,
+    ) -> None:
         """进入新阶段。"""
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job:
                 return
+            self._apply_job_metrics(job, metrics)
             if job.get("stage") and job.get("stage") != stage:
                 self._mark_current_trace_finished(job, "succeeded")
             job["stage"] = stage
@@ -269,6 +308,7 @@ class GraphAdminService:
         *,
         detail: Optional[str] = None,
         progress_text: Optional[str] = None,
+        metrics: Optional[dict[str, Any]] = None,
     ) -> None:
         """更新当前阶段心跳。"""
         now_iso = self._utc_now_iso()
@@ -276,6 +316,7 @@ class GraphAdminService:
             job = self._jobs.get(job_id)
             if not job:
                 return
+            self._apply_job_metrics(job, metrics)
             job["last_heartbeat_at"] = now_iso
             if detail is not None:
                 job["stage_detail"] = detail
@@ -290,13 +331,20 @@ class GraphAdminService:
                         item["detail"] = detail
                     break
 
-    async def _complete_job_stage(self, job_id: str, detail: Optional[str] = None) -> None:
+    async def _complete_job_stage(
+        self,
+        job_id: str,
+        detail: Optional[str] = None,
+        *,
+        metrics: Optional[dict[str, Any]] = None,
+    ) -> None:
         """完成当前阶段。"""
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job or not job.get("stage"):
                 return
+            self._apply_job_metrics(job, metrics)
             job["last_heartbeat_at"] = now_iso
             if detail is not None:
                 job["stage_detail"] = detail
@@ -495,7 +543,15 @@ class GraphAdminService:
         chunk_results = prepared.pop("_chunk_results", [])
         total_chunks = len(chunk_results)
 
-        await self._enter_job_stage(job_id, "write_neo4j", f"正在写入 Neo4j，共 {total_chunks} 段文本")
+        await self._enter_job_stage(
+            job_id,
+            "write_neo4j",
+            f"正在写入 Neo4j，共 {total_chunks} 段文本",
+            metrics={
+                "total_chunks": total_chunks,
+                "completed_chunks": total_chunks,
+            },
+        )
         for chunk_result in chunk_results:
             chunk_index = int(chunk_result.get("index") or 0)
             node_queries = chunk_result.get("node_queries") or []
@@ -625,6 +681,9 @@ class GraphAdminService:
         from app.knowledge_graph.extract_graph_data_utils import extract_text_to_graph_queries
 
         chunks = split_text_by_sentence(text, chunk_limit)
+        total_chars = len(text)
+        total_chunk_chars = sum(len(chunk) for chunk in chunks)
+        processed_chars = 0
         total_entities = 0
         total_relations = 0
         total_node_batches = 0
@@ -632,10 +691,19 @@ class GraphAdminService:
 
         chunk_results: list[dict[str, Any]] = []
         for index, chunk in enumerate(chunks, start=1):
+            chunk_chars = len(chunk)
             stage_callback(
                 "heartbeat",
                 detail=f"文档解析完成，已提取约 {len(text)} 个字符，准备处理第 {index}/{len(chunks)} 段文本",
                 progress_text=f"正在处理第 {index}/{len(chunks)} 段文本",
+                metrics={
+                    "total_chars": total_chars,
+                    "processed_chars": processed_chars,
+                    "total_chunks": len(chunks),
+                    "completed_chunks": index - 1,
+                    "current_chunk_index": index,
+                    "current_chunk_chars": chunk_chars,
+                },
             )
             graph_data = extract_text_to_graph_queries(chunk, len(chunk), stage_callback=stage_callback)
             node_queries = graph_data["node_queries"]
@@ -645,9 +713,24 @@ class GraphAdminService:
             total_relations += stats["relations"]
             total_node_batches += len(node_queries)
             total_relation_batches += len(relation_queries)
+            processed_chars = min(total_chars, processed_chars + chunk_chars)
+            stage_callback(
+                "heartbeat",
+                detail=f"已完成第 {index}/{len(chunks)} 段文本抽取",
+                progress_text=f"已完成第 {index}/{len(chunks)} 段文本抽取",
+                metrics={
+                    "total_chars": total_chars,
+                    "processed_chars": processed_chars,
+                    "total_chunks": len(chunks),
+                    "completed_chunks": index,
+                    "current_chunk_index": index,
+                    "current_chunk_chars": chunk_chars,
+                },
+            )
             chunk_results.append(
                 {
                     "index": index,
+                    "chunk_chars": chunk_chars,
                     "node_queries": node_queries,
                     "relation_queries": relation_queries,
                 }
@@ -669,6 +752,8 @@ class GraphAdminService:
         response_data: dict[str, Any] = {
             "file_name": filename,
             "parsed_text_length": len(text),
+            "total_chunk_chars": total_chunk_chars,
+            "processed_text_length": processed_chars,
             "parser_used": parser_used,
             "ocr_engine": ocr_engine,
             "parse_warning": parse_warning,
