@@ -1273,6 +1273,7 @@ class SessionStreamService:
                 user_id=user_id,
                 session_id=session_id,
                 request_id=request_id,
+                image_data=image_data,
                 original_input_text=original_input_text,
                 memory_context=memory_context,
             ):

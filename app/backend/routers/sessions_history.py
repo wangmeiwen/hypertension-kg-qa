@@ -48,19 +48,13 @@ def create_sessions_router(service: SessionsHistoryService) -> APIRouter:
         """获取会话消息。"""
         return await service.get_messages(session_id=session_id, user_id=user_id)
 
-    @router.post("/sessions/{session_id}/rollback-last-question")
-    async def rollback_last_question(session_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        """回撤最后一个用户问题。"""
-        return await service.rollback_last_question(session_id=session_id, data=data)
-
     @router.post("/sessions/{session_id}/rollback-to-question")
     async def rollback_to_question(session_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """回撤到指定用户问题。"""
         return await service.rollback_to_question(session_id=session_id, data=data)
 
-    @router.post("/upload_image")
     @router.post("/upload_file")
-    async def upload_image(file: UploadFile = File(...)) -> dict[str, Any]:
+    async def upload_file(file: UploadFile = File(...)) -> dict[str, Any]:
         """上传聊天文件并返回 URL。"""
         return await service.upload_file(file)
 

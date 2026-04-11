@@ -40,6 +40,7 @@ class OrchestratorExecutor:
         trace_id: str = "",
         strategy: str = "iterative",
         max_turns: int | None = None,
+        image_data: str = "",
         original_input_text: str = "",
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
@@ -55,6 +56,7 @@ class OrchestratorExecutor:
             session_id=str(session_id or "").strip(),
             user_id=str(user_id or "").strip(),
             max_turns=safe_max_turns,
+            image_data=str(image_data or "").strip(),
             memory_context=safe_memory_context,
             progress_callback=progress_callback,
         )

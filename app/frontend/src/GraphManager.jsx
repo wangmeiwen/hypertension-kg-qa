@@ -439,6 +439,18 @@ export default function GraphManager() {
     return Number.isFinite(value) && value > 0 ? value : 0;
   }
 
+  function getEmbedBatchSize(job) {
+    const value = Number(job?.batch_size || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  function getEmbedLabelsText(job) {
+    const labels = Array.isArray(job?.labels)
+      ? job.labels.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    return labels.length > 0 ? labels.join(", ") : "全部标签";
+  }
+
   function getCacheInfo(job) {
     return {
       cacheUsed: Boolean(job?.cache_used ?? job?.result?.cache_used),
@@ -480,6 +492,38 @@ export default function GraphManager() {
 
   function renderJobTelemetry(job) {
     if (!job) return null;
+    if (job.job_type === "graph_embed_milvus") {
+      const warnings = getJobWarnings(job);
+      const stageElapsed = getStageElapsedSeconds(job);
+      const batchSize = getEmbedBatchSize(job);
+      return (
+        <div className="embed-details">
+          <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
+          <p><strong>当前阶段:</strong> {getJobStageLabel(job.stage)}</p>
+          <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
+          <p><strong>嵌入批大小:</strong> {batchSize > 0 ? formatCount(batchSize) : "-"}</p>
+          <p><strong>嵌入标签:</strong> {getEmbedLabelsText(job)}</p>
+          <p><strong>阶段已运行:</strong> {stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
+          <p><strong>最近心跳:</strong> {formatTaskTime(job.last_heartbeat_at)}</p>
+          <p><strong>创建时间:</strong> {formatTaskTime(job.created_at)}</p>
+          <p><strong>完成时间:</strong> {formatTaskTime(job.finished_at)}</p>
+          <p><strong>任务ID:</strong> {job.job_id}</p>
+          {warnings.length > 0 && (
+            <div className="graph-job-warnings">
+              <strong>阶段提醒:</strong>
+              <ul>
+                {warnings.slice(-3).map((warning, index) => (
+                  <li key={`${warning.timestamp || "warning"}-${index}`}>
+                    {warning.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     const warnings = getJobWarnings(job);
     const stageElapsed = getStageElapsedSeconds(job);
     const textProgress = getGraphImportTextProgress(job);
@@ -559,8 +603,9 @@ export default function GraphManager() {
     }
     if (job?.job_type === "graph_embed_milvus" && job?.status === JOB_STATUS_SUCCEEDED) {
       const totalDocuments = result?.stats?.total_documents || 0;
-      const relationships = result?.stats?.relationships || 0;
-      return `总文档 ${totalDocuments} 条，关系 ${relationships} 条`;
+      const entities = result?.stats?.entities_count || 0;
+      const relationships = result?.stats?.relationships_count || 0;
+      return `总文档 ${totalDocuments} 条，实体 ${entities} 个，关系 ${relationships} 条`;
     }
     if (job?.status === JOB_STATUS_FAILED) {
       return job?.error ? String(job.error).split("\n")[0] : "任务执行失败";
@@ -892,6 +937,47 @@ export default function GraphManager() {
               const pausedReason = getPausedReason(job);
               const chunkLimit = getChunkLimit(job);
               const { cacheUsed, cacheInvalidatedReason, resumeCompatible } = getCacheInfo(job);
+              if (job.job_type === "graph_embed_milvus") {
+                const warnings = getJobWarnings(job);
+                const stageElapsed = getStageElapsedSeconds(job);
+                const batchSize = getEmbedBatchSize(job);
+                return (
+                  <div key={job.job_id} className="graph-task-card">
+                    <div className="graph-task-header">
+                      <div>
+                        <div className="graph-task-title">{getJobTypeLabel(job.job_type)}</div>
+                        <div className="graph-task-meta">任务ID: {job.job_id}</div>
+                      </div>
+                      <div className={`job-status-chip status-${job.status}`}>
+                        {getJobStatusLabel(job)}
+                      </div>
+                    </div>
+                    <div className="graph-task-body">
+                      <p><strong>当前进度：</strong>{job.progress_text || "等待后台处理"}</p>
+                      <p><strong>当前阶段：</strong>{getJobStageLabel(job.stage)}</p>
+                      <p><strong>阶段详情：</strong>{job.stage_detail || "-"}</p>
+                      <p><strong>嵌入批大小：</strong>{batchSize > 0 ? formatCount(batchSize) : "-"}</p>
+                      <p><strong>嵌入标签：</strong>{getEmbedLabelsText(job)}</p>
+                      <p><strong>阶段已运行：</strong>{stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
+                      <p><strong>最近心跳：</strong>{formatTaskTime(job.last_heartbeat_at)}</p>
+                      <p><strong>创建时间：</strong>{formatTaskTime(job.created_at)}</p>
+                      <p><strong>完成时间：</strong>{formatTaskTime(job.finished_at)}</p>
+                      <p><strong>结果摘要：</strong>{buildJobSummary(job)}</p>
+                      {warnings.length > 0 && (
+                        <div className="graph-job-warnings">
+                          <strong>阶段提醒：</strong>
+                          <ul>
+                            {warnings.slice(-2).map((warning, index) => (
+                              <li key={`${warning.timestamp || "warning"}-${index}`}>{warning.message}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div key={job.job_id} className="graph-task-card">
                   <div className="graph-task-header">
@@ -1440,18 +1526,15 @@ export default function GraphManager() {
                     )}
                     <div className="alert alert-success">{embedResult.message}</div>
                     <div className="embed-details">
-                      <p><strong>实体统计:</strong></p>
-                    <ul>
-                      {Object.entries(embedResult.stats.entities).map(([label, count]) => (
-                        <li key={label}>{label}: {count} 个</li>
-                      ))}
-                    </ul>
-                    <p><strong>关系数:</strong> {embedResult.stats.relationships} 个</p>
-                    <p><strong>总文档数:</strong> {embedResult.stats.total_documents} 个</p>
-                    <p><strong>时间戳:</strong> {embedResult.timestamp}</p>
+                      <p><strong>总文档数:</strong> {embedResult.stats?.total_documents || 0} 个</p>
+                      <p><strong>实体数:</strong> {embedResult.stats?.entities_count || 0} 个</p>
+                      <p><strong>关系数:</strong> {embedResult.stats?.relationships_count || 0} 条</p>
+                      <p><strong>嵌入批大小:</strong> {getEmbedBatchSize(activeEmbedJob) > 0 ? formatCount(getEmbedBatchSize(activeEmbedJob)) : "-"}</p>
+                      <p><strong>嵌入标签:</strong> {getEmbedLabelsText(activeEmbedJob)}</p>
+                      <p><strong>时间戳:</strong> {embedResult.timestamp}</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
               {activeEmbedJob && !embedResult && (
                 <div className="embed-result-section">
                   <h4>嵌入任务状态</h4>

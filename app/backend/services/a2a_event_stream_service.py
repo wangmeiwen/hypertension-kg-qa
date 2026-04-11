@@ -228,6 +228,7 @@ class A2AEventStreamService:
         request_id: str = "",
         strategy: str = "iterative",
         max_turns: Optional[int] = None,
+        image_data: Any = None,
         original_input_text: str = "",
         memory_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -248,6 +249,8 @@ class A2AEventStreamService:
         }
         if isinstance(max_turns, int) and max_turns > 0:
             metadata["max_turns"] = max_turns
+        if image_data:
+            metadata["image_data"] = str(image_data)
 
         message = {
             "role": "user",

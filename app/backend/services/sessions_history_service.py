@@ -153,30 +153,6 @@ class SessionsHistoryService:
         messages = await self._await_call(MessageManager.get_messages, session_id)
         return {"ok": True, "data": messages}
 
-    async def rollback_last_question(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        """回撤最后一个用户问题。"""
-        user_id = str(data.get("user_id") or "").strip()
-        if not user_id:
-            return {"ok": False, "error": "user_id_required"}
-
-        session = await self._await_call(SessionManager.get_session, session_id)
-        if not session or str(session.get("user_id") or "") != user_id:
-            return {"ok": False, "error": "session_not_found"}
-
-        rollback_result = await self._await_call(MessageManager.rollback_last_question, session_id)
-        if not bool(rollback_result.get("ok")):
-            return {"ok": False, "error": "no_question_to_rollback"}
-
-        memory_result = await self._refresh_memory_after_rollback(session_id, user_id, "rollback_last_question_memory")
-        return {
-            "ok": True,
-            "data": {
-                "removed_count": int(rollback_result.get("removed_count") or 0),
-                "question": str(rollback_result.get("question") or ""),
-                **memory_result,
-            },
-        }
-
     async def rollback_to_question(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """回撤到指定用户问题。"""
         user_id = str(data.get("user_id") or "").strip()
@@ -246,7 +222,7 @@ class SessionsHistoryService:
                 },
             }
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            self._log_api_error("/upload_image", "write_file", exc, filename=file.filename)
+            self._log_api_error("/upload_file", "write_file", exc, filename=file.filename)
             return {"ok": False, "error": f"上传失败: {str(exc)}"}
 
     async def cancel_qa_job(self, job_id: str, data: dict[str, Any]) -> dict[str, Any]:

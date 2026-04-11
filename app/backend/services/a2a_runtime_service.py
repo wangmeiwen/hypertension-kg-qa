@@ -115,6 +115,7 @@ class A2ARuntimeService:
         strategy = str(meta.get("strategy") or "iterative").strip().lower() or "iterative"
         raw_max_turns = meta.get("max_turns")
         max_turns: Optional[int] = raw_max_turns if isinstance(raw_max_turns, int) and raw_max_turns > 0 else None
+        image_data = str(meta.get("image_data") or "").strip()
         original_input_text = str(meta.get("original_input_text") or input_text or "").strip()
         memory_context_obj = meta.get("memory_context")
         memory_context = memory_context_obj if isinstance(memory_context_obj, dict) else {}
@@ -127,6 +128,7 @@ class A2ARuntimeService:
             user_id=safe_user_id,
             strategy=strategy,
             max_turns=max_turns,
+            image_data=image_data,
             original_input_text=original_input_text,
             memory_context=memory_context,
             cancel_check=cancel_check,

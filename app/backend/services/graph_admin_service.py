@@ -89,6 +89,8 @@ class GraphAdminService:
             "job_id": job["job_id"],
             "job_type": job["job_type"],
             "status": job["status"],
+            "labels": job.get("labels"),
+            "batch_size": job.get("batch_size"),
             "progress_text": job.get("progress_text") or "",
             "created_at": job.get("created_at"),
             "started_at": job.get("started_at"),
@@ -930,6 +932,8 @@ class GraphAdminService:
                 "current_attempt": 0,
                 "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
                 "lane_statuses": [],
+                "labels": None,
+                "batch_size": None,
                 "warnings": [],
                 "trace": [],
                 "result": None,
@@ -1401,9 +1405,20 @@ class GraphAdminService:
         """提交图谱嵌入后台任务。"""
         try:
             payload = data or {}
+            labels_obj = payload.get("labels")
+            labels = [str(item).strip() for item in labels_obj if str(item).strip()] if isinstance(labels_obj, list) else None
+            batch_size_raw = payload.get("batch_size", 100)
+            try:
+                batch_size = int(batch_size_raw)
+            except (TypeError, ValueError):
+                batch_size = 100
             return await self._start_background_job(
                 job_type=self.EMBED_JOB_TYPE,
                 runner=lambda job_id: self._embed_graph_to_milvus_sync(payload, job_id),
+                seed={
+                    "labels": labels or None,
+                    "batch_size": batch_size,
+                },
             )
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             self._log_api_error("/admin/graph/jobs/embed-milvus", "embed_graph_submit", exc)

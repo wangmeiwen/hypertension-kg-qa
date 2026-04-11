@@ -1,33 +1,94 @@
 # 高血压知识图谱问答系统 API 接口文档
 
+本文档按当前代码实现整理，基于 [app/backend/routers](/D:/graduate/HypertensionKG_QA_System/app/backend/routers) 与对应 service 的真实行为。
+
 ## 接口概览
 
 | 模块 | 接口数量 | 说明 |
-|------|---------|------|
-| 问答与会话 | 3 | 核心问答流程、Agent 运行 |
-| A2A 协议 | 7 | Agent-to-Agent 协议接口 |
-| 会话历史 | 12 | 会话 CRUD、消息管理、文件上传 |
-| 图谱查询 | 2 | 公开图谱可视化、实体详情 |
-| 系统与 MCP | 5 | 健康检查、工具调用 |
-| 管理员认证 | 3 | 登录、登出、状态检查 |
-| 管理员文档 | 4 | 文档上传、解析、嵌入 |
-| 管理员图谱 | 16 | 图谱管理、Cypher 执行、任务管理 |
-| 管理员运行时 | 5 | 性能监控、任务队列 |
-| 管理员会话 | 7 | 会话管理、记忆重建 |
-| 管理员可观测性 | 2 | Agent 运行监控 |
-| **总计** | **66** | |
+|------|---------:|------|
+| 问答与会话 | 3 | 核心问答入口 |
+| A2A 协议 | 17 | Orchestrator / Graph / Retrieval 三组接口 |
+| 会话历史 | 10 | 会话 CRUD、消息、回滚、上传、取消任务 |
+| 图谱查询 | 2 | 公开图谱可视化与实体详情 |
+| 系统与 MCP | 5 | 数据库状态、readiness、MCP 工具 |
+| 管理员认证 | 3 | 登录、状态、登出 |
+| 管理员文档 | 5 | 文档上传与文本嵌入后台任务 |
+| 管理员图谱 | 17 | 图谱管理、后台任务、嵌入状态 |
+| 管理员运行时 | 5 | flags、基线、队列、统计 |
+| 管理员会话 | 7 | 会话、记忆、日志清理 |
+| 管理员可观测性 | 2 | Agent 汇总与运行明细 |
+| **总计** | **76** | |
+
+## 通用说明
+
+### 1. 认证
+
+- 公开接口无需认证。
+- 普通会话接口依赖 `user_id` 与 `session_id` 进行归属校验，很多接口如果缺 `user_id` 会直接返回 `user_id_required`。
+- 管理员接口不是 `Session Cookie` 认证，而是：
+  1. `POST /admin/login` 获取 `token`
+  2. 后续请求头带 `Authorization: Bearer <token>`
+
+### 2. 响应格式
+
+本项目没有严格统一成单一响应 schema，常见有三类：
+
+- 标准业务响应：
+
+```json
+{
+  "ok": true,
+  "data": {}
+}
+```
+
+- 带额外字段响应：
+
+```json
+{
+  "ok": true,
+  "data": [],
+  "total": 123
+}
+```
+
+- 某些历史接口直接把数据放在顶层：
+
+```json
+{
+  "ok": true,
+  "message": "cancel_requested",
+  "job_id": "xxx",
+  "status": "running"
+}
+```
+
+### 3. 流式接口
+
+以下接口返回 `StreamingResponse(text/plain)`：
+
+- `POST /process`
+- `POST /process_with_session`
+- `GET /a2a/tasks/{task_id}/events`
+- `GET /a2a/graph/tasks/{task_id}/events`
+- `GET /a2a/retrieval/tasks/{task_id}/events`
+
+### 4. Readiness
+
+- `GET /health/readiness` 在 `ready` / `degraded` 时返回 HTTP `200`
+- 在 `unavailable` 时返回 HTTP `503`
+- 核心问答接口在 `unavailable` 时会被阻断
 
 ---
 
-## 一、问答与会话接口
+## 一、问答接口
 
-### 1.1 流式问答处理
+### 1. `POST /process`
 
-**POST** `/process`
+基础流式问答入口。
 
-处理流式问答请求入口。
+请求体：
 
-**请求参数**:
 ```json
 {
   "input": "高血压患者如何用药？",
@@ -36,45 +97,40 @@
 }
 ```
 
-**响应**: `StreamingResponse` (text/plain)
+说明：
 
----
+- `user_id` 为空时，后端会自动生成一个 UUID
+- `session_id` 可为空
+- 返回流式文本行
 
-### 1.2 Agent 运行
+### 2. `POST /agent/run`
 
-**POST** `/agent/run`
+A2A 主控入口。
 
-运行 Agent（A2A 架构）。
+请求体：
 
-**请求参数**:
 ```json
 {
-  "input": "ACEI和ARB有什么区别？",
+  "input": "ACEI 和 ARB 有什么区别？",
   "session_id": "session_456",
   "user_id": "user_123",
   "strategy": "iterative",
-  "max_turns": 10
+  "max_turns": 4
 }
 ```
 
-**响应**:
-```json
-{
-  "ok": true,
-  "result": {...},
-  "trace_id": "trace_xxx"
-}
-```
+说明：
 
----
+- `input` 不能为空，否则返回 `input_required`
+- `strategy` 当前返回的能力说明里包含 `iterative` 与 `graph`
+- 该接口受重型接口速率限制约束
 
-### 1.3 带会话的问答处理
+### 3. `POST /process_with_session`
 
-**POST** `/process_with_session`
+带会话保存的流式问答入口。
 
-处理问答并保存到会话历史。
+请求体：
 
-**请求参数**:
 ```json
 {
   "input": "高血压的诊断标准是什么？",
@@ -85,94 +141,65 @@
 }
 ```
 
-**响应**: `StreamingResponse`
+说明：
+
+- 返回流式文本行
+- 该接口会在进入主流程前检查会话合法性，并保存消息历史
+- 该接口受重型接口速率限制约束
 
 ---
 
 ## 二、A2A 协议接口
 
-### 2.1 获取 Agent Card
+### Orchestrator
 
-**GET** `/a2a/agent-card`
+- `GET /a2a/agent-card`
+- `GET /a2a/agents/cards`
+- `POST /a2a/rpc`
+- `GET /a2a/tasks`
+- `GET /a2a/tasks/{task_id}`
+- `GET /a2a/tasks/{task_id}/events`
+- `POST /a2a/tasks/{task_id}/cancel`
 
-返回 A2A Agent Card。
+### Graph Agent
 
-**响应**:
-```json
-{
-  "ok": true,
-  "agent_card": {...},
-  "trace_id": "trace_xxx"
-}
-```
+- `POST /a2a/graph/rpc`
+- `GET /a2a/graph/tasks`
+- `GET /a2a/graph/tasks/{task_id}`
+- `GET /a2a/graph/tasks/{task_id}/events`
+- `POST /a2a/graph/tasks/{task_id}/cancel`
 
----
+### Retrieval Agent
 
-### 2.2 获取所有 Agent Cards
+- `POST /a2a/retrieval/rpc`
+- `GET /a2a/retrieval/tasks`
+- `GET /a2a/retrieval/tasks/{task_id}`
+- `GET /a2a/retrieval/tasks/{task_id}/events`
+- `POST /a2a/retrieval/tasks/{task_id}/cancel`
 
-**GET** `/a2a/agents/cards`
+通用查询参数：
 
-返回当前可发现的 Agent Card 列表。
+- `context_id`: 任务上下文
+- `limit`: 列表数量，默认 `20`
+- `cursor`: 事件流游标，默认 `0`
+- `poll_ms`: 轮询间隔，默认 `500`
+- `timeout_seconds`: 事件流超时，默认 `300`
 
----
+说明：
 
-### 2.3 A2A RPC 调用
-
-**POST** `/a2a/rpc`
-
-执行 A2A RPC 流程。
-
----
-
-### 2.4 列出任务
-
-**GET** `/a2a/tasks`
-
-**查询参数**:
-- `context_id`: 上下文标识
-- `limit`: 数量限制 (默认 20)
-
----
-
-### 2.5 获取任务详情
-
-**GET** `/a2a/tasks/{task_id}`
-
-**路径参数**:
-- `task_id`: 任务标识
-
----
-
-### 2.6 获取任务事件流
-
-**GET** `/a2a/tasks/{task_id}/events`
-
-**路径参数**:
-- `task_id`: 任务标识
-
-**查询参数**:
-- `cursor`: 游标位置 (默认 0)
-- `poll_ms`: 轮询间隔 (默认 500ms)
-- `timeout_seconds`: 超时时间 (默认 300s)
-
----
-
-### 2.7 取消任务
-
-**POST** `/a2a/tasks/{task_id}/cancel`
-
-**路径参数**:
-- `task_id`: 任务标识
+- `/a2a/*/events` 为流式返回
+- `/a2a/*/cancel` 可带可选 JSON body，但不是必填
 
 ---
 
 ## 三、会话历史接口
 
-### 3.1 创建会话
+### 1. `POST /sessions`
 
-**POST** `/sessions`
+创建新会话。
 
-**请求参数**:
+请求体：
+
 ```json
 {
   "user_id": "user_123",
@@ -180,216 +207,321 @@
 }
 ```
 
----
+说明：
 
-### 3.2 获取会话列表
+- `user_id` 为空时会自动生成 UUID
 
-**GET** `/sessions`
+### 2. `GET /sessions`
 
-**查询参数**:
-- `user_id`: 用户标识
-- `limit`: 数量限制 (默认 50)
+获取用户会话列表。
 
----
+查询参数：
 
-### 3.3 获取会话详情
+- `user_id`：必填
+- `limit`：默认 `50`
 
-**GET** `/sessions/{session_id}`
+缺少 `user_id` 时返回：
 
----
-
-### 3.4 更新会话
-
-**PUT** `/sessions/{session_id}`
-
-**请求参数**:
 ```json
 {
+  "ok": false,
+  "error": "user_id_required",
+  "data": []
+}
+```
+
+### 3. `GET /sessions/{session_id}`
+
+获取单个会话及其消息。
+
+查询参数：
+
+- `user_id`：必填
+
+### 4. `PUT /sessions/{session_id}`
+
+更新会话标题。
+
+请求体：
+
+```json
+{
+  "user_id": "user_123",
   "title": "新的会话标题"
 }
 ```
 
----
+说明：
 
-### 3.5 删除会话
+- `user_id` 必填
+- `title` 必填
 
-**DELETE** `/sessions/{session_id}`
+### 5. `DELETE /sessions/{session_id}`
 
----
+删除会话。
 
-### 3.6 添加消息
+查询参数：
 
-**POST** `/sessions/{session_id}/messages`
+- `user_id`：必填
 
-**请求参数**:
+### 6. `POST /sessions/{session_id}/messages`
+
+向会话添加消息。
+
+请求体：
+
 ```json
 {
+  "user_id": "user_123",
   "role": "user",
-  "content": "高血压患者如何用药？"
+  "content": "高血压患者如何用药？",
+  "think_content": ""
 }
 ```
 
----
+### 7. `GET /sessions/{session_id}/messages`
 
-### 3.7 获取会话消息
+获取会话消息。
 
-**GET** `/sessions/{session_id}/messages`
+查询参数：
 
-**查询参数**:
-- `user_id`: 用户标识
+- `user_id`：必填
 
----
+### 8. `POST /sessions/{session_id}/rollback-to-question`
 
-### 3.8 回撤最后一个问题
+回撤到指定问题。
 
-**POST** `/sessions/{session_id}/rollback-last-question`
+请求体：
 
----
-
-### 3.9 回撤到指定问题
-
-**POST** `/sessions/{session_id}/rollback-to-question`
-
-**请求参数**:
 ```json
 {
+  "user_id": "user_123",
   "message_id": 123
 }
 ```
 
----
+### 9. `POST /upload_file`
 
-### 3.10 上传图片/文件
+聊天附件上传入口。
 
-**POST** `/upload_image`
-**POST** `/upload_file`
+请求：
 
-**请求**: `multipart/form-data`
-- `file`: 上传的文件
+- `multipart/form-data`
+- 字段名：`file`
 
-**响应**:
-```json
-{
-  "ok": true,
-  "url": "https://...",
-  "file_name": "xxx.jpg"
-}
-```
+支持类型：
 
----
+- 图片：`.jpg .jpeg .png .gif .webp .bmp`
+- 文档：`.md .doc .docx .pdf .ppt .txt`
 
-### 3.11 取消 QA 任务
+真实响应示例：
 
-**POST** `/qa/jobs/{job_id}/cancel`
-
----
-
-## 四、图谱查询接口（公开）
-
-### 4.1 图谱可视化
-
-**GET** `/graph/visualization`
-
-**查询参数**:
-- `keyword`: 关键词过滤
-- `limit`: 节点数量限制 (默认 200)
-
-**响应**:
-```json
-{
-  "nodes": [...],
-  "edges": [...]
-}
-```
-
----
-
-### 4.2 获取实体详情
-
-**GET** `/graph/entity/{entity_id}`
-
-**路径参数**:
-- `entity_id`: 实体标识
-
----
-
-## 五、系统与 MCP 接口
-
-### 5.1 数据库状态
-
-**GET** `/db/status`
-
-**响应**:
-```json
-{
-  "neo4j": "connected",
-  "milvus": "connected",
-  "mysql": "connected"
-}
-```
-
----
-
-### 5.2 健康检查
-
-**GET** `/health/readiness`
-
-**响应**:
 ```json
 {
   "ok": true,
   "data": {
-    "level": "ready",
-    "ready": true,
-    "checks": {...}
+    "filename": "uuid.pdf",
+    "original_name": "指南.pdf",
+    "url": "/uploads/uuid.pdf",
+    "base64": "",
+    "is_image": false
+  }
+}
+```
+
+说明：
+
+- 如果是图片，`base64` 会返回 data URL
+- 如果是文档，`base64` 为空字符串
+
+### 10. `POST /qa/jobs/{job_id}/cancel`
+
+兼容接口，用于取消 A2A 任务。
+
+请求体：
+
+```json
+{
+  "user_id": "user_123",
+  "session_id": "session_456"
+}
+```
+
+说明：
+
+- `user_id` 和 `session_id` 都必填
+- 实际会校验任务元数据是否属于当前用户/会话
+
+---
+
+## 四、公开图谱接口
+
+### 1. `GET /graph/visualization`
+
+获取图谱可视化数据。
+
+查询参数：
+
+- `keyword`：可选
+- `limit`：默认 `200`，服务内部会收敛到 `10 ~ 500`
+
+真实成功响应结构：
+
+```json
+{
+  "ok": true,
+  "nodes": [],
+  "links": [],
+  "count": 0
+}
+```
+
+注意：
+
+- 字段名是 `links`，不是 `edges`
+
+### 2. `GET /graph/entity/{entity_id}`
+
+获取实体详情与入边/出边关系。
+
+成功响应结构：
+
+```json
+{
+  "ok": true,
+  "entity": {
+    "id": "1",
+    "labels": ["Disease"],
+    "name": "高血压",
+    "properties": {}
+  },
+  "relationships": {
+    "incoming": [],
+    "outgoing": []
   }
 }
 ```
 
 ---
 
-### 5.3 获取 Agent 工具
+## 五、系统与 MCP 接口
 
-**GET** `/agent/tools`
+### 1. `GET /db/status`
 
-返回 Agent 策略与可用工具信息。
+返回 Neo4j / Milvus 端口可达性检查结果。
 
----
+注意：
 
-### 5.4 MCP 工具列表
+- 这里不返回 MySQL 状态
+- 返回的是结构化对象，不是 `"connected"` 这种字符串
 
-**GET** `/mcp/tools`
+典型响应：
 
-返回 MCP 服务中注册的工具列表。
+```json
+{
+  "all_running": false,
+  "neo4j": {
+    "name": "Neo4j",
+    "host": "127.0.0.1",
+    "bolt_port": 7687,
+    "bolt_ok": true,
+    "is_running": true
+  },
+  "milvus": {
+    "name": "Milvus",
+    "host": "127.0.0.1",
+    "port": 19531,
+    "is_running": false
+  },
+  "message": "部分数据库未启动"
+}
+```
 
----
+### 2. `GET /health/readiness`
 
-### 5.5 MCP 工具调用
+返回服务就绪性报告。
 
-**POST** `/mcp/invoke`
+成功响应：
 
-**请求参数**:
+```json
+{
+  "ok": true,
+  "data": {
+    "level": "ready",
+    "ready": true,
+    "checked_at": "2026-04-11 16:00:00",
+    "critical_not_ready": [],
+    "optional_issues": [],
+    "dependencies": [],
+    "db": {},
+    "mcp": {},
+    "runtime_flags": {}
+  }
+}
+```
+
+说明：
+
+- `level` 取值：`ready` / `degraded` / `unavailable`
+- 当 `level=unavailable` 时，HTTP 状态码为 `503`
+
+### 3. `GET /agent/tools`
+
+返回 Agent 策略与 MCP 工具信息。
+
+返回字段：
+
+- `default_strategy`
+- `supported_strategies`
+- `iterative_actions`
+- `mcp_tools`
+
+### 4. `GET /mcp/tools`
+
+返回已注册 MCP 工具列表。
+
+典型响应：
+
+```json
+{
+  "ok": true,
+  "tools": []
+}
+```
+
+### 5. `POST /mcp/invoke`
+
+调用 MCP 工具。
+
+请求体：
+
 ```json
 {
   "tool_name": "kg_query",
-  "server_name": "default",
-  "payload": {...},
+  "server_name": "local",
+  "payload": {
+    "keyword": "高血压 分级",
+    "limit": 5
+  },
   "user_id": "user_123",
   "session_id": "session_456"
 }
 ```
 
+说明：
+
+- `tool_name` 必填
+- `server_name` 可为空；为空时只用 `tool_name`
+- 该接口受重型接口速率限制约束
+
 ---
 
 ## 六、管理员认证接口
 
-> **注意**: 以下管理员接口需要登录认证
+### 1. `POST /admin/login`
 
-### 6.1 管理员登录
+请求体：
 
-**POST** `/admin/login`
-
-**请求参数**:
 ```json
 {
   "username": "admin",
@@ -397,358 +529,316 @@
 }
 ```
 
----
+成功响应：
 
-### 6.2 检查管理员状态
+```json
+{
+  "ok": true,
+  "message": "登录成功",
+  "token": "..."
+}
+```
 
-**GET** `/admin/status`
+### 2. `GET /admin/status`
 
----
+返回当前 Bearer Token 对应的登录状态。
 
-### 6.3 管理员登出
+### 3. `POST /admin/logout`
 
-**POST** `/admin/logout`
+退出当前登录状态。
 
 ---
 
 ## 七、管理员文档接口
 
-### 7.1 上传文档
+这组接口都需要：
 
-**POST** `/admin/documents/upload`
+```http
+Authorization: Bearer <token>
+```
 
-上传 DOCX 文档并嵌入向量库。
+### 1. `POST /admin/documents/upload`
 
-**请求**: `multipart/form-data`
-- `file`: DOCX 文件
+兼容旧接口，本质上也是提交文本嵌入后台任务。
 
----
+请求：
 
-### 7.2 获取文档统计
+- `multipart/form-data`
+- 字段：`file`
 
-**GET** `/admin/documents/stats`
+### 2. `GET /admin/documents/stats`
 
-获取文档向量库统计信息。
+返回文本向量库统计信息。
 
----
+### 3. `POST /admin/text-embedding/jobs/embed`
 
-### 7.3 Docling 解析文档
+提交文本嵌入后台任务。
 
-**POST** `/admin/docling/parse`
+请求：
 
-使用 Docling 解析文档。
+- `multipart/form-data`
+- 字段：`file`
 
----
+说明：
 
-### 7.4 Docling 解析并嵌入
+- 支持 `.pdf .docx .doc .pptx .ppt .html .htm .txt .md .jpg .jpeg .png`
+- 文件上限 50MB
 
-**POST** `/admin/docling/parse-and-embed`
+### 4. `GET /admin/text-embedding/jobs`
 
-Docling 解析并嵌入向量库。
+查询最近文本嵌入任务。
+
+查询参数：
+
+- `limit`：默认 `10`
+
+### 5. `GET /admin/text-embedding/jobs/{job_id}`
+
+查询单个文本嵌入任务状态。
 
 ---
 
 ## 八、管理员图谱接口
 
-### 8.1 获取节点标签
+这组接口都需要管理员 Bearer Token。
 
-**GET** `/admin/graph/labels`
+### 图谱基础管理
 
-获取所有节点标签。
+- `GET /admin/graph/labels`
+- `GET /admin/graph/relationship-types`
+- `GET /admin/graph/nodes`
+- `GET /admin/graph/nodes/{node_id}`
+- `POST /admin/graph/nodes`
+- `PUT /admin/graph/nodes/{node_id}`
+- `DELETE /admin/graph/nodes/{node_id}`
+- `POST /admin/graph/relationships`
+- `DELETE /admin/graph/relationships/{rel_id}`
+- `POST /admin/graph/execute-cypher`
 
----
+### 图谱导入与嵌入
 
-### 8.2 获取关系类型
+- `POST /admin/graph/extract-and-import`
+- `POST /admin/graph/jobs/extract-import`
+- `GET /admin/graph/jobs`
+- `GET /admin/graph/jobs/{job_id}`
+- `POST /admin/graph/embed-to-milvus`
+- `POST /admin/graph/jobs/embed-milvus`
+- `GET /admin/graph/embed-status`
 
-**GET** `/admin/graph/relationship-types`
+### 关键说明
 
-获取所有关系类型。
+#### `POST /admin/graph/relationships`
 
----
+真实字段名是：
 
-### 8.3 获取节点列表
-
-**GET** `/admin/graph/nodes`
-
-**查询参数**:
-- `label`: 节点标签过滤
-- `keyword`: 关键词过滤
-- `limit`: 数量限制 (默认 100)
-- `offset`: 偏移量 (默认 0)
-
----
-
-### 8.4 获取节点详情
-
-**GET** `/admin/graph/nodes/{node_id}`
-
-**路径参数**:
-- `node_id`: 节点 ID
-
----
-
-### 8.5 创建节点
-
-**POST** `/admin/graph/nodes`
-
-**请求参数**:
-```json
-{
-  "label": "Drug",
-  "properties": {
-    "name": "氨氯地平",
-    "category": "CCB"
-  }
-}
-```
-
----
-
-### 8.6 更新节点
-
-**PUT** `/admin/graph/nodes/{node_id}`
-
----
-
-### 8.7 删除节点
-
-**DELETE** `/admin/graph/nodes/{node_id}`
-
----
-
-### 8.8 创建关系
-
-**POST** `/admin/graph/relationships`
-
-**请求参数**:
 ```json
 {
   "source_id": 1,
   "target_id": 2,
-  "type": "TREATS",
+  "rel_type": "TREATS",
   "properties": {}
 }
 ```
 
----
+不是旧文档里的 `type`。
 
-### 8.9 删除关系
+#### `POST /admin/graph/execute-cypher`
 
-**DELETE** `/admin/graph/relationships/{rel_id}`
+请求体：
 
----
-
-### 8.10 执行 Cypher
-
-**POST** `/admin/graph/execute-cypher`
-
-执行只读 Cypher 查询。
-
-**请求参数**:
 ```json
 {
-  "query": "MATCH (n:Drug) RETURN n LIMIT 10"
+  "query": "MATCH (n) RETURN n LIMIT 10"
 }
 ```
 
----
+说明：
 
-### 8.11 抽取并导入图谱
+- 接口会禁止包含 `create / merge / delete / remove / set / drop / alter`
 
-**POST** `/admin/graph/extract-and-import`
+#### `POST /admin/graph/extract-and-import`
 
-从上传文件抽取并导入图谱。
+#### `POST /admin/graph/embed-to-milvus`
 
----
+这两个接口名字看起来像“立即执行”，但当前实现实际上只是对应后台任务提交别名：
 
-### 8.12 提交抽取导入任务
+- `extract-and-import` -> 提交图谱抽取任务
+- `embed-to-milvus` -> 提交图谱嵌入任务
 
-**POST** `/admin/graph/jobs/extract-import`
+调用方应该继续轮询：
 
-提交文件抽取入图谱后台任务。
+- `GET /admin/graph/jobs/{job_id}`
+- `GET /admin/graph/embed-status`
 
----
+#### `GET /admin/graph/nodes`
 
-### 8.13 查询图谱任务列表
+查询参数：
 
-**GET** `/admin/graph/jobs`
+- `label`
+- `keyword`
+- `limit`，默认 `100`
+- `offset`，默认 `0`
 
-**查询参数**:
-- `limit`: 数量限制 (默认 10)
-
----
-
-### 8.14 查询图谱任务状态
-
-**GET** `/admin/graph/jobs/{job_id}`
-
----
-
-### 8.15 嵌入图谱到 Milvus
-
-**POST** `/admin/graph/embed-to-milvus`
-
-将知识图谱嵌入到 Milvus 向量库。
-
----
-
-### 8.16 提交嵌入任务
-
-**POST** `/admin/graph/jobs/embed-milvus`
-
-提交图谱嵌入后台任务。
-
----
-
-### 8.17 获取嵌入状态
-
-**GET** `/admin/graph/embed-status`
-
-获取知识图谱嵌入状态。
+响应除 `ok` / `data` 外，还会带 `total`
 
 ---
 
 ## 九、管理员运行时接口
 
-### 9.1 查看运行时特性开关
+### 1. `GET /admin/runtime/flags`
 
-**GET** `/admin/runtime/flags`
+返回运行时 feature flags 快照。
 
----
+### 2. `GET /admin/perf/baseline`
 
-### 9.2 性能基线报告
+查询参数：
 
-**GET** `/admin/perf/baseline`
+- `days`：默认 `1`，服务内部会限制到 `1 ~ 7`
 
-**查询参数**:
-- `days`: 天数 (默认 1)
+返回内容包括：
 
----
+- `api_latency`
+- `event_loop_lag_ms`
+- `queue`
+- `runtime_flags`
+- `active_threads`
 
-### 9.3 QA 队列状态
+### 3. `GET /admin/qa/queue/status`
 
-**GET** `/admin/qa/queue/status`
+返回 A2A 运行时队列快照。
 
-获取 A2A 任务状态快照。
+### 4. `POST /admin/qa/jobs/{job_id}/cancel`
 
----
+管理员取消 QA 任务，不需要再传 `user_id` / `session_id`。
 
-### 9.4 取消 QA 任务
+### 5. `GET /admin/stats`
 
-**POST** `/admin/qa/jobs/{job_id}/cancel`
+返回：
 
----
-
-### 9.5 获取统计数据
-
-**GET** `/admin/stats`
+- `total_sessions`
+- `total_messages`
+- `today_sessions`
+- `today_messages`
 
 ---
 
 ## 十、管理员会话接口
 
-### 10.1 获取所有会话
+### 1. `GET /admin/sessions`
 
-**GET** `/admin/sessions`
+查询参数：
 
-**查询参数**:
-- `limit`: 数量限制 (默认 100)
-- `offset`: 偏移量 (默认 0)
+- `limit`：默认 `100`
+- `offset`：默认 `0`
 
----
+响应会额外包含 `total`
 
-### 10.2 获取会话消息
+### 2. `GET /admin/sessions/{session_id}/messages`
 
-**GET** `/admin/sessions/{session_id}/messages`
+返回结构：
 
----
+```json
+{
+  "ok": true,
+  "session": {},
+  "messages": []
+}
+```
 
-### 10.3 获取会话观测详情
+### 3. `GET /admin/sessions/{session_id}/observability`
 
-**GET** `/admin/sessions/{session_id}/observability`
+返回会话级 turn 观测详情。
 
-获取指定会话的按轮次观测详情。
+返回结构：
 
----
+```json
+{
+  "ok": true,
+  "session": {},
+  "turns": []
+}
+```
 
-### 10.4 获取会话记忆
+### 4. `GET /admin/sessions/{session_id}/memory`
 
-**GET** `/admin/sessions/{session_id}/memory`
+返回指定会话的记忆快照。
 
-获取指定会话记忆快照。
+### 5. `POST /admin/sessions/{session_id}/memory/rebuild`
 
----
+清空并重建该会话记忆。
 
-### 10.5 重建会话记忆
+### 6. `DELETE /admin/sessions/{session_id}/messages`
 
-**POST** `/admin/sessions/{session_id}/memory/rebuild`
+清空消息历史，同时尝试：
 
-重建指定会话记忆。
+- 清空会话记忆
+- 删除 `logs/sessions/<session_id>` 下的日志产物
 
----
+响应可能包含：
 
-### 10.6 清空会话消息
+- `removed_count`
+- `memory_cleared`
+- `log_artifacts_deleted`
 
-**DELETE** `/admin/sessions/{session_id}/messages`
+### 7. `DELETE /admin/sessions/{session_id}`
 
-清空指定会话历史消息。
-
----
-
-### 10.7 删除会话
-
-**DELETE** `/admin/sessions/{session_id}`
+删除会话，并尽量同步清理记忆与日志目录。
 
 ---
 
 ## 十一、管理员可观测性接口
 
-### 11.1 Agent 观测汇总
+### 1. `GET /admin/agent/observability-summary`
 
-**GET** `/admin/agent/observability-summary`
+查询参数：
 
-**查询参数**:
-- `limit`: 数量限制 (默认 200)
+- `limit`：默认 `200`
 
----
+返回聚合指标，例如：
 
-### 11.2 Agent 运行明细
+- `total_runs`
+- `avg_duration_ms`
+- `avg_execution_tool_success_rate`
+- `avg_attempted_action_success_rate`
+- `avg_tool_success_rate`
+- `total_tokens`
+- `total_llm_calls`
 
-**GET** `/admin/agent/observability-runs`
+### 2. `GET /admin/agent/observability-runs`
 
-**查询参数**:
-- `limit`: 数量限制 (默认 50)
+查询参数：
 
----
+- `limit`：默认 `50`
 
-## 通用响应格式
-
-### 成功响应
-```json
-{
-  "ok": true,
-  "data": {...},
-  "trace_id": "trace_xxx"
-}
-```
-
-### 错误响应
-```json
-{
-  "ok": false,
-  "error": "error_message",
-  "trace_id": "trace_xxx"
-}
-```
+返回最近运行明细列表，以及 `count`。
 
 ---
 
-## 认证说明
+## 错误码与常见错误文本
 
-- **公开接口**: 无需认证（如 `/graph/visualization`, `/health/readiness`）
-- **用户接口**: 通过 `user_id` 和 `session_id` 标识
-- **管理员接口**: 需要登录获取 Session Cookie
+以下错误文本在当前代码里比较常见：
+
+- `user_id_required`
+- `title_required`
+- `session_not_found`
+- `role_and_content_required`
+- `message_id_required`
+- `user_id_and_session_id_required`
+- `tool_name_required`
+- `job_not_found`
+- `job_not_found_or_finished`
+- `service_unavailable`
+- `invalid_entity_id:*`
+- `graph_query_error:*`
+- `mcp_runtime_error:*`
 
 ---
 
-*文档生成时间: 2025年*
+## 代码参考
+
+- 路由入口：[/app/backend/routers](/D:/graduate/HypertensionKG_QA_System/app/backend/routers)
+- 会话接口实现：[/app/backend/services/sessions_history_service.py](/D:/graduate/HypertensionKG_QA_System/app/backend/services/sessions_history_service.py)
+- 系统与 MCP：[/app/backend/routers/system_mcp.py](/D:/graduate/HypertensionKG_QA_System/app/backend/routers/system_mcp.py)
+- 管理员图谱：[/app/backend/services/graph_admin_service.py](/D:/graduate/HypertensionKG_QA_System/app/backend/services/graph_admin_service.py)
+- 管理员文档：[/app/backend/services/admin_documents_service.py](/D:/graduate/HypertensionKG_QA_System/app/backend/services/admin_documents_service.py)
+- 可观测性：[/app/backend/services/admin_observability_service.py](/D:/graduate/HypertensionKG_QA_System/app/backend/services/admin_observability_service.py)

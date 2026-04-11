@@ -544,6 +544,7 @@ class UnifiedOrchestratorController:
         turn_index: int,
         max_turns: int,
         force_final: bool = False,
+        image_data: str = "",
         compression_state: dict[str, Any],
         processing_steps: list[str],
         progress_callback: Callable[[dict[str, Any]], None] | None,
@@ -562,13 +563,23 @@ class UnifiedOrchestratorController:
             processing_steps=processing_steps,
             progress_callback=progress_callback,
         )
-        response = await self._client.chat_with_tokens_async(
-            messages=messages,
-            temperature=0.1,
-            timeout=90,
-            actor_role="controller",
-            actor_name="orchestrator_controller",
-        )
+        if image_data:
+            response = await self._client.chat_with_vision_async(
+                messages=messages,
+                image_data=image_data,
+                temperature=0.1,
+                timeout=90,
+                actor_role="controller",
+                actor_name="orchestrator_controller",
+            )
+        else:
+            response = await self._client.chat_with_tokens_async(
+                messages=messages,
+                temperature=0.1,
+                timeout=90,
+                actor_role="controller",
+                actor_name="orchestrator_controller",
+            )
         parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
         tokens = {
             "prompt_tokens": int(getattr(response, "prompt_tokens", 0) or 0)
@@ -746,6 +757,7 @@ class UnifiedOrchestratorController:
         session_id: str = "",
         user_id: str = "",
         max_turns: int = 3,
+        image_data: str = "",
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
@@ -794,6 +806,7 @@ class UnifiedOrchestratorController:
                     turn_index=turn_index,
                     max_turns=safe_max_turns,
                     force_final=False,
+                    image_data=str(image_data or "").strip(),
                     compression_state=compression_state,
                     processing_steps=processing_steps,
                     progress_callback=progress_callback,
@@ -870,6 +883,7 @@ class UnifiedOrchestratorController:
                     turn_index=safe_max_turns,
                     max_turns=safe_max_turns,
                     force_final=True,
+                    image_data=str(image_data or "").strip(),
                     compression_state=compression_state,
                     processing_steps=processing_steps,
                     progress_callback=progress_callback,
