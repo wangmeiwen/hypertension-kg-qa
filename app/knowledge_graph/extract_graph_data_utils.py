@@ -32,17 +32,8 @@ from app.common.perf_logger import log_duration
 logger = logging.getLogger(__name__)
 
 
-# 
-# LLM 初始化
-# 
-conf = Config()
-my_llm = ChatOpenAI(
-    api_key=conf.MODEL_API_KEY,
-    base_url=conf.MODEL_BASE_URL,
-    model=conf.MODEL_NAME,
-    timeout=600,
-    max_retries=0,
-)
+GRAPH_LLM_TIMEOUT_SECONDS = 600
+_default_llm_bundle: Optional[Dict[str, Any]] = None
 
 
 # 
@@ -154,6 +145,49 @@ class HypertensionKnowledgeGraph(BaseModel):
 # 输出解析器
 # 
 parser = JsonOutputParser(pydantic_object=HypertensionKnowledgeGraph)
+
+
+def create_graph_llm_bundle(
+    *,
+    api_key: str,
+    base_url: str,
+    model_name: str,
+    timeout: int = GRAPH_LLM_TIMEOUT_SECONDS,
+    max_retries: int = 0,
+    lane_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """按 lane 创建独立的大模型调用链。"""
+    llm = ChatOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        model=model_name,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+    return {
+        "lane_id": lane_id,
+        "model_name": model_name,
+        "llm": llm,
+        "primary_chain": primary_prompt | llm | parser,
+        "judge_chain": omission_judge_prompt | llm | StrOutputParser(),
+        "supplement_chain": supplement_prompt | llm | parser,
+    }
+
+
+def _get_default_graph_llm_bundle() -> Dict[str, Any]:
+    """获取默认图谱抽取模型调用链。"""
+    global _default_llm_bundle
+    if _default_llm_bundle is None:
+        conf = Config()
+        _default_llm_bundle = create_graph_llm_bundle(
+            api_key=str(conf.MODEL_API_KEY or ""),
+            base_url=str(conf.MODEL_BASE_URL or ""),
+            model_name=str(conf.MODEL_NAME or ""),
+            timeout=GRAPH_LLM_TIMEOUT_SECONDS,
+            max_retries=0,
+            lane_id=1,
+        )
+    return _default_llm_bundle
 
 
 # 
@@ -426,6 +460,7 @@ def extract_hypertension_knowledge(
     text: str,
     max_gleanings: int = 1,
     stage_callback: Optional[Callable[..., None]] = None,
+    llm_bundle: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, List[dict]]:
     """
     从文本中抽取高血压知识图谱。
@@ -439,9 +474,10 @@ def extract_hypertension_knowledge(
     Returns:
         包含 entities 和 relations 的字典
     """
-    primary_chain = primary_prompt | my_llm | parser
-    judge_chain = omission_judge_prompt | my_llm | StrOutputParser()
-    supplement_chain = supplement_prompt | my_llm | parser
+    bundle = llm_bundle or _get_default_graph_llm_bundle()
+    primary_chain = bundle["primary_chain"]
+    judge_chain = bundle["judge_chain"]
+    supplement_chain = bundle["supplement_chain"]
 
     _emit_stage_event(stage_callback, "enter", "kg_primary_extract", "正在执行图谱主抽取")
     with log_duration("kg.llm_extract.primary", text_len=len(text)):
@@ -823,6 +859,7 @@ def extract_text_to_graph_queries(
     text: str,
     max_chars: int = 12000,
     stage_callback: Optional[Callable[..., None]] = None,
+    llm_bundle: Optional[Dict[str, Any]] = None,
 ) -> dict:
     """
     从文本抽取图谱结果并构建可直接执行的 Neo4j 节点与关系查询。
@@ -848,7 +885,11 @@ def extract_text_to_graph_queries(
 
         limited_text = clean_text[:max_chars]
         extraction = normalize_extraction_result(
-            extract_hypertension_knowledge(limited_text, stage_callback=stage_callback)
+            extract_hypertension_knowledge(
+                limited_text,
+                stage_callback=stage_callback,
+                llm_bundle=llm_bundle,
+            )
         )
         _emit_stage_event(stage_callback, "enter", "build_neo4j_queries", "正在构建 Neo4j 节点与关系查询")
         entity_map = build_entity_map(extraction["entities"])

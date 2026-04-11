@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
+import hashlib
+import json
 import logging
 import traceback
 from datetime import datetime, timedelta
@@ -12,6 +15,9 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
+from app.common.config import Config
+from app.backend.repositories.database import execute, fetch_all, fetch_one
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +26,7 @@ class GraphAdminService:
 
     JOB_STATUS_QUEUED = "queued"
     JOB_STATUS_RUNNING = "running"
+    JOB_STATUS_PAUSED = "paused"
     JOB_STATUS_SUCCEEDED = "succeeded"
     JOB_STATUS_FAILED = "failed"
     JOB_STATUS_CANCELLED = "cancelled"
@@ -28,6 +35,13 @@ class GraphAdminService:
     EMBED_JOB_TYPE = "graph_embed_milvus"
     SOFT_TIMEOUT_SECONDS = 300
     SOFT_TIMEOUT_REPEAT_SECONDS = 60
+    GRAPH_IMPORT_CACHE_VERSION = 2
+    GRAPH_IMPORT_CHUNK_LIMIT = 10000
+    GRAPH_IMPORT_CHUNK_STRATEGY_VERSION = 2
+    GRAPH_LLM_REQUEST_TIMEOUT_SECONDS = 600
+    GRAPH_LLM_MAX_ATTEMPTS = 3
+    GRAPH_LLM_MAX_PARALLELISM = 3
+    GRAPH_LLM_TRANSIENT_BACKOFF_SECONDS = 15
 
     def __init__(
         self,
@@ -57,6 +71,8 @@ class GraphAdminService:
         self._validate_cypher_identifier = validate_cypher_identifier
         self._sanitize_graph_properties = sanitize_graph_properties
         self._log_api_error = log_api_error
+        self._config = Config()
+        self._graph_llm_lane_configs = list(self._config.GRAPH_LLM_LANE_CONFIGS)
         self._jobs: dict[str, dict[str, Any]] = {}
         self._job_lock = asyncio.Lock()
         self._max_retained_jobs = 100
@@ -66,8 +82,8 @@ class GraphAdminService:
         """返回统一的 UTC ISO 时间文本。"""
         return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
-    @staticmethod
-    def _build_job_response(job: dict[str, Any]) -> dict[str, Any]:
+    @classmethod
+    def _build_job_response(cls, job: dict[str, Any]) -> dict[str, Any]:
         """裁剪对外 job 响应。"""
         return {
             "job_id": job["job_id"],
@@ -87,6 +103,21 @@ class GraphAdminService:
             "completed_chunks": job.get("completed_chunks"),
             "current_chunk_index": job.get("current_chunk_index"),
             "current_chunk_chars": job.get("current_chunk_chars"),
+            "file_hash": job.get("file_hash"),
+            "run_id": job.get("run_id"),
+            "is_resumed": bool(job.get("is_resumed")),
+            "resume_run_id": job.get("resume_run_id"),
+            "resumed_from_chunk": job.get("resumed_from_chunk"),
+            "chunk_limit": job.get("chunk_limit"),
+            "chunk_strategy_version": job.get("chunk_strategy_version"),
+            "cache_used": bool(job.get("cache_used")),
+            "cache_invalidated_reason": job.get("cache_invalidated_reason"),
+            "resume_compatible": job.get("resume_compatible"),
+            "parallelism": int(job.get("parallelism") or 0),
+            "active_lanes": int(job.get("active_lanes") or 0),
+            "current_attempt": int(job.get("current_attempt") or 0),
+            "max_attempts": int(job.get("max_attempts") or cls.GRAPH_LLM_MAX_ATTEMPTS),
+            "lane_statuses": cls._clone_lane_statuses(job.get("lane_statuses") or []),
             "warnings": list(job.get("warnings") or []),
             "trace": list(job.get("trace") or []),
             "result": job.get("result"),
@@ -103,7 +134,766 @@ class GraphAdminService:
         except ValueError:
             return None
 
-    async def _register_job(self, job_type: str) -> dict[str, Any]:
+    @staticmethod
+    def _compute_file_hash(file_bytes: bytes) -> str:
+        """计算文件内容哈希。"""
+        return hashlib.sha256(file_bytes).hexdigest()
+
+    @classmethod
+    def _get_chunk_strategy_signature(cls) -> str:
+        """返回当前图谱导入分块策略签名。"""
+        return f"v{cls.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION}:limit={cls.GRAPH_IMPORT_CHUNK_LIMIT}"
+
+    @classmethod
+    def _get_graph_import_cache_dir(cls) -> Path:
+        """返回图谱导入本地缓存目录。"""
+        return Path(__file__).resolve().parents[3] / "runtime_cache" / "graph_import"
+
+    @classmethod
+    def _get_graph_import_cache_path(cls, file_hash: str) -> Path:
+        """返回图谱导入缓存文件路径。"""
+        return cls._get_graph_import_cache_dir() / f"{file_hash}.json.gz"
+
+    @staticmethod
+    def _json_dumps(value: Any) -> str:
+        """以稳定格式序列化 JSON 文本。"""
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _json_loads(value: Any, default: Any) -> Any:
+        """安全反序列化 JSON 文本。"""
+        if value in (None, ""):
+            return default
+        try:
+            return json.loads(str(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return default
+
+    def _load_graph_import_cache(self, file_hash: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        """读取本地图谱解析缓存，并返回失效原因。"""
+        cache_path = self._get_graph_import_cache_path(file_hash)
+        if not cache_path.exists():
+            return None, None
+        try:
+            with gzip.open(cache_path, "rt", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("读取图谱导入缓存失败，将忽略缓存: path=%s error=%s", cache_path, exc)
+            return None, f"本地缓存读取失败，已忽略: {exc}"
+        if int(payload.get("version") or 0) != self.GRAPH_IMPORT_CACHE_VERSION:
+            return None, "本地缓存版本已过期，已重新解析"
+        if int(payload.get("chunk_limit") or 0) != self.GRAPH_IMPORT_CHUNK_LIMIT:
+            return None, "本地缓存分块大小与当前策略不一致，已重新分块"
+        if int(payload.get("chunk_strategy_version") or 0) != self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION:
+            return None, "本地缓存分块策略已过期，已重新解析"
+        if str(payload.get("file_hash") or "") != file_hash:
+            return None, "本地缓存文件哈希不匹配，已重新解析"
+        prepared = payload.get("prepared")
+        chunks = payload.get("chunks")
+        if not isinstance(prepared, dict) or not isinstance(chunks, list):
+            return None, "本地缓存内容不完整，已重新解析"
+        prepared = dict(prepared)
+        prepared["_chunks"] = [str(chunk or "") for chunk in chunks]
+        prepared["cache_used"] = True
+        prepared["cache_path"] = str(cache_path)
+        prepared["cache_invalidated_reason"] = None
+        prepared["chunk_limit"] = int(payload.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT)
+        prepared["chunk_strategy_version"] = int(
+            payload.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION
+        )
+        return prepared, None
+
+    def _write_graph_import_cache(self, file_hash: str, prepared: dict[str, Any], chunks: list[str]) -> None:
+        """写入本地图谱解析缓存。"""
+        cache_dir = self._get_graph_import_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = self._get_graph_import_cache_path(file_hash)
+        payload = {
+            "version": self.GRAPH_IMPORT_CACHE_VERSION,
+            "file_hash": file_hash,
+            "chunk_limit": self.GRAPH_IMPORT_CHUNK_LIMIT,
+            "chunk_strategy_version": self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+            "cached_at": self._utc_now_iso(),
+            "prepared": {
+                "file_name": prepared.get("file_name"),
+                "parsed_text_length": prepared.get("parsed_text_length") or 0,
+                "total_chunk_chars": prepared.get("total_chunk_chars") or 0,
+                "processed_text_length": 0,
+                "parser_used": prepared.get("parser_used"),
+                "ocr_engine": prepared.get("ocr_engine"),
+                "parse_warning": prepared.get("parse_warning") or "",
+                "docling_failed_pages": list(prepared.get("docling_failed_pages") or []),
+                "pdf_fallback_used": bool(prepared.get("pdf_fallback_used")),
+                "chunk_count": prepared.get("chunk_count") or 0,
+                "entity_count": 0,
+                "relation_count": 0,
+                "node_batches": 0,
+                "relation_batches": 0,
+                "message": prepared.get("message") or "",
+                "chunk_limit": prepared.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT,
+                "chunk_strategy_version": prepared.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+            },
+            "chunks": chunks,
+        }
+        with gzip.open(cache_path, "wt", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+
+    @staticmethod
+    def _normalize_chunk_status(status: Any) -> str:
+        """将未知状态收敛到块级状态枚举。"""
+        status_text = str(status or "").strip().lower()
+        if status_text in {"pending", "running", "succeeded", "failed"}:
+            return status_text
+        return "pending"
+
+    @staticmethod
+    def _format_resume_message(chunk_index: Optional[int]) -> str:
+        """生成自动续跑提示文案。"""
+        if chunk_index and chunk_index > 0:
+            return f"检测到未完成导入，正在从第 {chunk_index} 块继续"
+        return "检测到未完成导入，正在自动继续执行"
+
+    @staticmethod
+    def _first_error_line(error_text: Optional[str]) -> str:
+        """提取异常首行，避免前端展示整段堆栈。"""
+        text = str(error_text or "").strip()
+        if not text:
+            return ""
+        return next((line.strip() for line in text.splitlines() if line.strip()), "")
+
+    @classmethod
+    def _summarize_pause_error(cls, error_text: Optional[str]) -> str:
+        """将块级中断异常归一化为适合前端展示的暂停原因。"""
+        raw_text = str(error_text or "").strip()
+        if not raw_text:
+            return "大模型调用中断"
+        first_line = cls._first_error_line(raw_text) or raw_text
+        lowered = raw_text.lower()
+        if "401 unauthorized" in lowered:
+            if "dashscope" in lowered:
+                return "DashScope 接口返回 401 Unauthorized，请检查 API Key、模型权限或免费额度。"
+            if "open.bigmodel.cn" in lowered:
+                return "GLM 接口返回 401 Unauthorized，请检查 API Key 或模型权限。"
+            return "模型接口返回 401 Unauthorized，请检查 API Key 或模型权限。"
+        if "404 not found" in lowered:
+            if "dashscope" in lowered:
+                return "DashScope 接口返回 404 Not Found，请检查模型名或兼容接口地址配置。"
+            if "open.bigmodel.cn" in lowered:
+                return "GLM 接口返回 404 Not Found，请检查模型名或接口地址配置。"
+            return "模型接口返回 404 Not Found，请检查模型名或接口地址配置。"
+        if "timeout" in lowered or "timed out" in lowered:
+            return "模型接口调用超时，当前块未完成，重新提交同文件可继续。"
+        if "rate limit" in lowered or "too many requests" in lowered or "429" in lowered:
+            return "模型接口触发限流，当前块未完成，重新提交同文件可继续。"
+        return first_line
+
+    @staticmethod
+    def _is_timeout_error(error: BaseException | str | None) -> bool:
+        """判断异常是否属于超时类错误。"""
+        error_text = str(error or "").strip().lower()
+        if not error_text:
+            return False
+        timeout_markers = (
+            "timeout",
+            "timed out",
+            "readtimeout",
+            "read timeout",
+            "connecttimeout",
+            "connect timeout",
+            "apitimeouterror",
+            "request timed out",
+        )
+        return any(marker in error_text for marker in timeout_markers)
+
+    @staticmethod
+    def _classify_lane_error(error: BaseException | str | None) -> str:
+        """将 lane 错误归类为 permanent 或 transient。"""
+        error_text = str(error or "").strip().lower()
+        if not error_text:
+            return "transient"
+        permanent_markers = (
+            "401 unauthorized",
+            "403 forbidden",
+            "404 not found",
+        )
+        if any(marker in error_text for marker in permanent_markers):
+            return "permanent"
+        transient_markers = (
+            "429",
+            "rate limit",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "readtimeout",
+            "connecttimeout",
+            "connection reset",
+            "connection aborted",
+            "connection error",
+            "api connection error",
+            "service unavailable",
+            "server disconnected",
+            "temporarily unavailable",
+            "502",
+            "503",
+            "504",
+            "network",
+        )
+        if any(marker in error_text for marker in transient_markers):
+            return "transient"
+        return "transient"
+
+    @staticmethod
+    def _clone_lane_statuses(lane_statuses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """复制 lane 状态用于写回任务响应。"""
+        return [dict(item) for item in lane_statuses]
+
+    @classmethod
+    def _count_active_lanes(cls, lane_statuses: list[dict[str, Any]]) -> int:
+        """统计当前可立即提供服务的 lane 数量。"""
+        return sum(1 for item in lane_statuses if item.get("status") in {"ready", "running"})
+
+    @classmethod
+    def _count_viable_lanes(cls, lane_statuses: list[dict[str, Any]]) -> int:
+        """统计当前仍可恢复或继续提供服务的 lane 数量。"""
+        return sum(1 for item in lane_statuses if item.get("status") in {"ready", "running", "backoff"})
+
+    @staticmethod
+    def _format_lane_label(lane_config: dict[str, Any]) -> str:
+        """格式化 lane 展示标签。"""
+        lane_id = lane_config.get("lane_id")
+        model_name = str(lane_config.get("model_name") or "")
+        source = str(lane_config.get("source") or "")
+        if source:
+            return f"lane{lane_id}:{model_name} ({source})"
+        return f"lane{lane_id}:{model_name}"
+
+    @staticmethod
+    def _build_paused_job_result(
+        *,
+        message: str,
+        pause_reason: str,
+        file_name: str,
+        file_hash: str,
+        run_id: str,
+        resumed_from_chunk: Optional[int],
+        prepared: dict[str, Any],
+        entity_count: int,
+        relation_count: int,
+        processed_chars: int,
+        completed_chunks: int,
+    ) -> dict[str, Any]:
+        """生成暂停态任务结果。"""
+        return {
+            "_job_status": "paused",
+            "message": message,
+            "file_name": file_name,
+            "file_hash": file_hash,
+            "run_id": run_id,
+            "is_resumed": bool(prepared.get("is_resumed")),
+            "resume_run_id": run_id if prepared.get("is_resumed") else None,
+            "resumed_from_chunk": resumed_from_chunk,
+            "chunk_limit": prepared.get("chunk_limit"),
+            "chunk_strategy_version": prepared.get("chunk_strategy_version"),
+            "parsed_text_length": prepared.get("parsed_text_length") or 0,
+            "processed_text_length": processed_chars,
+            "total_chunk_chars": prepared.get("total_chunk_chars") or 0,
+            "chunk_count": prepared.get("chunk_count") or 0,
+            "completed_chunks": completed_chunks,
+            "entity_count": entity_count,
+            "relation_count": relation_count,
+            "parser_used": prepared.get("parser_used"),
+            "ocr_engine": prepared.get("ocr_engine"),
+            "parse_warning": prepared.get("parse_warning"),
+            "docling_failed_pages": prepared.get("docling_failed_pages") or [],
+            "pdf_fallback_used": bool(prepared.get("pdf_fallback_used")),
+            "cache_used": bool(prepared.get("cache_used")),
+            "cache_invalidated_reason": prepared.get("cache_invalidated_reason") or "",
+            "resume_compatible": prepared.get("resume_compatible"),
+            "pause_reason": pause_reason,
+            "last_error": pause_reason,
+        }
+
+    async def _find_resumable_graph_run(
+        self,
+        file_hash: str,
+        *,
+        chunk_limit: int,
+        chunk_strategy_version: int,
+    ) -> Optional[dict[str, Any]]:
+        """查找同文件且分块策略兼容的未完成导入。"""
+        row = await fetch_one(
+            """
+            SELECT *
+            FROM graph_import_runs
+            WHERE file_hash = :file_hash
+              AND chunk_limit = :chunk_limit
+              AND chunk_strategy_version = :chunk_strategy_version
+              AND status IN ('running', 'paused')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            {
+                "file_hash": file_hash,
+                "chunk_limit": chunk_limit,
+                "chunk_strategy_version": chunk_strategy_version,
+            },
+        )
+        if not row:
+            return None
+        row["docling_failed_pages"] = self._json_loads(row.get("docling_failed_pages"), [])
+        return row
+
+    async def _find_latest_graph_run_by_file_hash(self, file_hash: str) -> Optional[dict[str, Any]]:
+        """查找同文件最近一次导入记录，不要求策略兼容。"""
+        row = await fetch_one(
+            """
+            SELECT *
+            FROM graph_import_runs
+            WHERE file_hash = :file_hash
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            {"file_hash": file_hash},
+        )
+        if not row:
+            return None
+        row["docling_failed_pages"] = self._json_loads(row.get("docling_failed_pages"), [])
+        return row
+
+    async def _find_first_unfinished_chunk_index(self, run_id: str) -> Optional[int]:
+        """返回 run 中第一个未完成块。"""
+        row = await fetch_one(
+            """
+            SELECT chunk_index
+            FROM graph_import_chunks
+            WHERE run_id = :run_id
+              AND status <> 'succeeded'
+            ORDER BY chunk_index ASC
+            LIMIT 1
+            """,
+            {"run_id": run_id},
+        )
+        if not row:
+            return None
+        try:
+            return int(row.get("chunk_index") or 0)
+        except (TypeError, ValueError):
+            return None
+
+    async def _find_active_job_by_run_id(self, run_id: str) -> Optional[dict[str, Any]]:
+        """查找当前进程内是否已有同 run 的活跃任务。"""
+        async with self._job_lock:
+            for job in self._jobs.values():
+                if job.get("run_id") == run_id and job.get("status") in {
+                    self.JOB_STATUS_QUEUED,
+                    self.JOB_STATUS_RUNNING,
+                }:
+                    return self._build_job_response(job)
+        return None
+
+    async def _create_graph_import_run(
+        self,
+        *,
+        run_id: str,
+        file_hash: str,
+        file_name: str,
+        file_size: int,
+        prepared: dict[str, Any],
+    ) -> None:
+        """创建新的图谱导入 run。"""
+        await execute(
+            """
+            INSERT INTO graph_import_runs (
+                run_id, file_hash, file_name, file_size, status, parser_used,
+                parse_warning, parsed_text_length, total_chars, processed_chars,
+                total_chunks, completed_chunks, entity_count, relation_count,
+                docling_failed_pages, pdf_fallback_used, chunk_limit, chunk_strategy_version, last_error
+            )
+            VALUES (
+                :run_id, :file_hash, :file_name, :file_size, 'running', :parser_used,
+                :parse_warning, :parsed_text_length, :total_chars, 0,
+                :total_chunks, 0, 0, 0, :docling_failed_pages, :pdf_fallback_used, :chunk_limit, :chunk_strategy_version, NULL
+            )
+            """,
+            {
+                "run_id": run_id,
+                "file_hash": file_hash,
+                "file_name": file_name,
+                "file_size": file_size,
+                "parser_used": prepared.get("parser_used") or "",
+                "parse_warning": prepared.get("parse_warning") or "",
+                "parsed_text_length": prepared.get("parsed_text_length") or 0,
+                "total_chars": prepared.get("parsed_text_length") or 0,
+                "total_chunks": prepared.get("chunk_count") or 0,
+                "docling_failed_pages": self._json_dumps(prepared.get("docling_failed_pages") or []),
+                "pdf_fallback_used": 1 if prepared.get("pdf_fallback_used") else 0,
+                "chunk_limit": prepared.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT,
+                "chunk_strategy_version": prepared.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+            },
+        )
+
+    async def _initialize_graph_import_chunks(self, run_id: str, chunks: list[str]) -> None:
+        """初始化块级断点记录。"""
+        for index, chunk in enumerate(chunks, start=1):
+            await execute(
+                """
+                INSERT INTO graph_import_chunks (
+                    run_id, chunk_index, chunk_chars, status,
+                    entity_count, relation_count, node_batches, relation_batches, error_message
+                )
+                VALUES (
+                    :run_id, :chunk_index, :chunk_chars, 'pending',
+                    0, 0, 0, 0, NULL
+                )
+                ON DUPLICATE KEY UPDATE chunk_chars = VALUES(chunk_chars)
+                """,
+                {
+                    "run_id": run_id,
+                    "chunk_index": index,
+                    "chunk_chars": len(chunk),
+                },
+            )
+
+    async def _sync_graph_import_run_metadata(
+        self,
+        run_id: str,
+        *,
+        file_name: str,
+        file_size: int,
+        prepared: dict[str, Any],
+        status: str = "running",
+        clear_error: bool = False,
+    ) -> None:
+        """同步 run 的解析元数据。"""
+        await execute(
+            """
+            UPDATE graph_import_runs
+            SET file_name = :file_name,
+                file_size = :file_size,
+                status = :status,
+                parser_used = :parser_used,
+                parse_warning = :parse_warning,
+                parsed_text_length = :parsed_text_length,
+                total_chars = :total_chars,
+                total_chunks = :total_chunks,
+                docling_failed_pages = :docling_failed_pages,
+                pdf_fallback_used = :pdf_fallback_used,
+                chunk_limit = :chunk_limit,
+                chunk_strategy_version = :chunk_strategy_version,
+                last_error = CASE WHEN :clear_error = 1 THEN NULL ELSE last_error END
+            WHERE run_id = :run_id
+            """,
+            {
+                "run_id": run_id,
+                "file_name": file_name,
+                "file_size": file_size,
+                "status": status,
+                "parser_used": prepared.get("parser_used") or "",
+                "parse_warning": prepared.get("parse_warning") or "",
+                "parsed_text_length": prepared.get("parsed_text_length") or 0,
+                "total_chars": prepared.get("parsed_text_length") or 0,
+                "total_chunks": prepared.get("chunk_count") or 0,
+                "docling_failed_pages": self._json_dumps(prepared.get("docling_failed_pages") or []),
+                "pdf_fallback_used": 1 if prepared.get("pdf_fallback_used") else 0,
+                "chunk_limit": prepared.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT,
+                "chunk_strategy_version": prepared.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+                "clear_error": 1 if clear_error else 0,
+            },
+        )
+
+    async def _load_graph_import_chunks(self, run_id: str) -> list[dict[str, Any]]:
+        """加载块级断点记录。"""
+        rows = await fetch_all(
+            """
+            SELECT *
+            FROM graph_import_chunks
+            WHERE run_id = :run_id
+            ORDER BY chunk_index ASC
+            """,
+            {"run_id": run_id},
+        )
+        for row in rows:
+            row["status"] = self._normalize_chunk_status(row.get("status"))
+            for key in ("chunk_index", "chunk_chars", "entity_count", "relation_count", "node_batches", "relation_batches"):
+                try:
+                    row[key] = int(row.get(key) or 0)
+                except (TypeError, ValueError):
+                    row[key] = 0
+        return rows
+
+    async def _recompute_graph_run_progress(self, run_id: str) -> dict[str, int]:
+        """根据块级状态重算 run 进度。"""
+        row = await fetch_one(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN status = 'succeeded' THEN chunk_chars ELSE 0 END), 0) AS processed_chars,
+                COALESCE(SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END), 0) AS completed_chunks,
+                COALESCE(SUM(CASE WHEN status = 'succeeded' THEN entity_count ELSE 0 END), 0) AS entity_count,
+                COALESCE(SUM(CASE WHEN status = 'succeeded' THEN relation_count ELSE 0 END), 0) AS relation_count,
+                COALESCE(SUM(CASE WHEN status = 'succeeded' THEN node_batches ELSE 0 END), 0) AS node_batches,
+                COALESCE(SUM(CASE WHEN status = 'succeeded' THEN relation_batches ELSE 0 END), 0) AS relation_batches
+            FROM graph_import_chunks
+            WHERE run_id = :run_id
+            """,
+            {"run_id": run_id},
+        ) or {}
+        progress = {
+            "processed_chars": int(row.get("processed_chars") or 0),
+            "completed_chunks": int(row.get("completed_chunks") or 0),
+            "entity_count": int(row.get("entity_count") or 0),
+            "relation_count": int(row.get("relation_count") or 0),
+            "node_batches": int(row.get("node_batches") or 0),
+            "relation_batches": int(row.get("relation_batches") or 0),
+        }
+        await execute(
+            """
+            UPDATE graph_import_runs
+            SET processed_chars = :processed_chars,
+                completed_chunks = :completed_chunks,
+                entity_count = :entity_count,
+                relation_count = :relation_count
+            WHERE run_id = :run_id
+            """,
+            {"run_id": run_id, **progress},
+        )
+        return progress
+
+    async def _mark_graph_chunk_running(self, run_id: str, chunk_index: int) -> None:
+        """标记块开始执行。"""
+        await execute(
+            """
+            UPDATE graph_import_chunks
+            SET status = 'running',
+                started_at = CURRENT_TIMESTAMP,
+                finished_at = NULL,
+                error_message = NULL
+            WHERE run_id = :run_id AND chunk_index = :chunk_index
+            """,
+            {"run_id": run_id, "chunk_index": chunk_index},
+        )
+
+    async def _mark_graph_chunk_succeeded(
+        self,
+        run_id: str,
+        *,
+        chunk_index: int,
+        entity_count: int,
+        relation_count: int,
+        node_batches: int,
+        relation_batches: int,
+    ) -> None:
+        """标记块执行成功。"""
+        await execute(
+            """
+            UPDATE graph_import_chunks
+            SET status = 'succeeded',
+                entity_count = :entity_count,
+                relation_count = :relation_count,
+                node_batches = :node_batches,
+                relation_batches = :relation_batches,
+                error_message = NULL,
+                finished_at = CURRENT_TIMESTAMP
+            WHERE run_id = :run_id AND chunk_index = :chunk_index
+            """,
+            {
+                "run_id": run_id,
+                "chunk_index": chunk_index,
+                "entity_count": entity_count,
+                "relation_count": relation_count,
+                "node_batches": node_batches,
+                "relation_batches": relation_batches,
+            },
+        )
+
+    async def _mark_graph_chunk_failed(self, run_id: str, chunk_index: int, error_message: str) -> None:
+        """标记块执行失败。"""
+        await execute(
+            """
+            UPDATE graph_import_chunks
+            SET status = 'failed',
+                error_message = :error_message,
+                finished_at = CURRENT_TIMESTAMP
+            WHERE run_id = :run_id AND chunk_index = :chunk_index
+            """,
+            {
+                "run_id": run_id,
+                "chunk_index": chunk_index,
+                "error_message": error_message[:4000],
+            },
+        )
+
+    async def _set_graph_run_status(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        last_error: Optional[str] = None,
+        finished: bool = False,
+    ) -> None:
+        """更新 run 状态。"""
+        await execute(
+            """
+            UPDATE graph_import_runs
+            SET status = :status,
+                last_error = :last_error,
+                finished_at = CASE WHEN :finished = 1 THEN CURRENT_TIMESTAMP ELSE finished_at END
+            WHERE run_id = :run_id
+            """,
+            {
+                "run_id": run_id,
+                "status": status,
+                "last_error": last_error[:4000] if last_error else None,
+                "finished": 1 if finished else 0,
+            },
+        )
+
+    async def _update_job_resume_state(
+        self,
+        job_id: str,
+        *,
+        run_id: str,
+        file_hash: str,
+        is_resumed: bool,
+        resumed_from_chunk: Optional[int],
+        chunk_limit: Optional[int] = None,
+        chunk_strategy_version: Optional[int] = None,
+        cache_used: Optional[bool] = None,
+        cache_invalidated_reason: Optional[str] = None,
+        resume_compatible: Optional[bool] = None,
+    ) -> None:
+        """把恢复元数据写回进程内任务。"""
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            job["run_id"] = run_id
+            job["file_hash"] = file_hash
+            job["is_resumed"] = is_resumed
+            job["resume_run_id"] = run_id if is_resumed else None
+            job["resumed_from_chunk"] = resumed_from_chunk
+            if chunk_limit is not None:
+                job["chunk_limit"] = chunk_limit
+            if chunk_strategy_version is not None:
+                job["chunk_strategy_version"] = chunk_strategy_version
+            if cache_used is not None:
+                job["cache_used"] = cache_used
+            if cache_invalidated_reason is not None:
+                job["cache_invalidated_reason"] = cache_invalidated_reason
+            if resume_compatible is not None:
+                job["resume_compatible"] = resume_compatible
+
+    async def _update_job_parallel_state(
+        self,
+        job_id: str,
+        *,
+        parallelism: Optional[int] = None,
+        active_lanes: Optional[int] = None,
+        current_attempt: Optional[int] = None,
+        max_attempts: Optional[int] = None,
+        lane_statuses: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        """把并发抽取运行态写回进程内任务。"""
+        async with self._job_lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            if parallelism is not None:
+                job["parallelism"] = parallelism
+            if active_lanes is not None:
+                job["active_lanes"] = active_lanes
+            if current_attempt is not None:
+                job["current_attempt"] = current_attempt
+            if max_attempts is not None:
+                job["max_attempts"] = max_attempts
+            if lane_statuses is not None:
+                job["lane_statuses"] = self._clone_lane_statuses(lane_statuses)
+
+    @staticmethod
+    def _build_graph_run_progress_text(run_row: dict[str, Any]) -> str:
+        """将持久化 run 转换为最近任务摘要。"""
+        status = str(run_row.get("status") or "")
+        completed_chunks = int(run_row.get("completed_chunks") or 0)
+        total_chunks = int(run_row.get("total_chunks") or 0)
+        processed_chars = int(run_row.get("processed_chars") or 0)
+        total_chars = int(run_row.get("total_chars") or 0)
+        if status == "paused":
+            return "已暂停，可重新提交同文件继续"
+        if status == "succeeded":
+            return "任务执行完成"
+        if total_chunks > 0:
+            return f"已完成 {completed_chunks}/{total_chunks} 块，已处理 {processed_chars}/{total_chars} 字"
+        return "任务执行中"
+
+    def _run_row_to_job_response(self, run_row: dict[str, Any]) -> dict[str, Any]:
+        """把持久化 run 映射为任务响应结构。"""
+        docling_failed_pages = self._json_loads(run_row.get("docling_failed_pages"), [])
+        result: dict[str, Any] = {
+            "file_name": run_row.get("file_name"),
+            "file_hash": run_row.get("file_hash"),
+            "parsed_text_length": int(run_row.get("parsed_text_length") or 0),
+            "processed_text_length": int(run_row.get("processed_chars") or 0),
+            "chunk_count": int(run_row.get("total_chunks") or 0),
+            "completed_chunks": int(run_row.get("completed_chunks") or 0),
+            "chunk_limit": int(run_row.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT),
+            "chunk_strategy_version": int(run_row.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION),
+            "entity_count": int(run_row.get("entity_count") or 0),
+            "relation_count": int(run_row.get("relation_count") or 0),
+            "parser_used": run_row.get("parser_used"),
+            "parse_warning": run_row.get("parse_warning") or "",
+            "docling_failed_pages": docling_failed_pages,
+            "pdf_fallback_used": bool(run_row.get("pdf_fallback_used")),
+            "cache_used": False,
+            "cache_invalidated_reason": "",
+            "resume_compatible": True,
+            "parallelism": 0,
+            "active_lanes": 0,
+            "current_attempt": 0,
+            "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
+            "lane_statuses": [],
+            "message": self._build_graph_run_progress_text(run_row),
+        }
+        if run_row.get("status") == "paused":
+            result["pause_reason"] = run_row.get("last_error") or "当前任务已暂停，可重新提交同文件继续"
+        return {
+            "job_id": f"graph-run-{run_row.get('run_id')}",
+            "job_type": self.IMPORT_JOB_TYPE,
+            "status": run_row.get("status"),
+            "progress_text": self._build_graph_run_progress_text(run_row),
+            "created_at": run_row.get("created_at").isoformat(timespec="seconds") + "Z" if isinstance(run_row.get("created_at"), datetime) else run_row.get("created_at"),
+            "started_at": run_row.get("created_at").isoformat(timespec="seconds") + "Z" if isinstance(run_row.get("created_at"), datetime) else run_row.get("created_at"),
+            "finished_at": run_row.get("finished_at").isoformat(timespec="seconds") + "Z" if isinstance(run_row.get("finished_at"), datetime) else run_row.get("finished_at"),
+            "stage": None,
+            "stage_detail": "",
+            "stage_started_at": None,
+            "last_heartbeat_at": run_row.get("updated_at").isoformat(timespec="seconds") + "Z" if isinstance(run_row.get("updated_at"), datetime) else run_row.get("updated_at"),
+            "total_chars": int(run_row.get("total_chars") or 0),
+            "processed_chars": int(run_row.get("processed_chars") or 0),
+            "total_chunks": int(run_row.get("total_chunks") or 0),
+            "completed_chunks": int(run_row.get("completed_chunks") or 0),
+            "current_chunk_index": None,
+            "current_chunk_chars": None,
+            "file_hash": run_row.get("file_hash"),
+            "run_id": run_row.get("run_id"),
+            "is_resumed": False,
+            "resume_run_id": None,
+            "resumed_from_chunk": None,
+            "chunk_limit": int(run_row.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT),
+            "chunk_strategy_version": int(run_row.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION),
+            "cache_used": False,
+            "cache_invalidated_reason": "",
+            "resume_compatible": True,
+            "parallelism": 0,
+            "active_lanes": 0,
+            "current_attempt": 0,
+            "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
+            "lane_statuses": [],
+            "warnings": [],
+            "trace": [],
+            "result": result,
+            "error": run_row.get("last_error"),
+        }
+
+    async def _register_job(self, job_type: str, *, seed: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """注册后台任务。"""
         async with self._job_lock:
             job_id = f"graph-job-{uuid4().hex}"
@@ -125,6 +915,21 @@ class GraphAdminService:
                 "completed_chunks": 0,
                 "current_chunk_index": 0,
                 "current_chunk_chars": 0,
+                "file_hash": None,
+                "run_id": None,
+                "is_resumed": False,
+                "resume_run_id": None,
+                "resumed_from_chunk": None,
+                "chunk_limit": self.GRAPH_IMPORT_CHUNK_LIMIT,
+                "chunk_strategy_version": self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+                "cache_used": False,
+                "cache_invalidated_reason": "",
+                "resume_compatible": None,
+                "parallelism": 0,
+                "active_lanes": 0,
+                "current_attempt": 0,
+                "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
+                "lane_statuses": [],
                 "warnings": [],
                 "trace": [],
                 "result": None,
@@ -133,6 +938,8 @@ class GraphAdminService:
                 "_watchdog_task": None,
                 "_last_soft_timeout_notice_at": None,
             }
+            if seed:
+                job.update({key: value for key, value in seed.items() if value is not None})
             self._jobs[job_id] = job
             self._prune_jobs_locked()
             return dict(job)
@@ -148,6 +955,7 @@ class GraphAdminService:
         while len(removable) > 0 and len(self._jobs) > self._max_retained_jobs:
             candidate = removable.pop(0)
             if candidate.get("status") in {
+                self.JOB_STATUS_PAUSED,
                 self.JOB_STATUS_SUCCEEDED,
                 self.JOB_STATUS_FAILED,
                 self.JOB_STATUS_CANCELLED,
@@ -416,18 +1224,44 @@ class GraphAdminService:
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job:
-                return {"ok": False, "error": "任务不存在或已过期"}
-            return {"ok": True, "data": self._build_job_response(job)}
+                pass
+            else:
+                return {"ok": True, "data": self._build_job_response(job)}
+        if job_id.startswith("graph-run-"):
+            run_id = job_id.removeprefix("graph-run-")
+            row = await fetch_one("SELECT * FROM graph_import_runs WHERE run_id = :run_id", {"run_id": run_id})
+            if row:
+                return {"ok": True, "data": self._run_row_to_job_response(row)}
+            return {"ok": False, "error": "任务不存在或已过期"}
+        if job_id.startswith("graph-job-"):
+            return {"ok": False, "error": "任务不存在或已过期"}
+        return {"ok": False, "error": "任务不存在或已过期"}
 
     async def list_graph_jobs(self, limit: int = 10) -> dict[str, Any]:
         """返回最近图谱后台任务列表。"""
         safe_limit = max(1, min(int(limit or 10), 50))
         async with self._job_lock:
-            jobs = sorted(
-                (self._build_job_response(job) for job in self._jobs.values()),
-                key=lambda item: item.get("created_at") or "",
-                reverse=True,
-            )[:safe_limit]
+            jobs = [self._build_job_response(job) for job in self._jobs.values()]
+        active_run_ids = {str(job.get("run_id") or "") for job in jobs if job.get("run_id")}
+        persisted_rows = await fetch_all(
+            """
+            SELECT *
+            FROM graph_import_runs
+            ORDER BY updated_at DESC
+            LIMIT :limit
+            """,
+            {"limit": safe_limit * 3},
+        )
+        persisted_jobs = [
+            self._run_row_to_job_response(row)
+            for row in persisted_rows
+            if str(row.get("run_id") or "") not in active_run_ids
+        ]
+        jobs = sorted(
+            [*jobs, *persisted_jobs],
+            key=lambda item: item.get("created_at") or "",
+            reverse=True,
+        )[:safe_limit]
         return {"ok": True, "data": jobs}
 
     async def _start_background_job(
@@ -435,9 +1269,10 @@ class GraphAdminService:
         *,
         job_type: str,
         runner: Callable[[str], Awaitable[dict[str, Any]]],
+        seed: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """创建后台任务并立即返回任务信息。"""
-        job = await self._register_job(job_type)
+        job = await self._register_job(job_type, seed=seed)
         job_id = job["job_id"]
 
         async def _run() -> None:
@@ -453,13 +1288,29 @@ class GraphAdminService:
                     self._jobs[job_id]["_watchdog_task"] = watchdog_task
             try:
                 result = await runner(job_id)
-                await self._set_job_state(
-                    job_id,
-                    status=self.JOB_STATUS_SUCCEEDED,
-                    progress_text="任务执行完成",
-                    result=result,
-                    finished=True,
-                )
+                job_status = str(result.pop("_job_status", self.JOB_STATUS_SUCCEEDED)) if isinstance(result, dict) else self.JOB_STATUS_SUCCEEDED
+                if job_status == self.JOB_STATUS_PAUSED:
+                    pause_message = ""
+                    pause_error = None
+                    if isinstance(result, dict):
+                        pause_message = str(result.get("message") or "任务已暂停，可重新提交同文件继续")
+                        pause_error = result.get("pause_reason") or result.get("last_error")
+                    await self._set_job_state(
+                        job_id,
+                        status=self.JOB_STATUS_PAUSED,
+                        progress_text=pause_message or "任务已暂停",
+                        result=result if isinstance(result, dict) else None,
+                        error=str(pause_error) if pause_error else None,
+                        finished=True,
+                    )
+                else:
+                    await self._set_job_state(
+                        job_id,
+                        status=self.JOB_STATUS_SUCCEEDED,
+                        progress_text="任务执行完成",
+                        result=result,
+                        finished=True,
+                    )
             except asyncio.CancelledError:
                 await self._set_job_state(
                     job_id,
@@ -510,9 +1361,37 @@ class GraphAdminService:
                 return {"ok": False, "error": "上传文件为空"}
             if len(file_bytes) > 50 * 1024 * 1024:
                 return {"ok": False, "error": "文件大小不能超过 50MB"}
+            file_hash = self._compute_file_hash(file_bytes)
+            resumable_run = await self._find_resumable_graph_run(
+                file_hash,
+                chunk_limit=self.GRAPH_IMPORT_CHUNK_LIMIT,
+                chunk_strategy_version=self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+            )
+            if resumable_run:
+                active_job = await self._find_active_job_by_run_id(str(resumable_run.get("run_id") or ""))
+                if active_job and resumable_run.get("status") == "running":
+                    active_job["message"] = "检测到同文件导入任务仍在执行，已返回当前任务状态"
+                    return {"ok": True, "data": active_job}
+            resumed_from_chunk = None
+            if resumable_run:
+                resumed_from_chunk = await self._find_first_unfinished_chunk_index(str(resumable_run.get("run_id") or ""))
             return await self._start_background_job(
                 job_type=self.IMPORT_JOB_TYPE,
                 runner=lambda job_id: self._extract_and_import_graph_sync(file_bytes, filename, job_id),
+                seed={
+                    "file_hash": file_hash,
+                    "is_resumed": bool(resumable_run),
+                    "resume_run_id": resumable_run.get("run_id") if resumable_run else None,
+                    "resumed_from_chunk": resumed_from_chunk,
+                    "chunk_limit": self.GRAPH_IMPORT_CHUNK_LIMIT,
+                    "chunk_strategy_version": self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+                    "resume_compatible": bool(resumable_run) if resumable_run else None,
+                    "parallelism": min(self.GRAPH_LLM_MAX_PARALLELISM, len(self._graph_llm_lane_configs)),
+                    "active_lanes": min(self.GRAPH_LLM_MAX_PARALLELISM, len(self._graph_llm_lane_configs)),
+                    "current_attempt": 0,
+                    "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
+                    "progress_text": self._format_resume_message(resumed_from_chunk) if resumable_run else "任务已提交，等待执行",
+                },
             )
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             self._log_api_error("/admin/graph/jobs/extract-import", "extract_import_submit", exc, filename=filename)
@@ -534,63 +1413,625 @@ class GraphAdminService:
         """执行图谱抽取导入主体。"""
         loop = asyncio.get_running_loop()
         stage_callback = self._make_stage_event_callback(loop, job_id)
+        file_hash = self._compute_file_hash(file_bytes)
         prepared = await asyncio.to_thread(
-            self._extract_and_prepare_graph_blocking,
+            self._parse_and_split_graph_blocking,
             file_bytes,
             filename,
             stage_callback,
         )
-        chunk_results = prepared.pop("_chunk_results", [])
-        total_chunks = len(chunk_results)
-
-        await self._enter_job_stage(
-            job_id,
-            "write_neo4j",
-            f"正在写入 Neo4j，共 {total_chunks} 段文本",
-            metrics={
-                "total_chunks": total_chunks,
-                "completed_chunks": total_chunks,
-            },
+        chunks = list(prepared.pop("_chunks", []))
+        total_chunks = len(chunks)
+        file_size = len(file_bytes)
+        chunk_limit = int(prepared.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT)
+        chunk_strategy_version = int(
+            prepared.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION
         )
-        for chunk_result in chunk_results:
-            chunk_index = int(chunk_result.get("index") or 0)
-            node_queries = chunk_result.get("node_queries") or []
-            relation_queries = chunk_result.get("relation_queries") or []
+        cache_used = bool(prepared.get("cache_used"))
+        cache_invalidated_reason = str(prepared.get("cache_invalidated_reason") or "")
 
-            if node_queries:
-                await self._heartbeat_job_stage(
-                    job_id,
-                    detail=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的节点",
-                    progress_text=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的节点",
-                )
-                await self._neo4j_client.run_multiple_cypher(node_queries)
-            if relation_queries:
-                await self._heartbeat_job_stage(
-                    job_id,
-                    detail=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的关系",
-                    progress_text=f"正在写入第 {chunk_index}/{total_chunks} 段文本对应的关系",
-                )
-                await self._neo4j_client.run_multiple_cypher(relation_queries)
+        resumable_run = await self._find_resumable_graph_run(
+            file_hash,
+            chunk_limit=chunk_limit,
+            chunk_strategy_version=chunk_strategy_version,
+        )
+        latest_run = await self._find_latest_graph_run_by_file_hash(file_hash)
+        existing_chunks: list[dict[str, Any]] = []
+        is_resumed = False
+        run_id = ""
+        resumed_from_chunk: Optional[int] = None
+        resume_compatible: Optional[bool] = None
 
-        await self._complete_job_stage(job_id, detail="Neo4j 写入完成")
+        if latest_run and (
+            int(latest_run.get("chunk_limit") or 0) != chunk_limit
+            or int(latest_run.get("chunk_strategy_version") or 0) != chunk_strategy_version
+        ):
+            resume_compatible = False
+            compatibility_reason = (
+                f"旧断点分块策略已过期（旧策略: limit={int(latest_run.get('chunk_limit') or 0)}, "
+                f"version={int(latest_run.get('chunk_strategy_version') or 0)}；"
+                f"当前策略: limit={chunk_limit}, version={chunk_strategy_version}），已重新建任务"
+            )
+            if str(latest_run.get("status") or "") in {"running", "paused"}:
+                await self._set_graph_run_status(
+                    str(latest_run.get("run_id") or ""),
+                    "failed",
+                    last_error=compatibility_reason,
+                    finished=True,
+                )
+            cache_invalidated_reason = compatibility_reason
+            logger.info(
+                "graph_import.resume_incompatible file_hash=%s latest_run_id=%s reason=%s",
+                file_hash,
+                latest_run.get("run_id"),
+                compatibility_reason,
+            )
+        elif resumable_run:
+            resume_compatible = True
+
+        if resumable_run:
+            run_id = str(resumable_run.get("run_id") or "")
+            existing_chunks = await self._load_graph_import_chunks(run_id)
+            if existing_chunks and len(existing_chunks) != total_chunks:
+                resume_compatible = False
+                incompatibility_reason = "旧导入断点与当前分块结果不一致，已终止旧断点并改为新任务导入"
+                await self._set_graph_run_status(
+                    run_id,
+                    "failed",
+                    last_error=incompatibility_reason,
+                    finished=True,
+                )
+                cache_invalidated_reason = incompatibility_reason
+                resumable_run = None
+                existing_chunks = []
+                logger.info(
+                    "graph_import.resume_chunk_mismatch file_hash=%s run_id=%s chunk_limit=%s total_chunks=%s",
+                    file_hash,
+                    run_id,
+                    chunk_limit,
+                    total_chunks,
+                )
+
+        if not resumable_run:
+            run_id = f"graph-run-{uuid4().hex}"
+            await self._create_graph_import_run(
+                run_id=run_id,
+                file_hash=file_hash,
+                file_name=filename,
+                file_size=file_size,
+                prepared=prepared,
+            )
+            await self._initialize_graph_import_chunks(run_id, chunks)
+            existing_chunks = await self._load_graph_import_chunks(run_id)
+        else:
+            is_resumed = True
+            await self._sync_graph_import_run_metadata(
+                run_id,
+                file_name=filename,
+                file_size=file_size,
+                prepared=prepared,
+                status="running",
+                clear_error=True,
+            )
+            if not existing_chunks:
+                await self._initialize_graph_import_chunks(run_id, chunks)
+                existing_chunks = await self._load_graph_import_chunks(run_id)
+
+        logger.info(
+            "graph_import.run_selected file_hash=%s run_id=%s resumed=%s chunk_limit=%s chunk_strategy_version=%s total_chunks=%s first_chunk_chars=%s cache_used=%s resume_compatible=%s",
+            file_hash,
+            run_id,
+            is_resumed,
+            chunk_limit,
+            chunk_strategy_version,
+            total_chunks,
+            len(chunks[0]) if chunks else 0,
+            cache_used,
+            resume_compatible,
+        )
+
+        progress = await self._recompute_graph_run_progress(run_id)
+        chunk_map = {int(item.get("chunk_index") or 0): item for item in existing_chunks}
+        for index in range(1, total_chunks + 1):
+            if chunk_map.get(index, {}).get("status") != "succeeded":
+                resumed_from_chunk = index if is_resumed else None
+                break
+
+        await self._update_job_resume_state(
+            job_id,
+            run_id=run_id,
+            file_hash=file_hash,
+            is_resumed=is_resumed,
+            resumed_from_chunk=resumed_from_chunk,
+            chunk_limit=chunk_limit,
+            chunk_strategy_version=chunk_strategy_version,
+            cache_used=cache_used,
+            cache_invalidated_reason=cache_invalidated_reason,
+            resume_compatible=resume_compatible,
+        )
+        prepared.update(
+            {
+                "file_hash": file_hash,
+                "run_id": run_id,
+                "is_resumed": is_resumed,
+                "resume_run_id": run_id if is_resumed else None,
+                "resumed_from_chunk": resumed_from_chunk,
+                "chunk_limit": chunk_limit,
+                "chunk_strategy_version": chunk_strategy_version,
+                "cache_used": cache_used,
+                "cache_invalidated_reason": cache_invalidated_reason,
+                "resume_compatible": resume_compatible,
+            }
+        )
+
+        if is_resumed:
+            await self._heartbeat_job_stage(
+                job_id,
+                detail=self._format_resume_message(resumed_from_chunk),
+                progress_text=self._format_resume_message(resumed_from_chunk),
+                metrics={
+                    "total_chars": prepared.get("parsed_text_length") or 0,
+                    "processed_chars": progress["processed_chars"],
+                    "total_chunks": total_chunks,
+                    "completed_chunks": progress["completed_chunks"],
+                    "current_chunk_index": resumed_from_chunk or 0,
+                    "current_chunk_chars": len(chunks[(resumed_from_chunk or 1) - 1]) if resumed_from_chunk and resumed_from_chunk <= total_chunks else 0,
+                },
+            )
+
+        total_entities = int(progress["entity_count"])
+        total_relations = int(progress["relation_count"])
+        total_node_batches = int(progress.get("node_batches") or 0)
+        total_relation_batches = int(progress.get("relation_batches") or 0)
+        processed_chars = int(progress["processed_chars"])
+        completed_chunks = int(progress["completed_chunks"])
+        from app.knowledge_graph.extract_graph_data_utils import create_graph_llm_bundle
+
+        lane_configs = list(self._graph_llm_lane_configs[: self.GRAPH_LLM_MAX_PARALLELISM])
+        if not lane_configs:
+            raise RuntimeError("未配置可用的图谱抽取模型，请检查 MODEL_* 或 GRAPH_LLM_* 环境变量")
+
+        lane_statuses = [
+            {
+                "lane_id": int(item["lane_id"]),
+                "label": self._format_lane_label(item),
+                "model_name": str(item["model_name"]),
+                "status": "ready",
+                "current_chunk_index": None,
+                "current_attempt": 0,
+                "last_error": "",
+                "backoff_until": None,
+            }
+            for item in lane_configs
+        ]
+        parallelism = len(lane_statuses)
+        await self._update_job_parallel_state(
+            job_id,
+            parallelism=parallelism,
+            active_lanes=self._count_active_lanes(lane_statuses),
+            current_attempt=0,
+            max_attempts=self.GRAPH_LLM_MAX_ATTEMPTS,
+            lane_statuses=lane_statuses,
+        )
+        prepared.update(
+            {
+                "parallelism": parallelism,
+                "active_lanes": self._count_active_lanes(lane_statuses),
+                "current_attempt": 0,
+                "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
+                "lane_statuses": self._clone_lane_statuses(lane_statuses),
+            }
+        )
+        logger.info(
+            "graph_import.parallel_extract_start run_id=%s parallelism=%s lanes=%s",
+            run_id,
+            parallelism,
+            [self._format_lane_label(item) for item in lane_configs],
+        )
+
+        pending_chunks = [
+            (index, chunk)
+            for index, chunk in enumerate(chunks, start=1)
+            if self._normalize_chunk_status(chunk_map.get(index, {}).get("status")) != "succeeded"
+        ]
+        pending_chunks_map = {index: chunk for index, chunk in pending_chunks}
+
+        if pending_chunks:
+            work_queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
+            for item in pending_chunks[:parallelism]:
+                await work_queue.put(item)
+            next_schedule_cursor = min(parallelism, len(pending_chunks))
+            write_cursor = 0
+            active_extractions = 0
+            attempt_counts: dict[int, int] = {}
+            result_buffer: dict[int, dict[str, Any]] = {}
+            stop_event = asyncio.Event()
+            state_condition = asyncio.Condition()
+            terminal_error: Optional[str] = None
+
+            lane_bundles = {
+                int(item["lane_id"]): create_graph_llm_bundle(
+                    api_key=str(item["api_key"]),
+                    base_url=str(item["base_url"]),
+                    model_name=str(item["model_name"]),
+                    timeout=self.GRAPH_LLM_REQUEST_TIMEOUT_SECONDS,
+                    max_retries=0,
+                    lane_id=int(item["lane_id"]),
+                )
+                for item in lane_configs
+            }
+
+            async def sync_lane_status(
+                lane_id: int,
+                *,
+                status: Optional[str] = None,
+                current_chunk_index: Optional[int] = None,
+                current_attempt: Optional[int] = None,
+                last_error: Optional[str] = None,
+                backoff_until: Optional[str] = None,
+            ) -> None:
+                for item in lane_statuses:
+                    if int(item.get("lane_id") or 0) != lane_id:
+                        continue
+                    if status is not None:
+                        item["status"] = status
+                    item["current_chunk_index"] = current_chunk_index
+                    if current_attempt is not None:
+                        item["current_attempt"] = current_attempt
+                    if last_error is not None:
+                        item["last_error"] = last_error
+                    item["backoff_until"] = backoff_until
+                    break
+                await self._update_job_parallel_state(
+                    job_id,
+                    parallelism=parallelism,
+                    active_lanes=self._count_active_lanes(lane_statuses),
+                    current_attempt=current_attempt,
+                    max_attempts=self.GRAPH_LLM_MAX_ATTEMPTS,
+                    lane_statuses=lane_statuses,
+                )
+
+            async def fail_chunk_and_task(chunk_index: int, error_message: str) -> None:
+                nonlocal terminal_error
+                if terminal_error:
+                    return
+                terminal_error = error_message
+                await self._mark_graph_chunk_failed(run_id, chunk_index, error_message)
+                await self._set_graph_run_status(run_id, "failed", last_error=error_message)
+                async with state_condition:
+                    state_condition.notify_all()
+                stop_event.set()
+
+            async def lane_worker(lane_config: dict[str, Any]) -> None:
+                nonlocal active_extractions, terminal_error, write_cursor
+                lane_id = int(lane_config["lane_id"])
+                llm_bundle = lane_bundles[lane_id]
+                lane_label = self._format_lane_label(lane_config)
+                while not stop_event.is_set():
+                    try:
+                        chunk_index, chunk = await asyncio.wait_for(work_queue.get(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        if stop_event.is_set() or write_cursor >= len(pending_chunks):
+                            break
+                        continue
+
+                    if stop_event.is_set():
+                        work_queue.task_done()
+                        break
+
+                    attempt = int(attempt_counts.get(chunk_index) or 0) + 1
+                    attempt_counts[chunk_index] = attempt
+                    chunk_chars = len(chunk)
+                    lane_stage_callback = self._make_lane_stage_callback(
+                        stage_callback,
+                        lane_id=lane_id,
+                        chunk_index=chunk_index,
+                        total_chunks=total_chunks,
+                        attempt=attempt,
+                        max_attempts=self.GRAPH_LLM_MAX_ATTEMPTS,
+                    )
+
+                    await self._mark_graph_chunk_running(run_id, chunk_index)
+                    await sync_lane_status(
+                        lane_id,
+                        status="running",
+                        current_chunk_index=chunk_index,
+                        current_attempt=attempt,
+                        last_error="",
+                        backoff_until=None,
+                    )
+                    await self._heartbeat_job_stage(
+                        job_id,
+                        detail=(
+                            f"正在并发抽取第 {chunk_index}/{total_chunks} 段文本，"
+                            f"{lane_label} 正在执行第 {attempt}/{self.GRAPH_LLM_MAX_ATTEMPTS} 次尝试"
+                        ),
+                        progress_text=(
+                            f"并发抽取中：第 {chunk_index}/{total_chunks} 段文本，"
+                            f"{lane_label} 第 {attempt}/{self.GRAPH_LLM_MAX_ATTEMPTS} 次尝试"
+                        ),
+                        metrics={
+                            "total_chars": prepared.get("parsed_text_length") or 0,
+                            "processed_chars": processed_chars,
+                            "total_chunks": total_chunks,
+                            "completed_chunks": completed_chunks,
+                            "current_chunk_index": chunk_index,
+                            "current_chunk_chars": chunk_chars,
+                        },
+                    )
+
+                    async with state_condition:
+                        active_extractions += 1
+
+                    try:
+                        chunk_result = await asyncio.to_thread(
+                            self._extract_single_graph_chunk_blocking,
+                            chunk,
+                            chunk_index,
+                            total_chunks,
+                            prepared.get("parsed_text_length") or 0,
+                            processed_chars,
+                            lane_stage_callback,
+                            llm_bundle,
+                        )
+                    except Exception as exc:
+                        error_text = str(exc).strip() or exc.__class__.__name__
+                        failure_text = (
+                            f"第 {chunk_index}/{total_chunks} 块在 {lane_label} 上第 "
+                            f"{attempt}/{self.GRAPH_LLM_MAX_ATTEMPTS} 次尝试失败: {error_text}"
+                        )
+                        await self._mark_graph_chunk_failed(run_id, chunk_index, failure_text)
+                        error_type = self._classify_lane_error(exc)
+                        first_error = self._first_error_line(error_text) or error_text
+
+                        async with state_condition:
+                            active_extractions = max(0, active_extractions - 1)
+                            state_condition.notify_all()
+
+                        if attempt >= self.GRAPH_LLM_MAX_ATTEMPTS:
+                            await fail_chunk_and_task(
+                                chunk_index,
+                                (
+                                    f"第 {chunk_index}/{total_chunks} 块累计失败 "
+                                    f"{self.GRAPH_LLM_MAX_ATTEMPTS} 次，任务失败。最近错误: {first_error}"
+                                ),
+                            )
+                            work_queue.task_done()
+                            break
+
+                        await work_queue.put((chunk_index, chunk))
+                        await self._add_job_warning(
+                            job_id,
+                            (
+                                f"{lane_label} 处理第 {chunk_index}/{total_chunks} 块失败，"
+                                f"已回队重试（{attempt}/{self.GRAPH_LLM_MAX_ATTEMPTS}）：{first_error}"
+                            ),
+                        )
+
+                        if error_type == "permanent":
+                            await sync_lane_status(
+                                lane_id,
+                                status="disabled",
+                                current_chunk_index=chunk_index,
+                                current_attempt=attempt,
+                                last_error=first_error,
+                                backoff_until=None,
+                            )
+                            await self._add_job_warning(job_id, f"{lane_label} 因鉴权或模型配置错误已摘除")
+                            if self._count_viable_lanes(lane_statuses) <= 0:
+                                await fail_chunk_and_task(
+                                    chunk_index,
+                                    "所有图谱抽取模型 lane 均不可用，任务失败",
+                                )
+                                work_queue.task_done()
+                                break
+                            work_queue.task_done()
+                            break
+
+                        backoff_until = (
+                            datetime.utcnow() + timedelta(seconds=self.GRAPH_LLM_TRANSIENT_BACKOFF_SECONDS)
+                        ).isoformat(timespec="seconds") + "Z"
+                        await sync_lane_status(
+                            lane_id,
+                            status="backoff",
+                            current_chunk_index=chunk_index,
+                            current_attempt=attempt,
+                            last_error=first_error,
+                            backoff_until=backoff_until,
+                        )
+                        work_queue.task_done()
+                        if not stop_event.is_set():
+                            await asyncio.sleep(self.GRAPH_LLM_TRANSIENT_BACKOFF_SECONDS)
+                            if not stop_event.is_set():
+                                await sync_lane_status(
+                                    lane_id,
+                                    status="ready",
+                                    current_chunk_index=None,
+                                    current_attempt=attempt,
+                                    last_error="",
+                                    backoff_until=None,
+                                )
+                        continue
+
+                    async with state_condition:
+                        active_extractions = max(0, active_extractions - 1)
+                        result_buffer[chunk_index] = {
+                            **chunk_result,
+                            "attempt": attempt,
+                            "lane_id": lane_id,
+                            "lane_label": lane_label,
+                        }
+                        state_condition.notify_all()
+                    await sync_lane_status(
+                        lane_id,
+                        status="ready",
+                        current_chunk_index=None,
+                        current_attempt=attempt,
+                        last_error="",
+                        backoff_until=None,
+                    )
+                    work_queue.task_done()
+
+            async def writer_loop() -> None:
+                nonlocal next_schedule_cursor, write_cursor, processed_chars, completed_chunks
+                nonlocal total_entities, total_relations, total_node_batches, total_relation_batches, terminal_error
+                while write_cursor < len(pending_chunks):
+                    index, chunk = pending_chunks[write_cursor]
+                    chunk_chars = len(chunk)
+                    async with state_condition:
+                        await state_condition.wait_for(
+                            lambda: terminal_error is not None or index in result_buffer
+                        )
+                        if terminal_error:
+                            raise RuntimeError(terminal_error)
+                        chunk_result = result_buffer.pop(index)
+
+                    node_queries = chunk_result["node_queries"]
+                    relation_queries = chunk_result["relation_queries"]
+                    stats = chunk_result["stats"]
+                    node_batches = len(node_queries)
+                    relation_batches = len(relation_queries)
+                    attempt = int(chunk_result.get("attempt") or 0)
+                    lane_label = str(chunk_result.get("lane_label") or "")
+
+                    await self._update_job_parallel_state(
+                        job_id,
+                        parallelism=parallelism,
+                        active_lanes=self._count_active_lanes(lane_statuses),
+                        current_attempt=attempt,
+                        max_attempts=self.GRAPH_LLM_MAX_ATTEMPTS,
+                        lane_statuses=lane_statuses,
+                    )
+                    await self._enter_job_stage(
+                        job_id,
+                        "write_neo4j",
+                        (
+                            f"正在写入第 {index}/{total_chunks} 段文本到 Neo4j"
+                            f"{f'（来源 {lane_label}）' if lane_label else ''}"
+                        ),
+                        metrics={
+                            "total_chars": prepared.get("parsed_text_length") or 0,
+                            "processed_chars": processed_chars,
+                            "total_chunks": total_chunks,
+                            "completed_chunks": completed_chunks,
+                            "current_chunk_index": index,
+                            "current_chunk_chars": chunk_chars,
+                        },
+                    )
+                    try:
+                        if node_queries:
+                            await self._heartbeat_job_stage(
+                                job_id,
+                                detail=f"正在写入第 {index}/{total_chunks} 段文本对应的节点",
+                                progress_text=f"正在写入第 {index}/{total_chunks} 段文本对应的节点",
+                            )
+                            await self._neo4j_client.run_multiple_cypher(node_queries)
+                        if relation_queries:
+                            await self._heartbeat_job_stage(
+                                job_id,
+                                detail=f"正在写入第 {index}/{total_chunks} 段文本对应的关系",
+                                progress_text=f"正在写入第 {index}/{total_chunks} 段文本对应的关系",
+                            )
+                            await self._neo4j_client.run_multiple_cypher(relation_queries)
+                    except Exception as exc:
+                        write_error = f"第 {index}/{total_chunks} 块写入 Neo4j 失败: {exc}"
+                        await self._mark_graph_chunk_failed(run_id, index, write_error)
+                        await self._set_graph_run_status(run_id, "failed", last_error=write_error)
+                        terminal_error = write_error
+                        stop_event.set()
+                        raise RuntimeError(write_error) from exc
+
+                    await self._mark_graph_chunk_succeeded(
+                        run_id,
+                        chunk_index=index,
+                        entity_count=int(stats.get("entities") or 0),
+                        relation_count=int(stats.get("relations") or 0),
+                        node_batches=node_batches,
+                        relation_batches=relation_batches,
+                    )
+                    progress = await self._recompute_graph_run_progress(run_id)
+                    processed_chars = progress["processed_chars"]
+                    completed_chunks = progress["completed_chunks"]
+                    total_entities = progress["entity_count"]
+                    total_relations = progress["relation_count"]
+                    total_node_batches += node_batches
+                    total_relation_batches += relation_batches
+                    await self._complete_job_stage(
+                        job_id,
+                        detail=f"已完成第 {index}/{total_chunks} 段文本写入",
+                        metrics={
+                            "total_chars": prepared.get("parsed_text_length") or 0,
+                            "processed_chars": processed_chars,
+                            "total_chunks": total_chunks,
+                            "completed_chunks": completed_chunks,
+                            "current_chunk_index": index,
+                            "current_chunk_chars": chunk_chars,
+                        },
+                    )
+
+                    write_cursor += 1
+                    if next_schedule_cursor < len(pending_chunks):
+                        await work_queue.put(pending_chunks[next_schedule_cursor])
+                        next_schedule_cursor += 1
+
+            worker_tasks = [
+                asyncio.create_task(lane_worker(item), name=f"graph-lane-{int(item['lane_id'])}")
+                for item in lane_configs
+            ]
+            try:
+                await writer_loop()
+            finally:
+                stop_event.set()
+                for task in worker_tasks:
+                    task.cancel()
+                if worker_tasks:
+                    await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+        await self._set_graph_run_status(run_id, "succeeded", finished=True)
         await self._enter_job_stage(job_id, "finalize", "图谱抽取完成，正在整理结果")
         await self._complete_job_stage(job_id, detail="任务执行完成")
+
+        prepared.update(
+            {
+                "file_hash": file_hash,
+                "run_id": run_id,
+                "is_resumed": is_resumed,
+                "resume_run_id": run_id if is_resumed else None,
+                "resumed_from_chunk": resumed_from_chunk,
+                "chunk_limit": chunk_limit,
+                "chunk_strategy_version": chunk_strategy_version,
+                "cache_used": cache_used,
+                "cache_invalidated_reason": cache_invalidated_reason,
+                "resume_compatible": resume_compatible,
+                "parallelism": parallelism,
+                "active_lanes": self._count_active_lanes(lane_statuses),
+                "current_attempt": int(max(attempt_counts.values()) if pending_chunks and attempt_counts else 0),
+                "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
+                "lane_statuses": self._clone_lane_statuses(lane_statuses),
+                "processed_text_length": processed_chars,
+                "entity_count": total_entities,
+                "relation_count": total_relations,
+                "node_batches": total_node_batches,
+                "relation_batches": total_relation_batches,
+                "message": f"抽取并导入完成，实体 {total_entities} 个，关系 {total_relations} 条",
+            }
+        )
         return prepared
 
-    def _extract_and_prepare_graph_blocking(
+    def _parse_and_split_graph_blocking(
         self,
         file_bytes: bytes,
         filename: str,
         stage_callback: Callable[..., None],
     ) -> dict[str, Any]:
-        """在线程中执行文档解析与图谱抽取。"""
+        """在线程中执行文档解析与分块。"""
         suffix = Path(filename).suffix.lower()
         supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".jpg", ".jpeg", ".png"}
         if suffix not in supported_suffixes:
             raise RuntimeError(f"不支持的文件格式: {suffix}，仅支持 {', '.join(sorted(supported_suffixes))}")
-        chunk_limit = 20000
+        chunk_limit = self.GRAPH_IMPORT_CHUNK_LIMIT
 
-        def split_text_by_sentence(text: str, limit: int = 20000) -> list[str]:
+        def split_text_by_sentence(text: str, limit: int = self.GRAPH_IMPORT_CHUNK_LIMIT) -> list[str]:
             """按句切分长文本。"""
             chunks: list[str] = []
             remaining = (text or "").strip()
@@ -644,6 +2085,38 @@ class GraphAdminService:
 
         stage_callback("enter", "validate_file", "正在校验文件")
         stage_callback("complete", "validate_file", "文件校验完成")
+        file_hash = self._compute_file_hash(file_bytes)
+        logger.info(
+            "graph_import.parse_prepare file_hash=%s chunk_limit=%s chunk_strategy_version=%s file_name=%s",
+            file_hash,
+            chunk_limit,
+            self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
+            filename,
+        )
+
+        stage_callback("enter", "parse_document", "正在检查本地缓存")
+        cached_prepared, cache_invalidated_reason = self._load_graph_import_cache(file_hash)
+        if cached_prepared:
+            stage_callback(
+                "complete",
+                "parse_document",
+                f"已从本地缓存恢复解析结果，共 {cached_prepared.get('chunk_count') or 0} 段文本",
+            )
+            logger.info(
+                "graph_import.cache_hit file_hash=%s chunk_limit=%s chunk_count=%s first_chunk_chars=%s",
+                file_hash,
+                cached_prepared.get("chunk_limit"),
+                cached_prepared.get("chunk_count"),
+                len((cached_prepared.get("_chunks") or [""])[0]) if cached_prepared.get("_chunks") else 0,
+            )
+            return cached_prepared
+        if cache_invalidated_reason:
+            logger.info(
+                "graph_import.cache_invalidated file_hash=%s chunk_limit=%s reason=%s",
+                file_hash,
+                chunk_limit,
+                cache_invalidated_reason,
+            )
 
         parser_used = "plain_text"
         parse_warning = ""
@@ -651,7 +2124,7 @@ class GraphAdminService:
         text = ""
 
         if suffix in {".txt", ".md"}:
-            stage_callback("enter", "parse_document", "正在解析纯文本内容")
+            stage_callback("heartbeat", "parse_document", "正在解析纯文本内容")
             text = file_bytes.decode("utf-8", errors="replace")
             stage_callback("complete", "parse_document", "文档正文解析完成")
         else:
@@ -678,63 +2151,9 @@ class GraphAdminService:
         if parse_warning:
             stage_callback("warning", detail=parse_warning)
 
-        from app.knowledge_graph.extract_graph_data_utils import extract_text_to_graph_queries
-
         chunks = split_text_by_sentence(text, chunk_limit)
         total_chars = len(text)
         total_chunk_chars = sum(len(chunk) for chunk in chunks)
-        processed_chars = 0
-        total_entities = 0
-        total_relations = 0
-        total_node_batches = 0
-        total_relation_batches = 0
-
-        chunk_results: list[dict[str, Any]] = []
-        for index, chunk in enumerate(chunks, start=1):
-            chunk_chars = len(chunk)
-            stage_callback(
-                "heartbeat",
-                detail=f"文档解析完成，已提取约 {len(text)} 个字符，准备处理第 {index}/{len(chunks)} 段文本",
-                progress_text=f"正在处理第 {index}/{len(chunks)} 段文本",
-                metrics={
-                    "total_chars": total_chars,
-                    "processed_chars": processed_chars,
-                    "total_chunks": len(chunks),
-                    "completed_chunks": index - 1,
-                    "current_chunk_index": index,
-                    "current_chunk_chars": chunk_chars,
-                },
-            )
-            graph_data = extract_text_to_graph_queries(chunk, len(chunk), stage_callback=stage_callback)
-            node_queries = graph_data["node_queries"]
-            relation_queries = graph_data["relation_queries"]
-            stats = graph_data["stats"]
-            total_entities += stats["entities"]
-            total_relations += stats["relations"]
-            total_node_batches += len(node_queries)
-            total_relation_batches += len(relation_queries)
-            processed_chars = min(total_chars, processed_chars + chunk_chars)
-            stage_callback(
-                "heartbeat",
-                detail=f"已完成第 {index}/{len(chunks)} 段文本抽取",
-                progress_text=f"已完成第 {index}/{len(chunks)} 段文本抽取",
-                metrics={
-                    "total_chars": total_chars,
-                    "processed_chars": processed_chars,
-                    "total_chunks": len(chunks),
-                    "completed_chunks": index,
-                    "current_chunk_index": index,
-                    "current_chunk_chars": chunk_chars,
-                },
-            )
-            chunk_results.append(
-                {
-                    "index": index,
-                    "chunk_chars": chunk_chars,
-                    "node_queries": node_queries,
-                    "relation_queries": relation_queries,
-                }
-            )
 
         ocr_engine = None
         docling_failed_pages: list[int] = []
@@ -753,20 +2172,23 @@ class GraphAdminService:
             "file_name": filename,
             "parsed_text_length": len(text),
             "total_chunk_chars": total_chunk_chars,
-            "processed_text_length": processed_chars,
+            "processed_text_length": 0,
+            "chunk_limit": chunk_limit,
+            "chunk_strategy_version": self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
             "parser_used": parser_used,
             "ocr_engine": ocr_engine,
             "parse_warning": parse_warning,
             "docling_failed_pages": docling_failed_pages,
             "pdf_fallback_used": pdf_fallback_used,
             "chunk_count": len(chunks),
-            "entity_count": total_entities,
-            "relation_count": total_relations,
-            "node_batches": total_node_batches,
-            "relation_batches": total_relation_batches,
-            "message": f"抽取并导入完成，实体 {total_entities} 个，关系 {total_relations} 条",
+            "entity_count": 0,
+            "relation_count": 0,
+            "node_batches": 0,
+            "relation_batches": 0,
+            "message": f"文档解析完成，共切分为 {len(chunks)} 段文本",
+            "cache_invalidated_reason": cache_invalidated_reason or "",
         }
-        if parsed and parser_used == "docling":
+        if parsed:
             response_data["parse_details"] = {
                 "format": parsed.format,
                 "pages": parsed.pages,
@@ -775,8 +2197,95 @@ class GraphAdminService:
                 "metadata": parsed.metadata,
                 "text_preview": parsed.text[:2000] if parsed.text else "",
             }
-        response_data["_chunk_results"] = chunk_results
+        response_data["_chunks"] = chunks
+        response_data["cache_used"] = False
+        logger.info(
+            "graph_import.chunked file_hash=%s chunk_limit=%s chunk_count=%s first_chunk_chars=%s current_strategy=%s",
+            file_hash,
+            chunk_limit,
+            len(chunks),
+            len(chunks[0]) if chunks else 0,
+            self._get_chunk_strategy_signature(),
+        )
+        try:
+            self._write_graph_import_cache(file_hash, response_data, chunks)
+        except OSError as exc:
+            logger.warning("写入图谱导入缓存失败: file_hash=%s error=%s", file_hash, exc)
         return response_data
+
+    def _extract_single_graph_chunk_blocking(
+        self,
+        chunk: str,
+        chunk_index: int,
+        total_chunks: int,
+        total_chars: int,
+        processed_chars: int,
+        stage_callback: Callable[..., None],
+        llm_bundle: dict[str, Any],
+    ) -> dict[str, Any]:
+        """在线程中执行单块图谱抽取（单次尝试）。"""
+        from app.knowledge_graph.extract_graph_data_utils import extract_text_to_graph_queries
+
+        chunk_chars = len(chunk)
+        stage_callback(
+            "heartbeat",
+            detail=f"文档解析完成，准备抽取第 {chunk_index}/{total_chunks} 段文本",
+            progress_text=f"正在抽取第 {chunk_index}/{total_chunks} 段文本",
+            metrics={
+                "total_chars": total_chars,
+                "processed_chars": processed_chars,
+                "total_chunks": total_chunks,
+                "completed_chunks": chunk_index - 1,
+                "current_chunk_index": chunk_index,
+                "current_chunk_chars": chunk_chars,
+            },
+        )
+        graph_data = extract_text_to_graph_queries(
+            chunk,
+            chunk_chars,
+            stage_callback=stage_callback,
+            llm_bundle=llm_bundle,
+        )
+        return {
+            "chunk_index": chunk_index,
+            "chunk_chars": chunk_chars,
+            "node_queries": graph_data["node_queries"],
+            "relation_queries": graph_data["relation_queries"],
+            "stats": graph_data["stats"],
+        }
+
+    @staticmethod
+    def _make_lane_stage_callback(
+        base_callback: Callable[..., None],
+        *,
+        lane_id: int,
+        chunk_index: int,
+        total_chunks: int,
+        attempt: int,
+        max_attempts: int,
+    ) -> Callable[..., None]:
+        """为并发 lane 包装带上下文的阶段回调。"""
+
+        prefix = f"[lane{lane_id} 第 {chunk_index}/{total_chunks} 块 第 {attempt}/{max_attempts} 次]"
+
+        def _callback(
+            action: str,
+            stage: Optional[str] = None,
+            detail: Optional[str] = None,
+            progress_text: Optional[str] = None,
+            metrics: Optional[dict[str, Any]] = None,
+        ) -> None:
+            next_detail = f"{prefix} {detail}" if detail else prefix
+            next_progress = f"{prefix} {progress_text}" if progress_text else next_detail
+            base_callback(
+                action,
+                stage=stage,
+                detail=next_detail,
+                progress_text=next_progress,
+                metrics=metrics,
+            )
+
+        return _callback
 
     async def _embed_graph_to_milvus_sync(self, data: Optional[dict[str, Any]], job_id: str) -> dict[str, Any]:
         """执行图谱嵌入主体。"""

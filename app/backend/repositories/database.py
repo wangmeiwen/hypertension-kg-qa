@@ -256,11 +256,94 @@ async def init_db() -> None:
             FOREIGN KEY (document_id) REFERENCES ocr_documents(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """,
+        """
+        CREATE TABLE IF NOT EXISTS graph_import_runs (
+            run_id VARCHAR(64) PRIMARY KEY,
+            file_hash VARCHAR(64) NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_size INT DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'running',
+            parser_used VARCHAR(64) DEFAULT '',
+            parse_warning TEXT,
+            parsed_text_length INT DEFAULT 0,
+            total_chars INT DEFAULT 0,
+            processed_chars INT DEFAULT 0,
+            total_chunks INT DEFAULT 0,
+            completed_chunks INT DEFAULT 0,
+            entity_count INT DEFAULT 0,
+            relation_count INT DEFAULT 0,
+            chunk_limit INT DEFAULT 0,
+            chunk_strategy_version INT DEFAULT 0,
+            docling_failed_pages LONGTEXT,
+            pdf_fallback_used TINYINT(1) DEFAULT 0,
+            last_error TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP NULL DEFAULT NULL,
+            INDEX idx_graph_import_file_hash (file_hash),
+            INDEX idx_graph_import_status (status),
+            INDEX idx_graph_import_file_hash_status (file_hash, status),
+            INDEX idx_graph_import_updated_at (updated_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS graph_import_chunks (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            run_id VARCHAR(64) NOT NULL,
+            chunk_index INT NOT NULL,
+            chunk_chars INT DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            entity_count INT DEFAULT 0,
+            relation_count INT DEFAULT 0,
+            node_batches INT DEFAULT 0,
+            relation_batches INT DEFAULT 0,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            started_at TIMESTAMP NULL DEFAULT NULL,
+            finished_at TIMESTAMP NULL DEFAULT NULL,
+            UNIQUE KEY uk_graph_import_chunk (run_id, chunk_index),
+            INDEX idx_graph_import_chunk_status (status),
+            FOREIGN KEY (run_id) REFERENCES graph_import_runs(run_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """,
     ]
 
     async with _get_engine().begin() as conn:
         for ddl in ddl_list:
             await conn.execute(text(ddl))
+        column_patch_list = [
+            {
+                "table_name": "graph_import_runs",
+                "column_name": "chunk_limit",
+                "ddl": "ALTER TABLE graph_import_runs ADD COLUMN chunk_limit INT DEFAULT 0",
+            },
+            {
+                "table_name": "graph_import_runs",
+                "column_name": "chunk_strategy_version",
+                "ddl": "ALTER TABLE graph_import_runs ADD COLUMN chunk_strategy_version INT DEFAULT 0",
+            },
+        ]
+        for patch in column_patch_list:
+            exists_result = await conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = :table_schema
+                      AND table_name = :table_name
+                      AND column_name = :column_name
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "table_schema": _DB_NAME,
+                    "table_name": patch["table_name"],
+                    "column_name": patch["column_name"],
+                },
+            )
+            if exists_result.scalar() is None:
+                await conn.execute(text(str(patch["ddl"])))
 
 
 async def initialize_database(force: bool = False) -> bool:

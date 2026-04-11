@@ -82,6 +82,8 @@ class Config:
         self.MODEL_BASE_URL = os.getenv("MODEL_BASE_URL")
         self.MODEL_NAME = os.getenv("MODEL_NAME")
         self.SESSION_MEMORY_MODEL_NAME = os.getenv("SESSION_MEMORY_MODEL_NAME", self.MODEL_NAME)
+        self.GRAPH_LLM_LANE_CONFIGS = self._build_graph_llm_lane_configs()
+        self.GRAPH_LLM_PARALLELISM = len(self.GRAPH_LLM_LANE_CONFIGS)
 
         # LangSmith 追踪与评估
         self.LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
@@ -165,5 +167,30 @@ class Config:
         self.PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", "100"))
         self.SUB_CHUNK_OVERLAP = int(os.getenv("SUB_CHUNK_OVERLAP", "50"))
 
+    def _build_graph_llm_lane_configs(self) -> list[dict[str, str | int]]:
+        """构建图谱抽取专用的多路模型配置。"""
+        lanes: list[dict[str, str | int]] = []
+        for lane_id in range(1, 4):
+            api_key = os.getenv(f"GRAPH_LLM_{lane_id}_API_KEY")
+            base_url = os.getenv(f"GRAPH_LLM_{lane_id}_BASE_URL")
+            model_name = os.getenv(f"GRAPH_LLM_{lane_id}_MODEL_NAME")
+            source = f"GRAPH_LLM_{lane_id}_*"
+            if lane_id == 1 and not (api_key and base_url and model_name):
+                api_key = api_key or self.MODEL_API_KEY
+                base_url = base_url or self.MODEL_BASE_URL
+                model_name = model_name or self.MODEL_NAME
+                source = "MODEL_* fallback"
+            if not (api_key and base_url and model_name):
+                continue
+            lanes.append(
+                {
+                    "lane_id": lane_id,
+                    "api_key": str(api_key),
+                    "base_url": str(base_url),
+                    "model_name": str(model_name),
+                    "source": source,
+                }
+            )
+        return lanes
 
 

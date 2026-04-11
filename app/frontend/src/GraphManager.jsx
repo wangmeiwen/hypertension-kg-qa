@@ -25,6 +25,7 @@ export default function GraphManager() {
   const GRAPH_JOB_POLL_MS = 20000;
   const JOB_STATUS_QUEUED = "queued";
   const JOB_STATUS_RUNNING = "running";
+  const JOB_STATUS_PAUSED = "paused";
   const JOB_STATUS_SUCCEEDED = "succeeded";
   const JOB_STATUS_FAILED = "failed";
 
@@ -321,6 +322,7 @@ export default function GraphManager() {
     if (!job) return "";
     if (job.status === JOB_STATUS_QUEUED) return "排队中";
     if (job.status === JOB_STATUS_RUNNING) return "处理中";
+    if (job.status === JOB_STATUS_PAUSED) return "已暂停";
     if (job.status === JOB_STATUS_SUCCEEDED) return "已完成";
     if (job.status === JOB_STATUS_FAILED) return "失败";
     return job.status;
@@ -410,16 +412,101 @@ export default function GraphManager() {
     return job.warnings;
   }
 
+  function getPausedReason(job) {
+    if (!job || job.status !== JOB_STATUS_PAUSED) return "";
+    return (
+      job?.result?.pause_reason ||
+      job?.result?.last_error ||
+      job?.error ||
+      ""
+    );
+  }
+
+  function getChunkLimit(job) {
+    const value = Number(job?.chunk_limit || job?.result?.chunk_limit || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  function getCacheInfo(job) {
+    return {
+      cacheUsed: Boolean(job?.cache_used ?? job?.result?.cache_used),
+      cacheInvalidatedReason: job?.cache_invalidated_reason || job?.result?.cache_invalidated_reason || "",
+      resumeCompatible: job?.resume_compatible ?? job?.result?.resume_compatible,
+    };
+  }
+
+  function getParallelInfo(job) {
+    const parallelism = Number(job?.parallelism || job?.result?.parallelism || 0) || 0;
+    const activeLanes = Number(job?.active_lanes || job?.result?.active_lanes || 0) || 0;
+    const currentAttempt = Number(job?.current_attempt || job?.result?.current_attempt || 0) || 0;
+    const maxAttempts = Number(job?.max_attempts || job?.result?.max_attempts || 0) || 0;
+    const laneStatuses = Array.isArray(job?.lane_statuses)
+      ? job.lane_statuses
+      : (Array.isArray(job?.result?.lane_statuses) ? job.result.lane_statuses : []);
+    return {
+      parallelism,
+      activeLanes,
+      currentAttempt,
+      maxAttempts,
+      laneStatuses,
+    };
+  }
+
+  function formatLaneStatuses(job) {
+    const { laneStatuses } = getParallelInfo(job);
+    if (!laneStatuses.length) return "";
+    return laneStatuses.map((lane) => {
+      const label = lane?.label || `lane${lane?.lane_id || "?"}`;
+      const status = lane?.status || "unknown";
+      const chunkIndex = Number(lane?.current_chunk_index || 0) || 0;
+      const attempt = Number(lane?.current_attempt || 0) || 0;
+      const suffix = chunkIndex > 0 ? `，块 ${chunkIndex}` : "";
+      const retryText = attempt > 0 ? `，重试 ${attempt}/${getParallelInfo(job).maxAttempts || 0}` : "";
+      return `${label}：${status}${suffix}${retryText}`;
+    }).join("；");
+  }
+
   function renderJobTelemetry(job) {
     if (!job) return null;
     const warnings = getJobWarnings(job);
     const stageElapsed = getStageElapsedSeconds(job);
     const textProgress = getGraphImportTextProgress(job);
+    const resumeChunk = Number(job.resumed_from_chunk || job.result?.resumed_from_chunk || 0) || 0;
+    const pausedReason = getPausedReason(job);
+    const chunkLimit = getChunkLimit(job);
+    const { cacheUsed, cacheInvalidatedReason, resumeCompatible } = getCacheInfo(job);
+    const { parallelism, activeLanes, currentAttempt, maxAttempts } = getParallelInfo(job);
+    const laneStatusSummary = formatLaneStatuses(job);
     return (
       <div className="embed-details">
         <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
         <p><strong>当前阶段:</strong> {getJobStageLabel(job.stage)}</p>
         <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
+        {pausedReason && (
+          <p><strong>暂停原因:</strong> {pausedReason}</p>
+        )}
+        {chunkLimit > 0 && (
+          <p><strong>当前分块大小:</strong> {formatCount(chunkLimit)} 字</p>
+        )}
+        {parallelism > 0 && (
+          <p><strong>并发抽取:</strong> {parallelism} 路（当前可用 {activeLanes} 路）</p>
+        )}
+        {maxAttempts > 0 && (
+          <p><strong>当前重试:</strong> {currentAttempt > 0 ? `${currentAttempt}/${maxAttempts}` : `0/${maxAttempts}`}</p>
+        )}
+        {laneStatusSummary && (
+          <p><strong>Lane 状态:</strong> {laneStatusSummary}</p>
+        )}
+        <p><strong>本地缓存:</strong> {cacheUsed ? "已命中" : "未命中"}</p>
+        {cacheInvalidatedReason && (
+          <p><strong>缓存/断点处理:</strong> {cacheInvalidatedReason}</p>
+        )}
+        {resumeCompatible === false && (
+          <p><strong>断点兼容性:</strong> 旧断点与当前分块策略不兼容，已重新建任务</p>
+        )}
+        {job.is_resumed && (
+          <p><strong>续跑状态:</strong> {resumeChunk > 0 ? `已自动从第 ${resumeChunk} 块继续` : "已自动从未完成块继续"}</p>
+        )}
         {textProgress && (
           <>
             <p><strong>总字数:</strong> {formatCount(textProgress.totalChars)}</p>
@@ -449,6 +536,9 @@ export default function GraphManager() {
   function buildJobSummary(job) {
     const result = job?.result || {};
     const textProgress = getGraphImportTextProgress(job);
+    if (job?.job_type === "graph_extract_import" && job?.status === JOB_STATUS_PAUSED) {
+      return getPausedReason(job) || result?.message || "已暂停，可重新提交同文件继续";
+    }
     if (job?.job_type === "graph_extract_import" && job?.status === JOB_STATUS_SUCCEEDED) {
       return `实体 ${result.entity_count || 0} 个，关系 ${result.relation_count || 0} 条，解析后文本长度 ${result.parsed_text_length || 0}`;
     }
@@ -470,6 +560,7 @@ export default function GraphManager() {
     if (isSubmittingImport) return "提交中...";
     if (isJobRunning(activeImportJob)) return "后台处理中...";
     if (activeImportJob?.status === JOB_STATUS_SUCCEEDED) return "再次导入";
+    if (activeImportJob?.status === JOB_STATUS_PAUSED) return "重新提交继续";
     if (activeImportJob?.status === JOB_STATUS_FAILED) return "重新导入";
     return "开始抽取并写入";
   }
@@ -501,6 +592,11 @@ export default function GraphManager() {
           setSuccess("文件抽取并写入图谱成功");
           await refreshGraphSurfaces();
           window.setTimeout(() => setSuccess(""), 5000);
+        } else if (nextJob.status === JOB_STATUS_PAUSED) {
+          setImportResult(nextJob.result || null);
+          setSuccess(nextJob.result?.message || "任务已暂停，可重新提交同文件继续");
+          await refreshGraphSurfaces();
+          window.setTimeout(() => setSuccess(""), 6000);
         } else if (nextJob.status === JOB_STATUS_FAILED) {
           setError(nextJob.error || "文件抽取导入失败");
         }
@@ -615,7 +711,7 @@ export default function GraphManager() {
       setActiveImportJob(job);
       setImportResult(null);
       await loadRecentJobs();
-      setSuccess("抽取导入任务已提交到后台");
+      setSuccess(job.message || "抽取导入任务已提交到后台");
       setTimeout(() => setSuccess(""), 5000);
     } catch (err) {
       setError(err.message);
@@ -780,6 +876,10 @@ export default function GraphManager() {
           <div className="graph-task-list">
             {recentJobs.map((job) => {
               const textProgress = getGraphImportTextProgress(job);
+              const resumeChunk = Number(job.resumed_from_chunk || job.result?.resumed_from_chunk || 0) || 0;
+              const pausedReason = getPausedReason(job);
+              const chunkLimit = getChunkLimit(job);
+              const { cacheUsed, cacheInvalidatedReason, resumeCompatible } = getCacheInfo(job);
               return (
                 <div key={job.job_id} className="graph-task-card">
                   <div className="graph-task-header">
@@ -795,6 +895,22 @@ export default function GraphManager() {
                     <p><strong>当前进度：</strong>{job.progress_text || "等待后台处理"}</p>
                     <p><strong>当前阶段：</strong>{getJobStageLabel(job.stage)}</p>
                     <p><strong>阶段详情：</strong>{job.stage_detail || "-"}</p>
+                    {pausedReason && (
+                      <p><strong>暂停原因：</strong>{pausedReason}</p>
+                    )}
+                    {chunkLimit > 0 && (
+                      <p><strong>当前分块大小：</strong>{formatCount(chunkLimit)} 字</p>
+                    )}
+                    <p><strong>本地缓存：</strong>{cacheUsed ? "已命中" : "未命中"}</p>
+                    {cacheInvalidatedReason && (
+                      <p><strong>缓存/断点处理：</strong>{cacheInvalidatedReason}</p>
+                    )}
+                    {resumeCompatible === false && (
+                      <p><strong>断点兼容性：</strong>旧断点与当前分块策略不兼容，已重新建任务</p>
+                    )}
+                    {job.is_resumed && (
+                      <p><strong>续跑状态：</strong>{resumeChunk > 0 ? `已自动从第 ${resumeChunk} 块继续` : "已自动从未完成块继续"}</p>
+                    )}
                     {textProgress && (
                       <>
                         <p><strong>总字数：</strong>{formatCount(textProgress.totalChars)}</p>
