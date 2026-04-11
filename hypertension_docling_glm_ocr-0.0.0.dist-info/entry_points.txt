@@ -1,2 +1,0 @@
-[docling]
-hypertension_docling_glm = app.document_parser.docling_glm_ocr_plugin

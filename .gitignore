@@ -22,6 +22,8 @@ wheels/
 
 # Virtual Environment
 .env
+.env.local
+.env.*.local
 .venv
 venv/
 ENV/
@@ -73,8 +75,12 @@ htmlcov/
 /docker/milvus/volumes2/
 /tests/langsmith/
 /docker/milvus/
-/docs/
 /.codex/
 /.claude/
 /data/
 /model/
+
+# Private academic materials
+/docs/*.docx
+/docs/开题报告.txt
+/docs/问题日志.txt

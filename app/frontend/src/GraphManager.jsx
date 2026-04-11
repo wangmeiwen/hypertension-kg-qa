@@ -23,6 +23,8 @@ import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "
 export default function GraphManager() {
   const IMPORT_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
   const GRAPH_JOB_POLL_MS = 20000;
+  const INITIAL_RECENT_JOBS_LIMIT = 1;
+  const FULL_RECENT_JOBS_LIMIT = 8;
   const JOB_STATUS_QUEUED = "queued";
   const JOB_STATUS_RUNNING = "running";
   const JOB_STATUS_PAUSED = "paused";
@@ -73,6 +75,7 @@ export default function GraphManager() {
   const [activeImportJob, setActiveImportJob] = useState(null);
   const [activeEmbedJob, setActiveEmbedJob] = useState(null);
   const [recentJobs, setRecentJobs] = useState([]);
+  const [recentJobsExpanded, setRecentJobsExpanded] = useState(false);
   const [isSubmittingImport, setIsSubmittingImport] = useState(false);
   const [isSubmittingEmbed, setIsSubmittingEmbed] = useState(false);
 
@@ -82,7 +85,7 @@ export default function GraphManager() {
     loadRelTypes();
     loadNodes();
     loadGraphPreview("", DEFAULT_GRAPH_LIMIT);
-    loadRecentJobs();
+    loadRecentJobs(INITIAL_RECENT_JOBS_LIMIT);
   }, []);
 
   // 加载节点标签
@@ -298,13 +301,22 @@ export default function GraphManager() {
     }
   }
 
-  async function loadRecentJobs() {
+  function getRecentJobsLimit(forceFull = false) {
+    return forceFull || recentJobsExpanded ? FULL_RECENT_JOBS_LIMIT : INITIAL_RECENT_JOBS_LIMIT;
+  }
+
+  async function loadRecentJobs(limit = getRecentJobsLimit()) {
     try {
-      const data = await getRecentGraphJobs(8);
+      const data = await getRecentGraphJobs(limit);
       setRecentJobs(data);
     } catch (err) {
       console.error("加载最近图谱任务失败:", err);
     }
+  }
+
+  async function handleRefreshRecentJobs() {
+    setRecentJobsExpanded(true);
+    await loadRecentJobs(FULL_RECENT_JOBS_LIMIT);
   }
 
   // 打开嵌入模态框
@@ -635,10 +647,10 @@ export default function GraphManager() {
       return undefined;
     }
     const timer = window.setInterval(() => {
-      loadRecentJobs();
+      loadRecentJobs(getRecentJobsLimit());
     }, GRAPH_JOB_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [recentJobs]);
+  }, [recentJobs, recentJobsExpanded]);
 
   // 执行嵌入
   async function handleEmbedToMilvus() {
@@ -866,9 +878,9 @@ export default function GraphManager() {
             <h3>最近任务</h3>
             <p className="graph-task-caption">关闭弹窗后，图谱导入和嵌入任务仍会继续在后台执行。</p>
           </div>
-          <button type="button" onClick={loadRecentJobs} className="btn btn-secondary">
-            刷新任务
-          </button>
+              <button type="button" onClick={handleRefreshRecentJobs} className="btn btn-secondary">
+                刷新任务
+              </button>
         </div>
         {recentJobs.length === 0 ? (
           <div className="graph-task-empty">暂无最近任务</div>
