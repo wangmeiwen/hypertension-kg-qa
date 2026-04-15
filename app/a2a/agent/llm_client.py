@@ -30,6 +30,10 @@ from app.common.session_logger import get_request_id, get_session_id, log_llm_ca
 logger = logging.getLogger(__name__)
 
 
+class LLMRetryExhaustedError(TimeoutError):
+    """LLM 超时重试达到上限后抛出的聚合异常。"""
+
+
 def _hash_payload(payload: Any) -> str:
     """计算请求载荷哈希，便于日志比对与去重排查。"""
     try:
@@ -62,6 +66,24 @@ def _log_server_llm_event(event: str, payload: dict[str, Any]) -> None:
                 **payload,
             },
             ensure_ascii=False,
+        ),
+    )
+
+
+def _format_error_text(exc: BaseException) -> str:
+    """将异常格式化为稳定可读的错误文本。"""
+    text = str(exc or "").strip()
+    return text or type(exc).__name__
+
+
+def _is_retryable_timeout_error(exc: BaseException) -> bool:
+    """判断异常是否属于可重试的超时类错误。"""
+    return isinstance(
+        exc,
+        (
+            TimeoutError,
+            requests.Timeout,
+            httpx.TimeoutException,
         ),
     )
 
@@ -185,78 +207,102 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
+        request_timeout = max(1, int(timeout or self.conf.LLM_REQUEST_TIMEOUT_SECONDS))
+        max_attempts = max(1, int(self.conf.LLM_REQUEST_RETRY_MAX_ATTEMPTS or 1))
+        message_hash = _hash_payload(messages)
+        errors: list[str] = []
+        data: dict[str, Any] = {}
 
-        _log_server_llm_event(
-            "llm_request_start",
-            {
-                "model": self.conf.MODEL_NAME,
-                "temperature": float(temperature),
-                "message_count": len(messages),
-                "messages_compact": _compact_payload(messages),
-                "messages_hash": _hash_payload(messages),
-                "actor_role": str(actor_role or ""),
-                "actor_name": str(actor_name or ""),
-            },
-        )
-
-        started = time.perf_counter()
-
-        try:
-
-            resp = requests.post(
-                self.endpoint,
-                headers=self.headers,
-                data=json.dumps(payload),
-                timeout=timeout,
-            )
-
-            resp.raise_for_status()
-
-            data = resp.json()
-
-        except (
-            RuntimeError,
-            ValueError,
-            TypeError,
-            KeyError,
-            AttributeError,
-            OSError,
-            ImportError,
-            requests.RequestException,
-            TimeoutError,
-        ) as exc:
-
+        for attempt in range(1, max_attempts + 1):
             _log_server_llm_event(
-                "llm_request_error",
+                "llm_request_start",
                 {
                     "model": self.conf.MODEL_NAME,
                     "temperature": float(temperature),
-                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
-                    "messages_hash": _hash_payload(messages),
+                    "message_count": len(messages),
+                    "messages_compact": _compact_payload(messages),
+                    "messages_hash": message_hash,
                     "actor_role": str(actor_role or ""),
                     "actor_name": str(actor_name or ""),
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "timeout_seconds": request_timeout,
                 },
             )
 
-            log_llm_call(
-                session_id=get_session_id(),
-                model=self.conf.MODEL_NAME,
-                temperature=temperature,
-                messages=messages,
-                response_content="",
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                finish_reason="",
-                error=str(exc),
-                actor_role=str(actor_role or ""),
-                actor_name=str(actor_name or ""),
-            )
+            started = time.perf_counter()
 
-            raise
+            try:
+
+                resp = requests.post(
+                    self.endpoint,
+                    headers=self.headers,
+                    data=json.dumps(payload),
+                    timeout=request_timeout,
+                )
+
+                resp.raise_for_status()
+
+                data = resp.json()
+                break
+
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+                requests.RequestException,
+                TimeoutError,
+            ) as exc:
+                error_text = _format_error_text(exc)
+                errors.append(f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}")
+
+                _log_server_llm_event(
+                    "llm_request_error",
+                    {
+                        "model": self.conf.MODEL_NAME,
+                        "temperature": float(temperature),
+                        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                        "error_type": type(exc).__name__,
+                        "error": error_text,
+                        "messages_hash": message_hash,
+                        "actor_role": str(actor_role or ""),
+                        "actor_name": str(actor_name or ""),
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "timeout_seconds": request_timeout,
+                        "will_retry": bool(_is_retryable_timeout_error(exc) and attempt < max_attempts),
+                    },
+                )
+
+                log_llm_call(
+                    session_id=get_session_id(),
+                    model=self.conf.MODEL_NAME,
+                    temperature=temperature,
+                    messages=messages,
+                    response_content="",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                    finish_reason="",
+                    error=error_text,
+                    actor_role=str(actor_role or ""),
+                    actor_name=str(actor_name or ""),
+                )
+
+                if _is_retryable_timeout_error(exc) and attempt < max_attempts:
+                    continue
+                if _is_retryable_timeout_error(exc):
+                    raise LLMRetryExhaustedError(
+                        "llm_request_retry_exhausted: "
+                        f"attempts={max_attempts}; timeout_seconds={request_timeout}; "
+                        f"errors={' | '.join(errors)}"
+                    ) from exc
+                raise
 
         # 提取响应内容
 
@@ -359,8 +405,6 @@ class LLMClient:
         actor_name: str | None = None,
     ) -> LLMResponse:
         """异步调用大模型并返回内容和 token 使用量"""
-
-
         set_trace_metadata(
             {
                 "session_id": get_session_id(),
@@ -378,76 +422,107 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
+        request_timeout = max(1, int(timeout or self.conf.LLM_REQUEST_TIMEOUT_SECONDS))
+        max_attempts = max(1, int(self.conf.LLM_REQUEST_RETRY_MAX_ATTEMPTS or 1))
+        message_hash = _hash_payload(messages)
+        errors: list[str] = []
+        data: dict[str, Any] = {}
 
-        _log_server_llm_event(
-            "llm_request_start",
-            {
-                "model": self.conf.MODEL_NAME,
-                "temperature": float(temperature),
-                "message_count": len(messages),
-                "messages_compact": _compact_payload(messages),
-                "messages_hash": _hash_payload(messages),
-                "actor_role": str(actor_role or ""),
-                "actor_name": str(actor_name or ""),
-            },
-        )
-
-        started = time.perf_counter()
-
-        try:
-
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    self.endpoint,
-                    headers=self.headers,
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-        except (
-            RuntimeError,
-            ValueError,
-            TypeError,
-            KeyError,
-            AttributeError,
-            OSError,
-            ImportError,
-            httpx.HTTPError,
-            TimeoutError,
-        ) as exc:
-
+        for attempt in range(1, max_attempts + 1):
             _log_server_llm_event(
-                "llm_request_error",
+                "llm_request_start",
                 {
                     "model": self.conf.MODEL_NAME,
                     "temperature": float(temperature),
-                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
-                    "messages_hash": _hash_payload(messages),
+                    "message_count": len(messages),
+                    "messages_compact": _compact_payload(messages),
+                    "messages_hash": message_hash,
                     "actor_role": str(actor_role or ""),
                     "actor_name": str(actor_name or ""),
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "timeout_seconds": request_timeout,
                 },
             )
 
-            log_llm_call(
-                session_id=get_session_id(),
-                model=self.conf.MODEL_NAME,
-                temperature=temperature,
-                messages=messages,
-                response_content="",
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                finish_reason="",
-                error=str(exc),
-                actor_role=str(actor_role or ""),
-                actor_name=str(actor_name or ""),
-            )
+            started = time.perf_counter()
 
-            raise
+            try:
+                async with httpx.AsyncClient(timeout=request_timeout) as client:
+                    resp = await client.post(
+                        self.endpoint,
+                        headers=self.headers,
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                break
+
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+                httpx.HTTPError,
+                TimeoutError,
+            ) as exc:
+                error_text = _format_error_text(exc)
+                errors.append(f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}")
+                should_retry = _is_retryable_timeout_error(exc) and attempt < max_attempts
+
+                _log_server_llm_event(
+                    "llm_request_error",
+                    {
+                        "model": self.conf.MODEL_NAME,
+                        "temperature": float(temperature),
+                        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                        "error_type": type(exc).__name__,
+                        "error": error_text,
+                        "messages_hash": message_hash,
+                        "actor_role": str(actor_role or ""),
+                        "actor_name": str(actor_name or ""),
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "timeout_seconds": request_timeout,
+                        "will_retry": bool(should_retry),
+                    },
+                )
+
+                log_llm_call(
+                    session_id=get_session_id(),
+                    model=self.conf.MODEL_NAME,
+                    temperature=temperature,
+                    messages=messages,
+                    response_content="",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                    finish_reason="",
+                    error=error_text,
+                    actor_role=str(actor_role or ""),
+                    actor_name=str(actor_name or ""),
+                )
+
+                if should_retry:
+                    continue
+                if _is_retryable_timeout_error(exc):
+                    raise LLMRetryExhaustedError(
+                        "llm_request_retry_exhausted: "
+                        f"attempts={max_attempts}; timeout_seconds={request_timeout}; "
+                        f"errors={' | '.join(errors)}"
+                    ) from exc
+                raise
+
+        else:
+            raise LLMRetryExhaustedError(
+                "llm_request_retry_exhausted: "
+                f"attempts={max_attempts}; timeout_seconds={request_timeout}; "
+                f"errors={' | '.join(errors)}"
+            )
 
         choices = data.get("choices") or []
 

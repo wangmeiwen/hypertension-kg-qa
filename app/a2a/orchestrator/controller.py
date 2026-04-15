@@ -374,7 +374,7 @@ class UnifiedOrchestratorController:
         response = await self._client.chat_with_tokens_async(
             messages=messages,
             temperature=0.0,
-            timeout=90,
+            timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
             actor_role="controller",
             actor_name="orchestrator_prompt_compressor",
         )
@@ -568,7 +568,7 @@ class UnifiedOrchestratorController:
                 messages=messages,
                 image_data=image_data,
                 temperature=0.1,
-                timeout=90,
+                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
                 actor_role="controller",
                 actor_name="orchestrator_controller",
             )
@@ -576,7 +576,7 @@ class UnifiedOrchestratorController:
             response = await self._client.chat_with_tokens_async(
                 messages=messages,
                 temperature=0.1,
-                timeout=90,
+                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
                 actor_role="controller",
                 actor_name="orchestrator_controller",
             )

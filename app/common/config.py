@@ -81,6 +81,8 @@ class Config:
         self.MODEL_API_KEY = os.getenv("MODEL_API_KEY")
         self.MODEL_BASE_URL = os.getenv("MODEL_BASE_URL")
         self.MODEL_NAME = os.getenv("MODEL_NAME")
+        self.LLM_REQUEST_TIMEOUT_SECONDS = int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "600"))
+        self.LLM_REQUEST_RETRY_MAX_ATTEMPTS = int(os.getenv("LLM_REQUEST_RETRY_MAX_ATTEMPTS", "3"))
         self.SESSION_MEMORY_MODEL_NAME = os.getenv("SESSION_MEMORY_MODEL_NAME", self.MODEL_NAME)
         self.GRAPH_LLM_LANE_CONFIGS = self._build_graph_llm_lane_configs()
         self.GRAPH_LLM_PARALLELISM = len(self.GRAPH_LLM_LANE_CONFIGS)
@@ -192,5 +194,4 @@ class Config:
                 }
             )
         return lanes
-
 

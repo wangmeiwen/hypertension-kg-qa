@@ -169,11 +169,26 @@ class AgentRunService:
         if not task_id:
             raise RuntimeError("a2a_task_id_missing")
 
+        llm_timeout_seconds = max(
+            1.0,
+            safe_float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "600"), default=600.0),
+        )
+        llm_retry_attempts = max(
+            1.0,
+            safe_float(os.getenv("LLM_REQUEST_RETRY_MAX_ATTEMPTS", "3"), default=3.0),
+        )
+        default_agent_timeout = max(
+            180.0,
+            llm_timeout_seconds * llm_retry_attempts + 300.0,
+        )
         timeout_seconds = max(
             3.0,
             min(
-                safe_float(os.getenv("AGENT_RUN_A2A_TIMEOUT_SECONDS", "180"), default=180.0),
-                900.0,
+                safe_float(
+                    os.getenv("AGENT_RUN_A2A_TIMEOUT_SECONDS", str(int(default_agent_timeout))),
+                    default=default_agent_timeout,
+                ),
+                7200.0,
             ),
         )
         poll_ms = max(
