@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import logging
+
 import time
 
 from typing import Any, AsyncIterator, Optional
@@ -136,7 +137,7 @@ class LLMResponse:
 
 
 class LLMStreamEvent:
-    """流式 LLM 事件，统一表达增量文本与收尾统计。"""
+    """流式 LLM 事件，统一表达增量正文与收尾统计。"""
 
     def __init__(
         self,
@@ -176,7 +177,7 @@ def _normalize_text_content(value: Any) -> str:
 
 
 def _extract_message_content(message: Any) -> str:
-    """从 message/delta 结构中提取文本内容。"""
+    """从 message/delta 结构中提取文本正文。"""
     if isinstance(message, dict):
         if "content" in message:
             return _normalize_text_content(message.get("content"))
@@ -185,7 +186,10 @@ def _extract_message_content(message: Any) -> str:
     return _normalize_text_content(message)
 
 
-def _prepare_vision_messages(messages: list[dict[str, Any]], image_data: Optional[str] = None) -> list[dict[str, Any]]:
+def _prepare_vision_messages(
+    messages: list[dict[str, Any]],
+    image_data: Optional[str] = None,
+) -> list[dict[str, Any]]:
     """为视觉模型构建独立消息副本，避免原地修改调用方数据。"""
     prepared = copy.deepcopy(messages)
     if not image_data:
@@ -211,18 +215,17 @@ def _extract_content_and_finish_reason(data: dict[str, Any]) -> tuple[str, str]:
 
     choice = choices[0] if isinstance(choices[0], dict) else {}
     finish_reason = str(choice.get("finish_reason", "") or "")
-    message = choice.get("message", "")
-    return _extract_message_content(message), finish_reason
+    return _extract_message_content(choice.get("message", "")), finish_reason
 
 
 def _extract_usage_dict(data: dict[str, Any]) -> tuple[int, int, int]:
     """从响应中提取 token 统计。"""
-    usage = data.get("usage", {})
-    usage_dict = usage if isinstance(usage, dict) else {}
+    usage_obj = data.get("usage")
+    usage = usage_obj if isinstance(usage_obj, dict) else {}
     return (
-        int(usage_dict.get("prompt_tokens", 0) or 0),
-        int(usage_dict.get("completion_tokens", 0) or 0),
-        int(usage_dict.get("total_tokens", 0) or 0),
+        int(usage.get("prompt_tokens", 0) or 0),
+        int(usage.get("completion_tokens", 0) or 0),
+        int(usage.get("total_tokens", 0) or 0),
     )
 
 
@@ -394,8 +397,6 @@ class LLMClient:
                         f"errors={' | '.join(errors)}"
                     ) from exc
                 raise
-
-        # 提取响应内容
 
         content, finish_reason = _extract_content_and_finish_reason(data)
         prompt_tokens, completion_tokens, total_tokens = _extract_usage_dict(data)
@@ -622,7 +623,7 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
-        """异步流式调用大模型并持续产出增量文本。"""
+        """异步流式调用大模型并持续产出增量正文。"""
         set_trace_metadata(
             {
                 "session_id": get_session_id(),
@@ -652,7 +653,6 @@ class LLMClient:
         completion_tokens = 0
         total_tokens = 0
         raw_last_chunk: dict[str, Any] = {}
-        started = time.perf_counter()
 
         for attempt in range(1, max_attempts + 1):
             _log_server_llm_event(
@@ -671,7 +671,6 @@ class LLMClient:
                 },
             )
             started = time.perf_counter()
-
             try:
                 async with httpx.AsyncClient(timeout=request_timeout) as client:
                     async with client.stream(
@@ -691,14 +690,17 @@ class LLMClient:
                                 continue
                             if line == "[DONE]":
                                 break
-
                             try:
                                 data = json.loads(line)
                             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                                 raise ValueError(f"invalid_stream_chunk:{line[:120]}") from exc
 
                             raw_last_chunk = data if isinstance(data, dict) else {}
-                            chunk_prompt_tokens, chunk_completion_tokens, chunk_total_tokens = _extract_usage_dict(raw_last_chunk)
+                            (
+                                chunk_prompt_tokens,
+                                chunk_completion_tokens,
+                                chunk_total_tokens,
+                            ) = _extract_usage_dict(raw_last_chunk)
                             if chunk_prompt_tokens or chunk_completion_tokens or chunk_total_tokens:
                                 prompt_tokens = chunk_prompt_tokens
                                 completion_tokens = chunk_completion_tokens
@@ -709,13 +711,13 @@ class LLMClient:
                                 continue
                             choice = choices[0] if isinstance(choices[0], dict) else {}
                             finish_reason = str(choice.get("finish_reason", "") or finish_reason or "")
-                            delta_text = _extract_message_content(choice.get("delta"))
-                            if not delta_text:
+                            delta = _extract_message_content(choice.get("delta"))
+                            if not delta:
                                 continue
-                            full_chunks.append(delta_text)
+                            full_chunks.append(delta)
                             yield LLMStreamEvent(
                                 type="delta",
-                                delta=delta_text,
+                                delta=delta,
                                 finish_reason=finish_reason,
                                 prompt_tokens=prompt_tokens,
                                 completion_tokens=completion_tokens,
@@ -723,7 +725,6 @@ class LLMClient:
                                 raw_response=raw_last_chunk,
                             )
                 break
-
             except (
                 RuntimeError,
                 ValueError,
@@ -737,7 +738,7 @@ class LLMClient:
             ) as exc:
                 error_text = _format_error_text(exc)
                 errors.append(f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}")
-                should_retry = _is_retryable_timeout_error(exc) and attempt < max_attempts
+                should_retry = _is_retryable_timeout_error(exc) and not full_chunks and attempt < max_attempts
 
                 _log_server_llm_event(
                     "llm_stream_request_error",

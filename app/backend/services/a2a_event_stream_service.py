@@ -117,8 +117,7 @@ def extract_reply_delta(event: Dict[str, Any]) -> str:
         return ""
     metadata_obj = event.get("metadata")
     metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
-    delta = str(metadata.get("delta") or event.get("detail") or "")
-    return delta
+    return str(metadata.get("delta") or event.get("detail") or "")
 
 
 _SIMPLIFIED_PROGRESS_STAGES = {

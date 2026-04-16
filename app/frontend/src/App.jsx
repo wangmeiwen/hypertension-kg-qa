@@ -227,15 +227,60 @@ export default function App() {
     let streamSessionId = currentSessionId;
     let sessionListRefreshQueued = false;
     let hasReplyStarted = false;
+    let flushTimer = null;
+    let lastUiFlushAt = 0;
+    let renderedReplyContent = "";
+    let renderedThinkContent = thinkContent;
+    const flushAssistantMessage = (force = false) => {
+      if (!force && renderedReplyContent === replyContent && renderedThinkContent === thinkContent) {
+        return;
+      }
+      renderedReplyContent = replyContent;
+      renderedThinkContent = thinkContent;
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") {
+          next[next.length - 1] = {
+            ...last,
+            content: replyContent || last.content,
+            thinkContent,
+          };
+        }
+        return next;
+      });
+    };
+    const scheduleAssistantFlush = (force = false) => {
+      if (force) {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        lastUiFlushAt = Date.now();
+        flushAssistantMessage(true);
+        return;
+      }
+      const now = Date.now();
+      const elapsed = now - lastUiFlushAt;
+      if (elapsed >= 80) {
+        lastUiFlushAt = now;
+        flushAssistantMessage();
+        return;
+      }
+      if (flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        lastUiFlushAt = Date.now();
+        flushAssistantMessage();
+      }, Math.max(16, 80 - elapsed));
+    };
     // 追加思考状态并同步到当前助手消息。
     const addThinkStatus = (value, stage = "") => {
       const nextStatuses = appendThinkStatus(thinkStatuses, value, stage);
       if (nextStatuses.length !== thinkStatuses.length) {
         thinkStatuses = nextStatuses;
         thinkContent = formatThinkStatuses(thinkStatuses);
-        setMessages((prev) => prev.map((msg) => (
-          msg.clientId === assistantClientId ? { ...msg, thinkContent } : msg
-        )));
+        scheduleAssistantFlush();
       }
     };
     // 将流里返回的持久化 ID 回填到本地 pending 消息。
@@ -294,33 +339,22 @@ export default function App() {
           hasReplyStarted = true;
           replyContent += chunk.msg || "";
         } else if (chunk?.type === "done") {
-          addThinkStatus("Answer finishing", "answer");
+          addThinkStatus("答案生成中", "answer");
           doneStatus = String(chunk.status || "done");
           if (doneStatus === "cancelled") {
-            addThinkStatus("Generation stopped", "answer");
+            addThinkStatus("已停止生成", "answer");
           } else if (doneStatus === "timeout") {
-            addThinkStatus("Generation timed out", "answer");
+            addThinkStatus("生成超时", "answer");
           } else if (doneStatus === "error" || doneStatus === "failed") {
-            addThinkStatus("Generation failed", "answer");
+            addThinkStatus("生成失败", "answer");
           } else if (hasReplyStarted) {
-            addThinkStatus("Answer completed", "answer");
+            addThinkStatus("回答完成", "answer");
           }
           if (!replyContent) {
             replyContent = (chunk.msg || "").trim();
           }
         }
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = {
-              ...last,
-              content: replyContent || last.content,
-              thinkContent,
-            };
-          }
-          return next;
-        });
+        scheduleAssistantFlush(chunk?.type === "done");
       }
 
       if ((doneStatus === "cancelled" || doneStatus === "timeout") && streamSessionId) {
@@ -339,6 +373,11 @@ export default function App() {
         return next;
       });
     } finally {
+      scheduleAssistantFlush(true);
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       setLoading(false);
       setStoppingJob(false);
       setCurrentJobId("");
@@ -584,7 +623,15 @@ export default function App() {
                     )}
                     <div className={m.role === "assistant" ? "content assistant-markdown" : "content"}>
                       {m.role === "assistant"
-                        ? (m.content ? renderMarkdownContent(m.content) : null)
+                        ? (
+                          m.content
+                            ? (
+                              loading && i === messages.length - 1
+                                ? <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.content}</div>
+                                : renderMarkdownContent(m.content)
+                            )
+                            : null
+                        )
                         : (m.content || "")}
                     </div>
                     <div className="msg-actions">
