@@ -794,6 +794,124 @@ class UnifiedOrchestratorController:
             "prompt_budget_events": compression_events if isinstance(compression_events, list) else [],
         }
 
+    def _build_final_answer_system_prompt(self) -> str:
+        """构建最终答案生成阶段的系统提示词。"""
+        return (
+            "你是高血压问答系统的最终回答生成器。\n"
+            "请基于用户问题、会话问答记忆、历史检索索引和已有检索证据，输出自然、完整、可直接展示给用户的最终答案。\n"
+            "要求：\n"
+            "1. 直接回答问题，不要输出 JSON，不要解释推理过程。\n"
+            "2. 如果证据不足，要明确说明不确定性，但仍基于现有信息给出谨慎回答。\n"
+            "3. 优先使用已有检索证据，不要编造新的事实或来源。\n"
+            "4. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
+        )
+
+    def _build_final_answer_user_prompt(
+        self,
+        *,
+        question: str,
+        qa_memory_text: str,
+        retrieval_index_text: str,
+        tool_observations: list[dict[str, Any]],
+        draft_answer: str,
+    ) -> str:
+        """构建最终答案生成阶段的用户提示词。"""
+        observation_lines = self._build_observation_lines(tool_observations)
+        draft_text = _sanitize_text(draft_answer, 1600)
+        return (
+            f"用户问题：{question}\n\n"
+            f"会话问答记忆：\n{qa_memory_text}\n\n"
+            f"历史检索问题索引：\n{retrieval_index_text}\n\n"
+            "当前已获取的工具/检索结果：\n"
+            + "\n".join(observation_lines)
+            + "\n\n"
+            + (f"主控草稿答案（可参考但不要机械复述）：\n{draft_text}\n\n" if draft_text else "")
+            + "请输出最终回答。"
+        )
+
+    async def _stream_final_answer(
+        self,
+        *,
+        question: str,
+        qa_memory_text: str,
+        retrieval_index_text: str,
+        tool_observations: list[dict[str, Any]],
+        draft_answer: str,
+        image_data: str,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> tuple[str, dict[str, int]]:
+        """流式生成最终答案，并通过回调推送增量正文。"""
+        messages = [
+            {"role": "system", "content": self._build_final_answer_system_prompt()},
+            {
+                "role": "user",
+                "content": self._build_final_answer_user_prompt(
+                    question=question,
+                    qa_memory_text=qa_memory_text,
+                    retrieval_index_text=retrieval_index_text,
+                    tool_observations=tool_observations,
+                    draft_answer=draft_answer,
+                ),
+            },
+        ]
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "answer_stream_start",
+                    "detail": "答案生成中",
+                    "tool_name": "answer_stream",
+                }
+            )
+
+        chunks: list[str] = []
+        tokens = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if image_data:
+            event_iter = self._client.stream_chat_with_vision_async(
+                messages=messages,
+                image_data=image_data,
+                temperature=0.1,
+                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
+                actor_role="controller",
+                actor_name="orchestrator_final_answer",
+            )
+        else:
+            event_iter = self._client.stream_chat_with_tokens_async(
+                messages=messages,
+                temperature=0.1,
+                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
+                actor_role="controller",
+                actor_name="orchestrator_final_answer",
+            )
+
+        async for event in event_iter:
+            if str(event.type or "") == "delta":
+                delta = str(event.delta or "")
+                if not delta:
+                    continue
+                chunks.append(delta)
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "event": "answer_delta",
+                            "detail": delta,
+                            "tool_name": "answer_stream",
+                            "metadata": {"delta": delta},
+                        }
+                    )
+                continue
+
+            if str(event.type or "") == "done":
+                tokens = {
+                    "prompt_tokens": int(getattr(event, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(getattr(event, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(event, "total_tokens", 0) or 0),
+                }
+
+        answer = "".join(chunks).strip()
+        if not answer:
+            answer = str(draft_answer or "").strip()
+        return answer, tokens
+
     def _build_over_budget_result(
         self,
         *,
@@ -902,7 +1020,16 @@ class UnifiedOrchestratorController:
             )
 
             if action_name == "final_answer":
-                final_answer = str(action.get("answer") or "").strip()
+                final_answer, answer_tokens = await self._stream_final_answer(
+                    question=safe_question,
+                    qa_memory_text=qa_memory_text,
+                    retrieval_index_text=retrieval_index_text,
+                    tool_observations=tool_observations,
+                    draft_answer=str(action.get("answer") or "").strip(),
+                    image_data=str(image_data or "").strip(),
+                    progress_callback=progress_callback,
+                )
+                total_tokens += int(answer_tokens.get("total_tokens") or 0)
                 confidence = 0.9 if tool_observations else 0.7
                 break
 
@@ -973,7 +1100,16 @@ class UnifiedOrchestratorController:
                     compression_state=compression_state,
                 )
             total_tokens += int(tokens.get("total_tokens") or 0)
-            final_answer = str(forced_action.get("answer") or "").strip()
+            final_answer, answer_tokens = await self._stream_final_answer(
+                question=safe_question,
+                qa_memory_text=qa_memory_text,
+                retrieval_index_text=retrieval_index_text,
+                tool_observations=tool_observations,
+                draft_answer=str(forced_action.get("answer") or "").strip(),
+                image_data=str(image_data or "").strip(),
+                progress_callback=progress_callback,
+            )
+            total_tokens += int(answer_tokens.get("total_tokens") or 0)
             if not final_answer:
                 final_answer = "当前基于已有问答记忆和检索记录，仍缺少足够证据给出更确定的回答。"
             processing_steps.append("已执行强制终答")

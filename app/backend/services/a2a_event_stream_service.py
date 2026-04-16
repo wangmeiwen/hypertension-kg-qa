@@ -108,6 +108,19 @@ def extract_progress_detail(event: Dict[str, Any]) -> str:
     return str(event.get("detail") or event.get("event") or "").strip()
 
 
+def extract_reply_delta(event: Dict[str, Any]) -> str:
+    """从进度事件中提取回答正文增量。"""
+    if not isinstance(event, dict):
+        return ""
+    event_name = str(event.get("event") or "").strip().lower()
+    if event_name != "answer_delta":
+        return ""
+    metadata_obj = event.get("metadata")
+    metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
+    delta = str(metadata.get("delta") or event.get("detail") or "")
+    return delta
+
+
 _SIMPLIFIED_PROGRESS_STAGES = {
     "orchestrator": "主agent思考中",
     "subagent": "子agent正在检索",
@@ -272,6 +285,7 @@ class A2AEventStreamService:
         )
         traces: List[Dict[str, Any]] = []
         emitted_progress_stages: set[str] = set()
+        reply_emitted = False
         cursor = 0
 
         while True:
@@ -291,6 +305,20 @@ class A2AEventStreamService:
             cursor = int(snapshot.get("next_cursor") or cursor)
 
             for event in events:
+                reply_delta = extract_reply_delta(event if isinstance(event, dict) else {})
+                if reply_delta:
+                    if "answer" not in emitted_progress_stages:
+                        emitted_progress_stages.add("answer")
+                        yield {
+                            "type": "msg",
+                            "msg": _SIMPLIFIED_PROGRESS_STAGES["answer"],
+                            "stage": "answer",
+                            "task_id": task_id,
+                        }
+                    reply_emitted = True
+                    yield {"type": "reply", "msg": reply_delta, "task_id": task_id}
+                    continue
+
                 detail = extract_progress_detail(event if isinstance(event, dict) else {})
                 if not detail:
                     continue
@@ -327,7 +355,7 @@ class A2AEventStreamService:
                         "stage": "answer",
                         "task_id": task_id,
                     }
-                if state == "completed" and final_text:
+                if state == "completed" and final_text and not reply_emitted:
                     yield {"type": "reply", "msg": final_text, "task_id": task_id}
                 yield {
                     "type": "done",

@@ -8,6 +8,10 @@ from typing import Any, Awaitable, Callable
 class GraphPublicService:
     """封装公开图谱查询接口。"""
 
+    _RELATIONSHIP_BASE_CAP = 10
+    _RELATIONSHIP_FETCH_MULTIPLIER = 6
+    _RELATIONSHIP_FETCH_MAX = 3000
+
     def __init__(
         self,
         await_call: Callable[..., Awaitable[Any]],
@@ -28,9 +32,90 @@ class GraphPublicService:
         self._neo4j_client = neo4j_client
         self._log_api_error = log_api_error
 
+    @staticmethod
+    def _normalize_graph_row(row: dict[str, Any]) -> dict[str, Any]:
+        """标准化图谱关系行，便于后续做均衡筛选。"""
+        sid = str(row.get("source_id"))
+        tid = str(row.get("target_id"))
+        return {
+            "source_id": sid,
+            "target_id": tid,
+            "source_name": row.get("source_name") or sid,
+            "target_name": row.get("target_name") or tid,
+            "source_labels": row.get("source_labels") or ["Entity"],
+            "target_labels": row.get("target_labels") or ["Entity"],
+            "rel_type": row.get("rel_type") or "RELATED_TO",
+        }
+
+    @classmethod
+    def _select_balanced_relationship_rows(cls, rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+        """按每节点关系上限逐轮扩容，均衡不同节点的展示关系数。"""
+        safe_limit = max(0, int(limit or 0))
+        normalized_rows = [cls._normalize_graph_row(row) for row in rows if isinstance(row, dict)]
+        if safe_limit <= 0:
+            return []
+        if len(normalized_rows) <= safe_limit:
+            return normalized_rows
+
+        per_node_total: dict[str, int] = {}
+        for row in normalized_rows:
+            source_id = str(row.get("source_id") or "")
+            target_id = str(row.get("target_id") or "")
+            per_node_total[source_id] = per_node_total.get(source_id, 0) + 1
+            per_node_total[target_id] = per_node_total.get(target_id, 0) + 1
+
+        selected: list[dict[str, Any]] = []
+        selected_keys: set[tuple[str, str, str]] = set()
+        node_counts: dict[str, int] = {}
+        cap = int(cls._RELATIONSHIP_BASE_CAP)
+        max_cap = max(cap, max(per_node_total.values(), default=cap))
+
+        while len(selected) < safe_limit and cap <= max_cap:
+            added_in_round = False
+            for row in normalized_rows:
+                if len(selected) >= safe_limit:
+                    break
+                source_id = str(row.get("source_id") or "")
+                target_id = str(row.get("target_id") or "")
+                rel_type = str(row.get("rel_type") or "RELATED_TO")
+                row_key = (source_id, target_id, rel_type)
+                if row_key in selected_keys:
+                    continue
+                if node_counts.get(source_id, 0) >= cap or node_counts.get(target_id, 0) >= cap:
+                    continue
+                selected.append(row)
+                selected_keys.add(row_key)
+                node_counts[source_id] = node_counts.get(source_id, 0) + 1
+                node_counts[target_id] = node_counts.get(target_id, 0) + 1
+                added_in_round = True
+            if len(selected) >= safe_limit:
+                break
+            if not added_in_round and cap >= max_cap:
+                break
+            cap += 1
+
+        if len(selected) < safe_limit:
+            for row in normalized_rows:
+                if len(selected) >= safe_limit:
+                    break
+                source_id = str(row.get("source_id") or "")
+                target_id = str(row.get("target_id") or "")
+                rel_type = str(row.get("rel_type") or "RELATED_TO")
+                row_key = (source_id, target_id, rel_type)
+                if row_key in selected_keys:
+                    continue
+                selected.append(row)
+                selected_keys.add(row_key)
+
+        return selected[:safe_limit]
+
     async def graph_visualization(self, keyword: str = "", limit: int = 200) -> dict[str, Any]:
         """查询图谱可视化节点与边数据。"""
         safe_limit = max(10, min(limit, 500))
+        query_limit = min(
+            max(safe_limit, safe_limit * self._RELATIONSHIP_FETCH_MULTIPLIER),
+            self._RELATIONSHIP_FETCH_MAX,
+        )
         q = (keyword or "").strip()
         try:
             if q:
@@ -43,9 +128,9 @@ class GraphPublicService:
                            labels(a) AS source_labels, labels(b) AS target_labels,
                            a.name AS source_name, b.name AS target_name,
                            type(r) AS rel_type
-                    LIMIT $limit
-                    """,
-                    {"q": q, "limit": safe_limit},
+                     LIMIT $limit
+                     """,
+                    {"q": q, "limit": query_limit},
                 )
             else:
                 rows = await self._await_call(
@@ -56,9 +141,9 @@ class GraphPublicService:
                            labels(a) AS source_labels, labels(b) AS target_labels,
                            a.name AS source_name, b.name AS target_name,
                            type(r) AS rel_type
-                    LIMIT $limit
-                    """,
-                    {"limit": safe_limit},
+                     LIMIT $limit
+                     """,
+                    {"limit": query_limit},
                 )
         except RuntimeError as exc:
             self._log_api_error("/graph/visualization", "neo4j_query", exc, keyword=q, limit=safe_limit)
@@ -67,9 +152,10 @@ class GraphPublicService:
             self._log_api_error("/graph/visualization", "unknown", exc, keyword=q, limit=safe_limit)
             return {"ok": False, "error": f"graph_unknown_error:{str(exc)}", "nodes": [], "links": []}
 
+        selected_rows = self._select_balanced_relationship_rows(rows if isinstance(rows, list) else [], safe_limit)
         node_map: dict[str, dict[str, Any]] = {}
         links: list[dict[str, Any]] = []
-        for row in rows:
+        for row in selected_rows:
             sid = str(row.get("source_id"))
             tid = str(row.get("target_id"))
             sname = row.get("source_name") or sid

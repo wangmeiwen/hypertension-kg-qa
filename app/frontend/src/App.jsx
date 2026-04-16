@@ -226,6 +226,7 @@ export default function App() {
     let doneStatus = "done";
     let streamSessionId = currentSessionId;
     let sessionListRefreshQueued = false;
+    let hasReplyStarted = false;
     // 追加思考状态并同步到当前助手消息。
     const addThinkStatus = (value, stage = "") => {
       const nextStatuses = appendThinkStatus(thinkStatuses, value, stage);
@@ -290,10 +291,20 @@ export default function App() {
           addThinkStatus(chunk.msg || "", chunk.stage || "");
         } else if (chunk?.type === "reply") {
           addThinkStatus("答案生成中", "answer");
+          hasReplyStarted = true;
           replyContent += chunk.msg || "";
         } else if (chunk?.type === "done") {
-          addThinkStatus("答案生成中", "answer");
+          addThinkStatus("Answer finishing", "answer");
           doneStatus = String(chunk.status || "done");
+          if (doneStatus === "cancelled") {
+            addThinkStatus("Generation stopped", "answer");
+          } else if (doneStatus === "timeout") {
+            addThinkStatus("Generation timed out", "answer");
+          } else if (doneStatus === "error" || doneStatus === "failed") {
+            addThinkStatus("Generation failed", "answer");
+          } else if (hasReplyStarted) {
+            addThinkStatus("Answer completed", "answer");
+          }
           if (!replyContent) {
             replyContent = (chunk.msg || "").trim();
           }
