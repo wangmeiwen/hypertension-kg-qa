@@ -1,0 +1,287 @@
+﻿/* ========================================
+   Graph Panel
+   ======================================== */
+
+.graphPanel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  min-height: 68vh;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  box-shadow: var(--shadow-md);
+}
+
+.graphToolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.graphToolbar input {
+  flex: 1;
+  border: 2px solid var(--border-light);
+  border-radius: var(--radius-md);
+  height: 44px;
+  padding: 0 16px;
+  font-size: 15px;
+  color: var(--text-primary);
+  transition: all var(--transition-fast);
+}
+
+.graphToolbar select {
+  height: 44px;
+  border: 2px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 0 12px;
+  background: var(--bg-white);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.graphToolbar input:focus {
+  outline: none;
+  border-color: var(--primary-400);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.2);
+}
+
+.graphToolbar button {
+  border: none;
+  background: linear-gradient(135deg, var(--primary-700) 0%, var(--primary-800) 100%);
+  color: var(--text-white);
+  border-radius: var(--radius-md);
+  height: 44px;
+  padding: 0 20px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+}
+
+.graphToolbar button:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.graphStats {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.graphCanvas {
+  height: 56vh;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-white);
+}
+
+.graphError {
+  color: #dc2626;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 12px 16px;
+  background: #fef2f2;
+  border-radius: var(--radius-md);
+  border-left: 4px solid #dc2626;
+}
+
+.graphMeta {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.graphToolbarEnhanced {
+  flex-wrap: wrap;
+}
+
+.graphToolbarEnhanced .graphStats {
+  white-space: nowrap;
+}
+
+.kgCanvasShell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: 14px;
+  min-height: 650px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.kgCanvasCompact {
+  min-height: 520px;
+}
+
+.kgCanvasHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kgCanvasStats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.kgCanvasStats strong {
+  color: var(--primary-800);
+  font-size: 18px;
+}
+
+.kgCanvasStats span {
+  color: var(--text-muted);
+}
+
+.kgCanvasStats em {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0e7490;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.kgCanvasTools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.kgCanvasTools button {
+  height: 36px;
+  border: 1px solid #bae6fd;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0e7490;
+  padding: 0 14px;
+  cursor: pointer;
+  font-weight: 700;
+  transition: all var(--transition-fast);
+}
+
+.kgCanvasTools button:hover {
+  border-color: #67e8f9;
+  background: #cffafe;
+}
+
+.kgSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.kgSwitch input {
+  accent-color: var(--primary-700);
+}
+
+.kgLegend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kgLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kgLegend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.kgCanvas {
+  position: relative;
+  flex: 1;
+  min-height: 520px;
+  border: 1px solid #dbeafe;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.kgCanvasCompact .kgCanvas {
+  min-height: 400px;
+}
+
+.kgEmpty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-weight: 600;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f8fafc,
+    #f8fafc 12px,
+    #f1f5f9 12px,
+    #f1f5f9 24px
+  );
+}
+
+.kgSelectedMeta,
+.kgHelpText {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  color: #475569;
+  font-size: 14px;
+}
+
+.kgSelectedMeta {
+  flex-wrap: wrap;
+}
+
+.kgSelectedMeta strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.kgSelectedMeta span {
+  color: #64748b;
+}
+
+.kgHelpText {
+  color: #64748b;
+}
+

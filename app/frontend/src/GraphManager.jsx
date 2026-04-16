@@ -18,6 +18,28 @@ import {
   getRecentGraphJobs
 } from "./api";
 import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "./KnowledgeGraphCanvas";
+import {
+  JOB_STATUS_PAUSED,
+  JOB_STATUS_FAILED,
+  JOB_STATUS_SUCCEEDED,
+  isJobRunning,
+  getJobStatusLabel,
+  getJobTypeLabel,
+  getJobStageLabel,
+  formatTaskTime,
+  formatDuration,
+  formatCount,
+  getGraphImportTextProgress,
+  getStageElapsedSeconds,
+  getJobWarnings,
+  getPausedReason,
+  getChunkLimit,
+  getEmbedBatchSize,
+  getEmbedLabelsText,
+  getCacheInfo,
+  buildJobSummary,
+} from "./features/graph/job_utils";
+import JobTelemetryPanel from "./features/graph/job_telemetry_panel";
 
 // 模块职责：提供图谱后台管理能力（节点、关系、查询、导入和嵌入）。
 export default function GraphManager() {
@@ -25,11 +47,6 @@ export default function GraphManager() {
   const GRAPH_JOB_POLL_MS = 20000;
   const INITIAL_RECENT_JOBS_LIMIT = 1;
   const FULL_RECENT_JOBS_LIMIT = 8;
-  const JOB_STATUS_QUEUED = "queued";
-  const JOB_STATUS_RUNNING = "running";
-  const JOB_STATUS_PAUSED = "paused";
-  const JOB_STATUS_SUCCEEDED = "succeeded";
-  const JOB_STATUS_FAILED = "failed";
 
   // 状态管理
   const [labels, setLabels] = useState([]);
@@ -324,293 +341,6 @@ export default function GraphManager() {
     loadEmbedStatus();
     setSelectedLabelsForEmbed([]);
     setShowEmbedModal(true);
-  }
-
-  function isJobRunning(job) {
-    return job && [JOB_STATUS_QUEUED, JOB_STATUS_RUNNING].includes(job.status);
-  }
-
-  function getJobStatusLabel(job) {
-    if (!job) return "";
-    if (job.status === JOB_STATUS_QUEUED) return "排队中";
-    if (job.status === JOB_STATUS_RUNNING) return "处理中";
-    if (job.status === JOB_STATUS_PAUSED) return "已暂停";
-    if (job.status === JOB_STATUS_SUCCEEDED) return "已完成";
-    if (job.status === JOB_STATUS_FAILED) return "失败";
-    return job.status;
-  }
-
-  function getJobTypeLabel(jobType) {
-    if (jobType === "graph_extract_import") return "文件抽取入图谱";
-    if (jobType === "graph_embed_milvus") return "嵌入 Milvus";
-    return jobType || "未知任务";
-  }
-
-  function getJobStageLabel(stage) {
-    const labelMap = {
-      validate_file: "文件校验",
-      parse_document: "文档解析",
-      ocr_images: "图片 OCR",
-      kg_primary_extract: "主抽取",
-      kg_omission_judge: "漏抽判定",
-      kg_supplement_extract: "补抽",
-      build_neo4j_queries: "构建 Neo4j 查询",
-      write_neo4j: "写入 Neo4j",
-      finalize: "整理结果",
-      read_graph: "读取图谱"
-    };
-    return labelMap[stage] || stage || "-";
-  }
-
-  function formatTaskTime(isoText) {
-    if (!isoText) return "-";
-    const date = new Date(isoText);
-    if (Number.isNaN(date.getTime())) return isoText;
-    return date.toLocaleString("zh-CN", { hour12: false });
-  }
-
-  function formatDuration(seconds) {
-    const safeSeconds = Math.max(0, Number(seconds) || 0);
-    const hours = Math.floor(safeSeconds / 3600);
-    const minutes = Math.floor((safeSeconds % 3600) / 60);
-    const remainSeconds = Math.floor(safeSeconds % 60);
-    if (hours > 0) return `${hours}小时 ${minutes}分 ${remainSeconds}秒`;
-    if (minutes > 0) return `${minutes}分 ${remainSeconds}秒`;
-    return `${remainSeconds}秒`;
-  }
-
-  function formatCount(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return "-";
-    return numeric.toLocaleString("zh-CN");
-  }
-
-  function getGraphImportTextProgress(job) {
-    if (!job || job.job_type !== "graph_extract_import") return null;
-    const totalChars = Number(job.total_chars || job.result?.parsed_text_length || 0);
-    if (!totalChars) return null;
-    const processedChars = Math.min(
-      totalChars,
-      Number(
-        job.processed_chars ??
-        job.result?.processed_text_length ??
-        (job.status === JOB_STATUS_SUCCEEDED ? totalChars : 0)
-      ) || 0
-    );
-    return {
-      totalChars,
-      processedChars,
-      totalChunks: Number(job.total_chunks || job.result?.chunk_count || 0) || 0,
-      completedChunks: Math.min(
-        Number(job.completed_chunks || 0) || 0,
-        Number(job.total_chunks || job.result?.chunk_count || 0) || 0,
-      ),
-      currentChunkIndex: Number(job.current_chunk_index || 0) || 0,
-      currentChunkChars: Number(job.current_chunk_chars || 0) || 0,
-    };
-  }
-
-  function getStageElapsedSeconds(job) {
-    if (!job?.stage_started_at) return null;
-    const startedAt = new Date(job.stage_started_at);
-    if (Number.isNaN(startedAt.getTime())) return null;
-    const referenceText = isJobRunning(job) ? null : (job.finished_at || job.last_heartbeat_at);
-    const referenceTime = referenceText ? new Date(referenceText).getTime() : Date.now();
-    return Math.max(0, Math.floor((referenceTime - startedAt.getTime()) / 1000));
-  }
-
-  function getJobWarnings(job) {
-    if (!Array.isArray(job?.warnings)) return [];
-    return job.warnings;
-  }
-
-  function getPausedReason(job) {
-    if (!job || job.status !== JOB_STATUS_PAUSED) return "";
-    return (
-      job?.result?.pause_reason ||
-      job?.result?.last_error ||
-      job?.error ||
-      ""
-    );
-  }
-
-  function getChunkLimit(job) {
-    const value = Number(job?.chunk_limit || job?.result?.chunk_limit || 0);
-    return Number.isFinite(value) && value > 0 ? value : 0;
-  }
-
-  function getEmbedBatchSize(job) {
-    const value = Number(job?.batch_size || 0);
-    return Number.isFinite(value) && value > 0 ? value : 0;
-  }
-
-  function getEmbedLabelsText(job) {
-    const labels = Array.isArray(job?.labels)
-      ? job.labels.map((item) => String(item || "").trim()).filter(Boolean)
-      : [];
-    return labels.length > 0 ? labels.join(", ") : "全部标签";
-  }
-
-  function getCacheInfo(job) {
-    return {
-      cacheUsed: Boolean(job?.cache_used ?? job?.result?.cache_used),
-      cacheInvalidatedReason: job?.cache_invalidated_reason || job?.result?.cache_invalidated_reason || "",
-      resumeCompatible: job?.resume_compatible ?? job?.result?.resume_compatible,
-    };
-  }
-
-  function getParallelInfo(job) {
-    const parallelism = Number(job?.parallelism || job?.result?.parallelism || 0) || 0;
-    const activeLanes = Number(job?.active_lanes || job?.result?.active_lanes || 0) || 0;
-    const currentAttempt = Number(job?.current_attempt || job?.result?.current_attempt || 0) || 0;
-    const maxAttempts = Number(job?.max_attempts || job?.result?.max_attempts || 0) || 0;
-    const laneStatuses = Array.isArray(job?.lane_statuses)
-      ? job.lane_statuses
-      : (Array.isArray(job?.result?.lane_statuses) ? job.result.lane_statuses : []);
-    return {
-      parallelism,
-      activeLanes,
-      currentAttempt,
-      maxAttempts,
-      laneStatuses,
-    };
-  }
-
-  function formatLaneStatuses(job) {
-    const { laneStatuses } = getParallelInfo(job);
-    if (!laneStatuses.length) return "";
-    return laneStatuses.map((lane) => {
-      const label = lane?.label || `lane${lane?.lane_id || "?"}`;
-      const status = lane?.status || "unknown";
-      const chunkIndex = Number(lane?.current_chunk_index || 0) || 0;
-      const attempt = Number(lane?.current_attempt || 0) || 0;
-      const suffix = chunkIndex > 0 ? `，块 ${chunkIndex}` : "";
-      const retryText = attempt > 0 ? `，重试 ${attempt}/${getParallelInfo(job).maxAttempts || 0}` : "";
-      return `${label}：${status}${suffix}${retryText}`;
-    }).join("；");
-  }
-
-  function renderJobTelemetry(job) {
-    if (!job) return null;
-    if (job.job_type === "graph_embed_milvus") {
-      const warnings = getJobWarnings(job);
-      const stageElapsed = getStageElapsedSeconds(job);
-      const batchSize = getEmbedBatchSize(job);
-      return (
-        <div className="embed-details">
-          <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
-          <p><strong>当前阶段:</strong> {getJobStageLabel(job.stage)}</p>
-          <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
-          <p><strong>嵌入批大小:</strong> {batchSize > 0 ? formatCount(batchSize) : "-"}</p>
-          <p><strong>嵌入标签:</strong> {getEmbedLabelsText(job)}</p>
-          <p><strong>阶段已运行:</strong> {stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
-          <p><strong>最近心跳:</strong> {formatTaskTime(job.last_heartbeat_at)}</p>
-          <p><strong>创建时间:</strong> {formatTaskTime(job.created_at)}</p>
-          <p><strong>完成时间:</strong> {formatTaskTime(job.finished_at)}</p>
-          <p><strong>任务ID:</strong> {job.job_id}</p>
-          {warnings.length > 0 && (
-            <div className="graph-job-warnings">
-              <strong>阶段提醒:</strong>
-              <ul>
-                {warnings.slice(-3).map((warning, index) => (
-                  <li key={`${warning.timestamp || "warning"}-${index}`}>
-                    {warning.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    const warnings = getJobWarnings(job);
-    const stageElapsed = getStageElapsedSeconds(job);
-    const textProgress = getGraphImportTextProgress(job);
-    const resumeChunk = Number(job.resumed_from_chunk || job.result?.resumed_from_chunk || 0) || 0;
-    const pausedReason = getPausedReason(job);
-    const chunkLimit = getChunkLimit(job);
-    const { cacheUsed, cacheInvalidatedReason, resumeCompatible } = getCacheInfo(job);
-    const { parallelism, activeLanes, currentAttempt, maxAttempts } = getParallelInfo(job);
-    const laneStatusSummary = formatLaneStatuses(job);
-    return (
-      <div className="embed-details">
-        <p><strong>当前进度:</strong> {job.progress_text || "等待后台处理"}</p>
-        <p><strong>当前阶段:</strong> {getJobStageLabel(job.stage)}</p>
-        <p><strong>阶段详情:</strong> {job.stage_detail || "-"}</p>
-        {pausedReason && (
-          <p><strong>暂停原因:</strong> {pausedReason}</p>
-        )}
-        {chunkLimit > 0 && (
-          <p><strong>当前分块大小:</strong> {formatCount(chunkLimit)} 字</p>
-        )}
-        {parallelism > 0 && (
-          <p><strong>并发抽取:</strong> {parallelism} 路（当前可用 {activeLanes} 路）</p>
-        )}
-        {maxAttempts > 0 && (
-          <p><strong>当前重试:</strong> {currentAttempt > 0 ? `${currentAttempt}/${maxAttempts}` : `0/${maxAttempts}`}</p>
-        )}
-        {laneStatusSummary && (
-          <p><strong>Lane 状态:</strong> {laneStatusSummary}</p>
-        )}
-        <p><strong>本地缓存:</strong> {cacheUsed ? "已命中" : "未命中"}</p>
-        {cacheInvalidatedReason && (
-          <p><strong>缓存/断点处理:</strong> {cacheInvalidatedReason}</p>
-        )}
-        {resumeCompatible === false && (
-          <p><strong>断点兼容性:</strong> 旧断点与当前分块策略不兼容，已重新建任务</p>
-        )}
-        {job.is_resumed && (
-          <p><strong>续跑状态:</strong> {resumeChunk > 0 ? `已自动从第 ${resumeChunk} 块继续` : "已自动从未完成块继续"}</p>
-        )}
-        {textProgress && (
-          <>
-            <p><strong>总字数:</strong> {formatCount(textProgress.totalChars)}</p>
-            <p><strong>已处理字数:</strong> {formatCount(textProgress.processedChars)}</p>
-            <p><strong>分块进度:</strong> {textProgress.totalChunks > 0 ? `${textProgress.completedChunks}/${textProgress.totalChunks}` : "-"}</p>
-          </>
-        )}
-        <p><strong>阶段已运行:</strong> {stageElapsed == null ? "-" : formatDuration(stageElapsed)}</p>
-        <p><strong>最近心跳:</strong> {formatTaskTime(job.last_heartbeat_at)}</p>
-        <p><strong>任务ID:</strong> {job.job_id}</p>
-        {warnings.length > 0 && (
-          <div className="graph-job-warnings">
-            <strong>阶段提醒:</strong>
-            <ul>
-              {warnings.slice(-3).map((warning, index) => (
-                <li key={`${warning.timestamp || "warning"}-${index}`}>
-                  {warning.message}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function buildJobSummary(job) {
-    const result = job?.result || {};
-    const textProgress = getGraphImportTextProgress(job);
-    if (job?.job_type === "graph_extract_import" && job?.status === JOB_STATUS_PAUSED) {
-      return getPausedReason(job) || result?.message || "已暂停，可重新提交同文件继续";
-    }
-    if (job?.job_type === "graph_extract_import" && job?.status === JOB_STATUS_SUCCEEDED) {
-      return `实体 ${result.entity_count || 0} 个，关系 ${result.relation_count || 0} 条，解析后文本长度 ${result.parsed_text_length || 0}`;
-    }
-    if (job?.job_type === "graph_extract_import" && textProgress) {
-      return `已处理 ${formatCount(textProgress.processedChars)} / ${formatCount(textProgress.totalChars)} 字`;
-    }
-    if (job?.job_type === "graph_embed_milvus" && job?.status === JOB_STATUS_SUCCEEDED) {
-      const totalDocuments = result?.stats?.total_documents || 0;
-      const entities = result?.stats?.entities_count || 0;
-      const relationships = result?.stats?.relationships_count || 0;
-      return `总文档 ${totalDocuments} 条，实体 ${entities} 个，关系 ${relationships} 条`;
-    }
-    if (job?.status === JOB_STATUS_FAILED) {
-      return job?.error ? String(job.error).split("\n")[0] : "任务执行失败";
-    }
-    return job?.progress_text || "等待后台处理";
   }
 
   function getImportActionLabel() {
@@ -1541,7 +1271,7 @@ export default function GraphManager() {
                   <div className={`job-status-chip status-${activeEmbedJob.status}`}>
                     {getJobStatusLabel(activeEmbedJob)}
                   </div>
-                  {renderJobTelemetry(activeEmbedJob)}
+                  <JobTelemetryPanel job={activeEmbedJob} />
                 </div>
               )}
             </div>
@@ -1606,7 +1336,7 @@ export default function GraphManager() {
                     <div className={`job-status-chip status-${activeImportJob.status}`}>
                       {getJobStatusLabel(activeImportJob)}
                     </div>
-                    {renderJobTelemetry(activeImportJob)}
+                    <JobTelemetryPanel job={activeImportJob} />
                   </div>
                 )}
                 {importResult && (

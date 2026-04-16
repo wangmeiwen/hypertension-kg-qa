@@ -1,0 +1,358 @@
+﻿/* ========================================
+   Main Page - User Interface
+   ======================================== */
+
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.header {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.header h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.sub {
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+/* 标签页 */
+.tabs {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  padding: 6px;
+  background: var(--bg-white);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-light);
+  width: fit-content;
+  margin: 0 auto;
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  height: 40px;
+  padding: 0 20px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.tab:hover {
+  color: var(--primary-600);
+  background: var(--primary-50);
+}
+
+.tab.active {
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  color: var(--text-white);
+  box-shadow: var(--shadow-md);
+}
+
+/* 聊天区域 */
+.chat {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  min-height: 60vh;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  box-shadow: var(--shadow-md);
+}
+
+/* 消息气泡 */
+.msg {
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  max-width: 88%;
+  animation: fadeIn 0.3s ease;
+  transition: all var(--transition-fast);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  color: var(--text-white);
+  box-shadow: 0 4px 12px rgba(8, 145, 178, 0.3);
+  border-bottom-right-radius: 4px;
+}
+
+.msg.user .role {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.msg.user .content {
+  color: var(--text-white);
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--bg-white);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
+  border-bottom-left-radius: 4px;
+}
+
+.role {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary-600);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.processing-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--primary-200);
+  border-radius: 999px;
+  background: var(--primary-50);
+  color: var(--primary-800);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.content {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+.assistant-markdown {
+  white-space: normal;
+}
+
+.assistant-markdown .md-paragraph {
+  margin: 0 0 10px;
+}
+
+.assistant-markdown .md-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-markdown .md-list {
+  margin: 6px 0 10px;
+  padding-left: 22px;
+}
+
+.assistant-markdown .md-list li {
+  margin: 4px 0;
+}
+
+.assistant-markdown .md-quote {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-left: 4px solid var(--primary-300);
+  background: var(--primary-50);
+  color: var(--text-secondary);
+  border-radius: 8px;
+}
+
+.assistant-markdown .md-code-block {
+  margin: 10px 0;
+  padding: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  background: #0f172a;
+}
+
+.assistant-markdown .md-code-lang {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.assistant-markdown .md-code-block code {
+  display: block;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #e2e8f0;
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: "Consolas", "Monaco", monospace;
+}
+
+.assistant-markdown code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 13px;
+  font-family: "Consolas", "Monaco", monospace;
+}
+
+.assistant-markdown a {
+  color: var(--primary-600);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.assistant-markdown .md-h1,
+.assistant-markdown .md-h2,
+.assistant-markdown .md-h3,
+.assistant-markdown .md-h4,
+.assistant-markdown .md-h5,
+.assistant-markdown .md-h6 {
+  margin: 8px 0 6px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.assistant-markdown .md-h1 {
+  font-size: 21px;
+}
+
+.assistant-markdown .md-h2 {
+  font-size: 19px;
+}
+
+.assistant-markdown .md-h3 {
+  font-size: 17px;
+}
+
+.msg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.msg-action-btn {
+  border: 1px solid var(--border-medium);
+  background: var(--bg-white);
+  color: var(--primary-700);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.msg-action-btn:hover:not(:disabled) {
+  background: var(--primary-50);
+  border-color: var(--primary-300);
+}
+
+.msg-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.msg.user .msg-action-btn {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.msg.user .msg-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.msg-action-btn.danger {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.msg-action-btn.danger:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.msg.user .msg-action-btn.danger {
+  border-color: rgba(255, 179, 179, 0.75);
+  color: #ffe1e1;
+}
+
+.msg.user .msg-action-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 133, 133, 0.25);
+  border-color: rgba(255, 194, 194, 0.95);
+}
+
+.assistant-markdown .md-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 10px 0 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.assistant-markdown .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 560px;
+  font-size: 14px;
+}
+
+.assistant-markdown .md-table th,
+.assistant-markdown .md-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+.assistant-markdown .md-table th:last-child,
+.assistant-markdown .md-table td:last-child {
+  border-right: none;
+}
+
+.assistant-markdown .md-table thead th {
+  background: var(--primary-50);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.assistant-markdown .md-table tbody tr:nth-child(even) {
+  background: #f8fffe;
+}
+
+.assistant-markdown .md-table tbody tr:last-child td {
+  border-bottom: none;
+}
+

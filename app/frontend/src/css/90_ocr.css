@@ -1,0 +1,144 @@
+﻿/* ==================== OCR 样式 ==================== */
+
+.ocr-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ocr-info-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 24px;
+  color: white;
+}
+
+.ocr-info-card h3 {
+  margin: 0 0 16px;
+  font-size: 20px;
+}
+
+.ocr-info-content p {
+  margin: 0 0 12px;
+  opacity: 0.9;
+}
+
+.ocr-info-content ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.ocr-info-content li {
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+
+.ocr-upload {
+  border-left: 4px solid #667eea;
+}
+
+.ocr-options {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: #f3f4f6;
+  border-radius: 8px;
+}
+
+.ocr-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #374151;
+}
+
+.ocr-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.upload-btn.ocr-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.upload-btn.ocr-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5a67d8 0%, #6b46a1 100%);
+}
+
+.upload-result.ocr-result {
+  background: #f5f3ff;
+  border: 1px solid #c4b5fd;
+}
+
+.upload-result.ocr-result h4 {
+  color: #7c3aed;
+}
+
+.toggle-text-btn {
+  margin: 12px 0;
+  padding: 8px 16px;
+  background: #e0e7ff;
+  color: #4338ca;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.toggle-text-btn:hover {
+  background: #c7d2fe;
+}
+
+.ocr-text-content {
+  margin-top: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.ocr-page {
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ocr-page:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.ocr-page h5 {
+  margin: 0 0 12px;
+  color: #374151;
+  font-size: 14px;
+}
+
+.ocr-page pre,
+.ocr-text-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4b5563;
+  background: #f9fafb;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.embed-success {
+  color: #059669;
+  font-weight: 500;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #d1fae5;
+  border-radius: 6px;
+  display: inline-block;
+}
+

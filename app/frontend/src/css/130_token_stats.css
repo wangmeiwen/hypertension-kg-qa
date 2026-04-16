@@ -1,0 +1,173 @@
+﻿/* ==================== Token 使用量统计样式 ==================== */
+
+.token-stats-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.token-stats-section .stats-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.stat-card.token-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.stat-card.token-card .stat-value {
+  color: white;
+  font-size: 28px;
+}
+
+.stat-card.token-card .stat-label {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.token-stats-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.token-stats-filter label {
+  font-weight: 500;
+  color: #374151;
+}
+
+.token-stats-filter select {
+  padding: 8px 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #374151;
+  background: white;
+  cursor: pointer;
+}
+
+.token-stats-filter select:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.token-stats-filter select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loading-text {
+  font-size: 14px;
+  color: #6b7280;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.token-stats-table-section {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+}
+
+.token-stats-table-section h3 {
+  margin: 0 0 16px;
+  font-size: 18px;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-stats-table-section h3::before {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 2px;
+}
+
+.sessions-table.token-table {
+  font-size: 13px;
+}
+
+.sessions-table.token-table th {
+  background: #f9fafb;
+  color: #374151;
+  font-weight: 600;
+  padding: 12px;
+  text-align: left;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.sessions-table.token-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  color: #4b5563;
+}
+
+.sessions-table.token-table tr:hover {
+  background: #f9fafb;
+}
+
+.sessions-table.token-table .token-highlight {
+  font-weight: 600;
+  color: #667eea;
+}
+
+.sessions-table.token-table .rank {
+  font-weight: 700;
+  color: #667eea;
+  text-align: center;
+}
+
+.sessions-table.token-table .session-title {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-data {
+  text-align: center;
+  padding: 40px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* Token 统计响应式适配 */
+@media (max-width: 768px) {
+  .token-stats-section .stats-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stat-card.token-card .stat-value {
+    font-size: 22px;
+  }
+
+  .token-stats-filter {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .sessions-table.token-table {
+    font-size: 11px;
+  }
+
+  .sessions-table.token-table th,
+  .sessions-table.token-table td {
+    padding: 8px;
+  }
+
+  .sessions-table.token-table .session-title {
+    max-width: 100px;
+  }
+}
+
