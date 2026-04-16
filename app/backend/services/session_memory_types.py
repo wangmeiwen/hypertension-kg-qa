@@ -23,7 +23,7 @@ class QAMemorySnapshot(TypedDict):
     qa_pairs: list[QAMemoryEntry]
 
 
-class RetrievalRecord(TypedDict):
+class RetrievalRecord(TypedDict, total=False):
     """单条有效检索记录。"""
 
     agent: str
@@ -31,6 +31,10 @@ class RetrievalRecord(TypedDict):
     result_content: str
     captured_at: str
     citations: list[str]
+    page_num: int
+    start_page: int
+    end_page: int
+    chunk_id: str
 
 
 class RetrievalHistoryEntry(TypedDict):

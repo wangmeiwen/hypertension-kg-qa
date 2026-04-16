@@ -695,6 +695,13 @@ def _build_turn_memory_projection(
                 "citations": _sanitize_list(item.get("citations"), max_items=6, max_len=120),
                 "has_signal": True,
             }
+            for key in ("page_num", "start_page", "end_page"):
+                value = item.get(key)
+                if value not in (None, ""):
+                    record[key] = value
+            chunk_id = _sanitize_text(item.get("chunk_id"), 120)
+            if chunk_id:
+                record["chunk_id"] = chunk_id
             if not record["query"] or not record["result_content"]:
                 continue
             query_records.append(record)

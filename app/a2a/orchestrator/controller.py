@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable
 
 try:
@@ -200,7 +201,7 @@ class UnifiedOrchestratorController:
         result_content = _sanitize_text(row.get("result_content"), 1200)
         if not query or not result_content:
             return None
-        return {
+        record = {
             "agent": _sanitize_text(row.get("agent"), 24) or default_agent or "unknown",
             "query": query,
             "result_content": result_content,
@@ -212,6 +213,67 @@ class UnifiedOrchestratorController:
             ],
             "has_signal": bool(row.get("has_signal", True)),
         }
+        page_num = row.get("page_num")
+        start_page = row.get("start_page")
+        end_page = row.get("end_page")
+        chunk_id = _sanitize_text(row.get("chunk_id"), 120)
+        if page_num not in (None, ""):
+            record["page_num"] = page_num
+        if start_page not in (None, ""):
+            record["start_page"] = start_page
+        if end_page not in (None, ""):
+            record["end_page"] = end_page
+        if chunk_id:
+            record["chunk_id"] = chunk_id
+        return record
+
+    def _format_query_record_excerpt(self, row: dict[str, Any]) -> str:
+        """将单条 query_record 格式化为简短证据摘要。"""
+        if not isinstance(row, dict):
+            return ""
+        snippet = _sanitize_text(row.get("result_content"), 220)
+        if not snippet:
+            return ""
+        page_num = row.get("page_num")
+        start_page = row.get("start_page")
+        end_page = row.get("end_page")
+        page_text = ""
+        if page_num not in (None, ""):
+            page_text = f"p{page_num}"
+        elif start_page not in (None, ""):
+            if end_page not in (None, "") and str(end_page) != str(start_page):
+                page_text = f"p{start_page}-{end_page}"
+            else:
+                page_text = f"p{start_page}"
+        query = _sanitize_text(row.get("query"), 80)
+        prefix = f"{query} -> " if query else ""
+        if page_text:
+            prefix = f"{page_text} {prefix}".strip() + " "
+        return f"{prefix}{snippet}".strip()
+
+    def _summarize_query_records(self, rows: list[dict[str, Any]], *, limit: int = 3) -> str:
+        """提炼前几条 query_record 形成可读摘要。"""
+        snippets: list[str] = []
+        for item in rows[: max(1, int(limit or 1))]:
+            if not isinstance(item, dict) or not bool(item.get("has_signal")):
+                continue
+            excerpt = self._format_query_record_excerpt(item)
+            if excerpt and excerpt not in snippets:
+                snippets.append(excerpt)
+        return " | ".join(snippets)[:700]
+
+    def _detect_numeric_conflicts(self, rows: list[dict[str, Any]]) -> list[str]:
+        """检测证据片段中是否存在明显数值冲突。"""
+        percent_values: set[str] = set()
+        for item in rows[:2]:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("result_content") or "")
+            for matched in re.findall(r"\d+(?:\.\d+)?%", content):
+                percent_values.add(matched)
+        if len(percent_values) > 1:
+            return ["numeric_conflict"]
+        return []
 
     def _normalize_compressed_tool_observations(self, rows: Any) -> list[dict[str, Any]]:
         """规范化压缩器返回的工具观测数据结构。"""
@@ -623,7 +685,16 @@ class UnifiedOrchestratorController:
 
     def _build_subagent_observation(self, result: Any, action: dict[str, Any]) -> dict[str, Any]:
         """将子代理结果包装成主控统一观测结构。"""
-        query_records = result.query_records if isinstance(result.query_records, list) else []
+        query_records = [
+            normalized
+            for normalized in (
+                self._normalize_query_record(item, default_agent=str(result.target_agent or "unknown"))
+                for item in (result.query_records if isinstance(result.query_records, list) else [])
+            )
+            if normalized is not None
+        ]
+        evidence_summary = self._summarize_query_records(query_records, limit=3)
+        risk_flags = self._detect_numeric_conflicts(query_records)
         return {
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
@@ -636,13 +707,14 @@ class UnifiedOrchestratorController:
                 "ok": True,
                 "error": "",
                 "result": {
-                    "summary": f"signal={result.signal}; evidence_count={len(result.evidence)}; queries={len(result.queries_used)}",
+                    "summary": evidence_summary or f"signal={result.signal}; evidence_count={len(result.evidence)}; queries={len(result.queries_used)}",
                     "signal": result.signal,
                     "coverage": result.coverage,
                     "reason": result.reason,
                     "queries_used": result.queries_used,
                     "query_records": query_records,
                     "evidence_count": len(result.evidence),
+                    "retrieval_risk_flags": risk_flags,
                 },
             },
         }
@@ -690,17 +762,20 @@ class UnifiedOrchestratorController:
             subquery = _sanitize_text(row.get("subquery"), 120)
             if subquery and subquery not in covered_topics:
                 covered_topics.append(subquery)
-        supported_points = [
-            _sanitize_text(item.get("result_content"), 120)
-            for item in query_records[:5]
-            if isinstance(item, dict) and _sanitize_text(item.get("result_content"), 120)
-        ]
+        supported_points = []
+        for item in query_records[:5]:
+            if not isinstance(item, dict):
+                continue
+            excerpt = self._format_query_record_excerpt(item)
+            if excerpt and excerpt not in supported_points:
+                supported_points.append(excerpt)
+        retrieval_risk_flags = self._detect_numeric_conflicts(query_records)
         return {
             "answer_mode": "retrieval_augmented" if query_records else "direct_answer",
             "supported_points": supported_points,
             "covered_topics": covered_topics[:5],
             "evidence_count": len(query_records),
-            "retrieval_risk_flags": [],
+            "retrieval_risk_flags": retrieval_risk_flags,
         }
 
     def _build_budget_telemetry(self, compression_state: dict[str, Any]) -> dict[str, Any]:

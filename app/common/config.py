@@ -122,6 +122,9 @@ class Config:
         self.RRF_K = int(os.getenv("RRF_K", "60"))
         self.RAG_SEARCH_TOP_K_DEFAULT = int(os.getenv("RAG_SEARCH_TOP_K_DEFAULT", "4"))
         self.RAG_SEARCH_TOP_K_MAX = int(os.getenv("RAG_SEARCH_TOP_K_MAX", "8"))
+        self.RAG_INTERNAL_RECALL_TOP_K = int(os.getenv("RAG_INTERNAL_RECALL_TOP_K", "12"))
+        self.RAG_DENSE_INTERNAL_RECALL_TOP_K = int(os.getenv("RAG_DENSE_INTERNAL_RECALL_TOP_K", "0"))
+        self.RAG_SPARSE_INTERNAL_RECALL_TOP_K = int(os.getenv("RAG_SPARSE_INTERNAL_RECALL_TOP_K", "0"))
         self.MILVUS_SEARCH_NPROBE = int(os.getenv("MILVUS_SEARCH_NPROBE", "10"))
         self.RAG_DENSE_RECALL_MULTIPLIER = int(os.getenv("RAG_DENSE_RECALL_MULTIPLIER", "1"))
         self.RAG_SPARSE_RECALL_MULTIPLIER = int(os.getenv("RAG_SPARSE_RECALL_MULTIPLIER", "1"))
@@ -194,4 +197,3 @@ class Config:
                 }
             )
         return lanes
-

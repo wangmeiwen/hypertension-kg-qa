@@ -124,14 +124,21 @@ class SessionMemoryService:
         result_content = self._sanitize_text(row.get("result_content"), self._RESULT_MAX_LEN)
         if not query or not result_content:
             return None
-        return {
+        record: RetrievalRecord = {
             "agent": self._sanitize_text(row.get("agent"), 24) or "unknown",
             "query": query,
             "result_content": result_content,
             "captured_at": self._sanitize_text(row.get("captured_at"), 64),
             "citations": self._sanitize_list(row.get("citations"), max_items=6, max_len=120),
         }
-
+        for key in ("page_num", "start_page", "end_page"):
+            value = row.get(key)
+            if value not in (None, ""):
+                record[key] = self._to_int(value, 0)
+        chunk_id = self._sanitize_text(row.get("chunk_id"), 120)
+        if chunk_id:
+            record["chunk_id"] = chunk_id
+        return record
     def _sanitize_retrieval_entry(self, row: Any) -> RetrievalHistoryEntry | None:
         """标准化单条历史检索问题记录。"""
         if not isinstance(row, dict):

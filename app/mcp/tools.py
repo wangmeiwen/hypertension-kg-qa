@@ -270,16 +270,28 @@ class RagSearchTool:
             hits = []
             total = len(docs)
             for idx, doc in enumerate(docs):
-                rank_score = (total - idx) / total if total > 0 else 0.0
                 metadata = doc.metadata if isinstance(doc.metadata, dict) else {}
+                rank_score = metadata.get("final_rank_score")
+                if rank_score is None:
+                    rank_score = metadata.get("rerank_score")
+                if rank_score is None:
+                    rank_score = metadata.get("search_score")
+                if rank_score is None:
+                    rank_score = (total - idx) / total if total > 0 else 0.0
                 hits.append(
                     {
-                        "id": metadata.get("parent_id") or idx + 1,
+                        "id": metadata.get("chunk_id") or metadata.get("parent_id") or idx + 1,
                         "score": round(rank_score, 6),
                         "text": doc.page_content,
                         "source": metadata.get("source"),
                         "timestamp": metadata.get("timestamp"),
                         "parent_content": metadata.get("parent_content", doc.page_content),
+                        "page_num": metadata.get("page_num"),
+                        "start_page": metadata.get("start_page"),
+                        "end_page": metadata.get("end_page"),
+                        "chunk_id": metadata.get("chunk_id"),
+                        "parent_index": metadata.get("parent_index"),
+                        "sub_index": metadata.get("sub_index"),
                     }
                 )
             return {"hits": hits}

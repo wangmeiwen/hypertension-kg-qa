@@ -10,6 +10,26 @@ from app.a2a.subagents.rag.query_builder import build_rag_payload, validate_rag_
 from app.a2a.subagents.rag.state import RagSubAgentState
 
 
+def _is_statistical_query(query: str) -> bool:
+    text = str(query or "").replace(" ", "").strip()
+    if not text:
+        return False
+    keywords = ("患病率", "加权", "成人", "18岁", "知晓率", "治疗率", "控制率")
+    return any(char.isdigit() for char in text) and any(token in text for token in keywords)
+
+
+def _trim_hit_snippet(query: str, snippet: str) -> str:
+    text = str(snippet or "").replace("\n", " ").strip()
+    if not text:
+        return ""
+    if _is_statistical_query(query):
+        percent_index = text.find("%")
+        if percent_index > 0:
+            return text[: percent_index + 1]
+        return text[:120]
+    return text[:280]
+
+
 def _build_query_records(
     query_statements: list[dict[str, Any]],
     tool_results: list[dict[str, Any]],
@@ -31,25 +51,46 @@ def _build_query_records(
         hits = hits_obj if isinstance(hits_obj, list) else []
         content_parts: list[str] = []
         citations: list[str] = []
-        for hit in hits[:3]:
+        top_hit = hits[0] if hits and isinstance(hits[0], dict) else {}
+        page_num = top_hit.get("page_num")
+        start_page = top_hit.get("start_page")
+        end_page = top_hit.get("end_page")
+        chunk_id = str(top_hit.get("chunk_id") or "").strip()
+        selected_hits = hits[:1] if _is_statistical_query(query) else hits[:3]
+        for hit in selected_hits:
             if not isinstance(hit, dict):
                 continue
-            snippet = str(hit.get("text") or hit.get("parent_content") or "").replace("\n", " ").strip()
+            snippet = _trim_hit_snippet(query, hit.get("text") or "")
             if snippet:
-                content_parts.append(snippet[:280])
-            citation = str(hit.get("source") or hit.get("id") or "").strip()
+                content_parts.append(snippet)
+            source = str(hit.get("source") or hit.get("id") or "").strip()
+            page_label = hit.get("page_num")
+            start_label = hit.get("start_page")
+            end_label = hit.get("end_page")
+            citation = source
+            if page_label not in (None, ""):
+                citation = f"{source}@p{page_label}" if source else f"p{page_label}"
+            elif start_label not in (None, ""):
+                citation = f"{source}@p{start_label}-{end_label}" if source else f"p{start_label}-{end_label}"
             if citation and citation not in citations:
                 citations.append(citation)
-        records.append(
-            {
-                "agent": "rag",
-                "query": query,
-                "result_content": " | ".join(content_parts)[:1600],
-                "captured_at": "",
-                "citations": citations[:6],
-                "has_signal": bool(content_parts),
-            }
-        )
+        record = {
+            "agent": "rag",
+            "query": query,
+            "result_content": " | ".join(content_parts)[:1600],
+            "captured_at": "",
+            "citations": citations[:6],
+            "has_signal": bool(content_parts),
+        }
+        if page_num not in (None, ""):
+            record["page_num"] = page_num
+        if start_page not in (None, ""):
+            record["start_page"] = start_page
+        if end_page not in (None, ""):
+            record["end_page"] = end_page
+        if chunk_id:
+            record["chunk_id"] = chunk_id
+        records.append(record)
     return records
 
 
