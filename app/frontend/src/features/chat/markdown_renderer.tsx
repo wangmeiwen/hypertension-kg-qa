@@ -1,8 +1,25 @@
-const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
-const MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。";
+import type { ReactNode } from "react";
 
-// 判断一行是否为 Markdown 表格分隔符行。
-const isMarkdownTableSeparator = (line) => {
+const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
+const MEDICAL_DISCLAIMER_TEXTS = [
+  "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。",
+  "回答仅供信息参考，不能替代临床诊断或紧急医疗处置。",
+  "The response is informational only and should not replace clinical diagnosis or urgent medical care.",
+];
+
+const MEDICAL_DISCLAIMER_PATTERNS = [
+  /仅供参考/,
+  /不构成诊断/,
+  /不能替代专业医生意见/,
+  /请及时就医/,
+  /不能替代临床诊断/,
+  /紧急医疗处置/,
+  /informational only/i,
+  /should not replace clinical diagnosis/i,
+  /urgent medical care/i,
+];
+
+const isMarkdownTableSeparator = (line: string): boolean => {
   const trimmed = String(line || "").trim();
   if (!trimmed || !trimmed.includes("|")) return false;
   const cleaned = trimmed.replace(/^\|/, "").replace(/\|$/, "").trim();
@@ -12,14 +29,12 @@ const isMarkdownTableSeparator = (line) => {
   return columns.every((part) => /^:?-{3,}:?$/.test(part));
 };
 
-// 将一行 Markdown 表格拆分为单元格数组。
-const parseMarkdownTableRow = (line) => {
+const parseMarkdownTableRow = (line: string): string[] => {
   const cleaned = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
   return cleaned.split("|").map((cell) => cell.trim());
 };
 
-// 渲染行内 Markdown（粗体、行内代码、超链接）。
-const renderInlineMarkdown = (text, keyPrefix) => {
+const renderInlineMarkdown = (text: string, keyPrefix: string): ReactNode[] | string => {
   const safeText = String(text || "");
   if (!safeText) return "";
 
@@ -48,18 +63,21 @@ const renderInlineMarkdown = (text, keyPrefix) => {
   });
 };
 
-// 对固定免责声明段落添加专用样式类。
-const getDisclaimerBlockClass = (text) => (
-  String(text || "").trim() === MEDICAL_DISCLAIMER_TEXT ? " medical-disclaimer-block" : ""
-);
+const getDisclaimerBlockClass = (text: string): string => {
+  const normalized = String(text || "").trim();
+  if (!normalized) return "";
 
-// 将消息内容按块渲染为 Markdown 结构。
-export const renderMarkdownContent = (content) => {
+  const isKnownDisclaimer = MEDICAL_DISCLAIMER_TEXTS.includes(normalized);
+  const matchesPattern = MEDICAL_DISCLAIMER_PATTERNS.some((pattern) => pattern.test(normalized));
+  return isKnownDisclaimer || matchesPattern ? " medical-disclaimer-block" : "";
+};
+
+export const renderMarkdownContent = (content: string): ReactNode[] | string => {
   const text = String(content || "").replace(/\r\n/g, "\n");
-  if (!text.trim()) return "处理中...";
+  if (!text.trim()) return "Processing...";
 
   const lines = text.split("\n");
-  const blocks = [];
+  const blocks: ReactNode[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -74,7 +92,7 @@ export const renderMarkdownContent = (content) => {
     if (fenceMatch) {
       const lang = (fenceMatch[1] || "").trim();
       i += 1;
-      const codeLines = [];
+      const codeLines: string[] = [];
       while (i < lines.length && !/^```\s*$/.test(lines[i])) {
         codeLines.push(lines[i]);
         i += 1;
@@ -106,7 +124,7 @@ export const renderMarkdownContent = (content) => {
     }
 
     if (/^>\s?/.test(line)) {
-      const quoteLines = [];
+      const quoteLines: string[] = [];
       while (i < lines.length && /^>\s?/.test(lines[i])) {
         quoteLines.push(lines[i].replace(/^>\s?/, ""));
         i += 1;
@@ -121,7 +139,7 @@ export const renderMarkdownContent = (content) => {
     }
 
     if (/^[-*+]\s+/.test(line)) {
-      const items = [];
+      const items: string[] = [];
       while (i < lines.length && /^[-*+]\s+/.test(lines[i])) {
         items.push(lines[i].replace(/^[-*+]\s+/, "").trim());
         i += 1;
@@ -137,7 +155,7 @@ export const renderMarkdownContent = (content) => {
     }
 
     if (/^\d+\.\s+/.test(line)) {
-      const items = [];
+      const items: string[] = [];
       while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
         items.push(lines[i].replace(/^\d+\.\s+/, "").trim());
         i += 1;
@@ -156,7 +174,7 @@ export const renderMarkdownContent = (content) => {
       const headerCells = parseMarkdownTableRow(line);
       i += 2;
 
-      const bodyRows = [];
+      const bodyRows: string[][] = [];
       while (i < lines.length && lines[i].trim() && lines[i].includes("|")) {
         bodyRows.push(parseMarkdownTableRow(lines[i]));
         i += 1;
@@ -189,7 +207,7 @@ export const renderMarkdownContent = (content) => {
       continue;
     }
 
-    const paragraphLines = [];
+    const paragraphLines: string[] = [];
     while (
       i < lines.length
       && lines[i].trim()
