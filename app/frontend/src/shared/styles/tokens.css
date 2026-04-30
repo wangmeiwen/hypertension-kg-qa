@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  --color-bg: #f4fbff;
+  --color-surface: rgba(255, 255, 255, 0.9);
+  --color-surface-strong: #ffffff;
+  --color-primary-50: #e9f7ff;
+  --color-primary-100: #cdeeff;
+  --color-primary-400: #4ab3e2;
+  --color-primary-500: #2289c8;
+  --color-primary-600: #176fbb;
+  --color-primary-700: #0e5b9b;
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-border: rgba(15, 23, 42, 0.12);
+  --color-success-50: #eafcf1;
+  --color-success-500: #16a34a;
+  --color-success-700: #15803d;
+  --color-danger-50: #fff1f1;
+  --color-danger-500: #ef4444;
+  --color-danger-700: #b91c1c;
+  --shadow-soft: 0 12px 24px rgba(15, 23, 42, 0.12);
+  --shadow-surface: 0 24px 70px rgba(19, 57, 92, 0.12);
+  --radius-card: 28px;
+  --radius-control: 18px;
+  --motion-fast: 160ms ease;
+}

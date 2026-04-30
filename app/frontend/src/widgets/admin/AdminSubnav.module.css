@@ -1,0 +1,20 @@
+.nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.link {
+  padding: 10px 14px;
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--color-slate-700);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--color-border);
+}
+
+.active {
+  background: var(--color-primary-600);
+  border-color: var(--color-primary-600);
+  color: white;
+}

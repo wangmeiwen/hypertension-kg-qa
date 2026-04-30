@@ -89,6 +89,10 @@ class UnifiedOrchestratorController:
         self._subagent_client = subagent_client
         self._mcp_gateway = mcp_gateway if mcp_gateway is not None else MCPToolGateway(agent_type="orchestrator")
 
+    async def aclose(self) -> None:
+        """释放控制器持有的底层客户端资源。"""
+        await self._client.aclose()
+
     def _build_system_prompt(self) -> str:
         """构建主控决策提示词。"""
         return (

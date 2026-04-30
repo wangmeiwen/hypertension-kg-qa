@@ -130,12 +130,11 @@ def log_duration(operation: str, **kwargs):
         yield
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
-        if elapsed_ms < PERF_LOG_MIN_DURATION_MS:
-            return
-        if kv:
-            logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f} {kv}")
-        else:
-            logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f}")
+        if elapsed_ms >= PERF_LOG_MIN_DURATION_MS:
+            if kv:
+                logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f} {kv}")
+            else:
+                logger.info(f"{prefix} 耗时毫秒={elapsed_ms:.2f}")
 
 
 def log_perf_event(event: str, **kwargs) -> None:

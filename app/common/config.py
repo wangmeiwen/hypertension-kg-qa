@@ -59,7 +59,7 @@ logger = logging.getLogger("config")
 current_file_path = Path(__file__).resolve()
 project_root = current_file_path.parent.parent.parent
 env_path = project_root / ".env"
-load_dotenv(dotenv_path=env_path, override=True)
+load_dotenv(dotenv_path=env_path, override=False)
 
 
 class Config:
@@ -86,6 +86,16 @@ class Config:
         self.SESSION_MEMORY_MODEL_NAME = os.getenv("SESSION_MEMORY_MODEL_NAME", self.MODEL_NAME)
         self.GRAPH_LLM_LANE_CONFIGS = self._build_graph_llm_lane_configs()
         self.GRAPH_LLM_PARALLELISM = len(self.GRAPH_LLM_LANE_CONFIGS)
+        self.TEXT_EMBED_MAX_CONCURRENCY = int(os.getenv("TEXT_EMBED_MAX_CONCURRENCY", "1"))
+        self.GRAPH_NEO4J_WRITE_LOCK_TIMEOUT_SECONDS = int(
+            os.getenv("GRAPH_NEO4J_WRITE_LOCK_TIMEOUT_SECONDS", "300")
+        )
+        self.KG_MILVUS_REBUILD_LOCK_TIMEOUT_SECONDS = int(
+            os.getenv("KG_MILVUS_REBUILD_LOCK_TIMEOUT_SECONDS", "0")
+        )
+        self.SESSION_ARTIFACT_LOCK_TIMEOUT_SECONDS = int(
+            os.getenv("SESSION_ARTIFACT_LOCK_TIMEOUT_SECONDS", "10")
+        )
 
         # LangSmith 追踪与评估
         self.LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")

@@ -1,0 +1,96 @@
+name: backend
+
+on:
+  push:
+    paths:
+      - "app/backend/**"
+      - "app/common/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "pytest.ini"
+      - ".coveragerc"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "app/backend/**"
+      - "app/common/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "pytest.ini"
+      - ".coveragerc"
+      - ".github/workflows/backend.yml"
+
+jobs:
+  fast-coverage:
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Run fast tests with coverage
+        run: python -m coverage run -m pytest -q -m "not db"
+      - name: Report coverage
+        run: python -m coverage report
+
+  real-db:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: hypertension_kg
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+      neo4j:
+        image: neo4j:5.26
+        env:
+          NEO4J_AUTH: neo4j/password
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd="wget -q --spider http://127.0.0.1:7474 || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+      milvus:
+        image: milvusdb/milvus:v2.4.15
+        ports:
+          - 19530:19530
+          - 9091:9091
+        options: >-
+          --health-cmd="wget -q --spider http://127.0.0.1:9091/healthz || exit 1"
+          --health-interval=15s
+          --health-timeout=10s
+          --health-retries=30
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_DATABASE: hypertension_kg
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Run real database tests
+        run: python -m pytest -q -m db

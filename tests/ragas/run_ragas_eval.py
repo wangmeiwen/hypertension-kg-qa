@@ -14,7 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 METRIC_SPECS = {
     "faithfulness": {
@@ -50,7 +50,7 @@ METRIC_ALIASES = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Ragas scoring on an existing eval result file.")
-    parser.add_argument("--input", required=True, help="Path to an eval result JSON file under tests/eval_runs.")
+    parser.add_argument("--input", required=True, help="Path to an eval result JSON file under tests/ragas/eval_runs.")
     parser.add_argument("--output", default="", help="Optional output file path. Defaults to overwrite input.")
     parser.add_argument("--model-name", default="", help="Optional evaluator model name. Defaults to MODEL_NAME.")
     parser.add_argument("--base-url", default="", help="Optional evaluator base URL. Defaults to MODEL_BASE_URL.")

@@ -6,13 +6,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from neo4j import AsyncGraphDatabase
 
+from app.common.concurrency import concurrency_guard
 from app.common.perf_logger import log_duration
 
 logger = logging.getLogger(__name__)
@@ -23,7 +26,7 @@ env_path = project_root / ".env"
 if env_path.exists():
     from dotenv import load_dotenv
 
-    load_dotenv(dotenv_path=env_path, override=True)
+    load_dotenv(dotenv_path=env_path, override=False)
 
 
 class Neo4jClient:
@@ -40,7 +43,39 @@ class Neo4jClient:
         Returns:
             None: 无返回值。
         """
-        self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+        self._uri = uri
+        self._user = user
+        self._password = password
+        self._driver = None
+        self._driver_loop_id: int | None = None
+
+    async def _ensure_driver(self):
+        """在独占锁内按需初始化或切换 Neo4j driver。"""
+        loop_id = id(asyncio.get_running_loop())
+        if self._driver is not None and self._driver_loop_id == loop_id:
+            return self._driver
+        async with concurrency_guard.writer_lock("neo4j:driver"):
+            loop_id = id(asyncio.get_running_loop())
+            if self._driver is not None and self._driver_loop_id == loop_id:
+                return self._driver
+            if self._driver is not None:
+                await self._driver.close()
+            self._driver = AsyncGraphDatabase.driver(self._uri, auth=(self._user, self._password))
+            self._driver_loop_id = loop_id
+            return self._driver
+
+    @asynccontextmanager
+    async def _driver_session(self) -> AsyncIterator[Any]:
+        """获取受读锁保护的 Neo4j session。"""
+        while True:
+            await self._ensure_driver()
+            async with concurrency_guard.reader_lock("neo4j:driver"):
+                loop_id = id(asyncio.get_running_loop())
+                if self._driver is None or self._driver_loop_id != loop_id:
+                    continue
+                async with self._driver.session() as session:
+                    yield session
+                    return
 
     async def close(self) -> None:
         """关闭底层 Neo4j 驱动连接池。
@@ -48,8 +83,11 @@ class Neo4jClient:
         Returns:
             None: 无返回值。
         """
-        if self._driver is not None:
-            await self._driver.close()
+        async with concurrency_guard.writer_lock("neo4j:driver"):
+            if self._driver is not None:
+                await self._driver.close()
+                self._driver = None
+                self._driver_loop_id = None
 
     async def run_cypher(self, query: str, parameters: Optional[Dict] = None) -> List[Dict]:
         """执行单条 Cypher 查询并返回结果列表。
@@ -62,7 +100,7 @@ class Neo4jClient:
             List[Dict]: 每行记录对应的字典列表。
         """
         with log_duration("neo4j.run_cypher"):
-            async with self._driver.session() as session:
+            async with self._driver_session() as session:
                 result = await session.run(query, parameters or {})
                 rows: List[Dict] = []
                 async for record in result:
@@ -79,21 +117,23 @@ class Neo4jClient:
         Returns:
             None: 无返回值。
         """
-        with log_duration("neo4j.run_multiple_cypher", queries=len(queries_with_params)):
-            async with self._driver.session() as session:
-                async def _tx(tx):
-                    """事务回调：顺序执行批量语句。
+        timeout = int(os.getenv("GRAPH_NEO4J_WRITE_LOCK_TIMEOUT_SECONDS", "300"))
+        async with concurrency_guard.keyed_lock("neo4j:write", timeout=timeout):
+            with log_duration("neo4j.run_multiple_cypher", queries=len(queries_with_params)):
+                async with self._driver_session() as session:
+                    async def _tx(tx):
+                        """事务回调：顺序执行批量语句。
 
-                    Args:
-                        tx: Neo4j 异步事务对象。
+                        Args:
+                            tx: Neo4j 异步事务对象。
 
-                    Returns:
-                        None: 无返回值。
-                    """
-                    for query, params in queries_with_params:
-                        await tx.run(query, params or {})
+                        Returns:
+                            None: 无返回值。
+                        """
+                        for query, params in queries_with_params:
+                            await tx.run(query, params or {})
 
-                await session.execute_write(_tx)
+                    await session.execute_write(_tx)
 
     async def run_multiple_cypher_read(self, queries_with_params: List[tuple]) -> List[List[Dict]]:
         """顺序执行多条读查询并分别返回结果集。
@@ -106,7 +146,7 @@ class Neo4jClient:
         """
         rows: List[List[Dict]] = []
         with log_duration("neo4j.run_multiple_cypher_read", queries=len(queries_with_params)):
-            async with self._driver.session() as session:
+            async with self._driver_session() as session:
                 for query, params in queries_with_params:
                     result = await session.run(query, params or {})
                     current: List[Dict] = []
@@ -149,7 +189,7 @@ class Neo4jClient:
             bool: 语法合法返回 True，否则返回 False。
         """
         try:
-            async with self._driver.session() as session:
+            async with self._driver_session() as session:
                 await session.run(f"EXPLAIN {query}")
             return True
         except Exception as exc:

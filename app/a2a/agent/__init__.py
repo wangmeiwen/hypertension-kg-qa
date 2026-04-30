@@ -33,6 +33,16 @@ def get_iterative_agent() -> "IterativeAgent":
         return _iterative_agent_singleton
 
 
+async def close_iterative_agent() -> None:
+    """关闭并清空 iterative_agent 单例。"""
+    global _iterative_agent_singleton
+    with _iterative_agent_lock:
+        agent = _iterative_agent_singleton
+        _iterative_agent_singleton = None
+    if agent is not None:
+        await agent.aclose()
+
+
 async def process_query(
     *,
     input_text: str,
@@ -104,4 +114,5 @@ __all__ = [
     "IterativeAgent",
     "process_query",
     "get_iterative_agent",
+    "close_iterative_agent",
 ]

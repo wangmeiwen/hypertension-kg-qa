@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -40,6 +40,10 @@ env/
 app/frontend/node_modules/
 app/frontend/dist/
 app/frontend/.vite/
+app/frontend/coverage/
+app/frontend/test-results/
+app/frontend/playwright-report/
+app/frontend/blob-report/
 
 # Model files - only keep directory structure, ignore large files
 model/*/
@@ -73,7 +77,7 @@ htmlcov/
 # MySQL
 *.sql.gz
 /docker/milvus/volumes2/
-/tests/langsmith/
+/tests/ragas/langsmith/
 /docker/milvus/
 /.codex/
 /.claude/

@@ -1,0 +1,4 @@
+.fallback {
+  min-height: min(720px, 100vh);
+  padding: 24px;
+}

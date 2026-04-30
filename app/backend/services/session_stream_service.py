@@ -16,6 +16,7 @@ from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.common.perf_logger import log_perf_event
 from app.common.session_logger import (
+    append_jsonl_atomic,
     ensure_session_meta,
     log_session_op,
     log_tool_event,
@@ -309,9 +310,7 @@ def _append_jsonl(file_path: Path, payload: Dict[str, Any]) -> None:
     Returns:
         None: 无返回值。
     """
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    append_jsonl_atomic(file_path, payload)
 
 
 def _safe_session_log_id(raw: Any, fallback: str = "unknown") -> str:

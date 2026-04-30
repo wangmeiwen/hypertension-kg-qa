@@ -1,0 +1,61 @@
+.layout {
+  display: grid;
+  gap: 24px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar > * {
+  flex: 1 1 200px;
+}
+
+.canvasCard {
+  overflow: hidden;
+}
+
+.entityMeta {
+  display: grid;
+  gap: 16px;
+}
+
+.propertyList,
+.relationshipList {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.propertyRow {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.relationshipCard {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+@media (max-width: 960px) {
+  .detailGrid {
+    grid-template-columns: 1fr;
+  }
+}

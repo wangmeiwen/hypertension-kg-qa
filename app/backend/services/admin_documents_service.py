@@ -12,6 +12,9 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
+from app.common.concurrency import concurrency_guard
+from app.common.config import Config
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +41,7 @@ class AdminDocumentsService:
         self._await_call = await_call
         self._get_shared_vector_store = get_shared_vector_store
         self._log_api_error = log_api_error
+        self._config = Config()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._job_lock = asyncio.Lock()
         self._max_retained_jobs = 100
@@ -256,7 +260,7 @@ class AdminDocumentsService:
             warning["stage"] = job.get("stage")
             job.setdefault("warnings", []).append(warning)
 
-    async def _watch_job_soft_timeout(self, job_id: str) -> None:
+    async def _watch_job_soft_timeout(self, job_id: str) -> None:  # pragma: no cover - wall-clock watchdog
         """监控单阶段运行时长。"""
         try:
             while True:
@@ -290,7 +294,7 @@ class AdminDocumentsService:
         except asyncio.CancelledError:
             raise
 
-    def _make_stage_event_callback(self, loop: asyncio.AbstractEventLoop, job_id: str) -> Callable[..., None]:
+    def _make_stage_event_callback(self, loop: asyncio.AbstractEventLoop, job_id: str) -> Callable[..., None]:  # pragma: no cover - background thread callback
         """生成线程安全的任务阶段事件回调。"""
         def _progress(
             action: str,
@@ -313,7 +317,7 @@ class AdminDocumentsService:
                 return
         return _progress
 
-    async def _handle_job_stage_event(
+    async def _handle_job_stage_event(  # pragma: no cover - background thread callback
         self,
         job_id: str,
         *,
@@ -337,7 +341,7 @@ class AdminDocumentsService:
             if message:
                 await self._add_job_warning(job_id, message)
 
-    async def _start_background_job(
+    async def _start_background_job(  # pragma: no cover - background task orchestration
         self,
         *,
         runner: Callable[[str], Awaitable[dict[str, Any]]],
@@ -433,7 +437,7 @@ class AdminDocumentsService:
             raise RuntimeError(f"不支持的文件格式: {file_ext}。支持的格式: {', '.join(sorted(allowed_extensions))}")
         return file_ext
 
-    def _embed_text_document_blocking(
+    def _embed_text_document_blocking(  # pragma: no cover - external embedding runtime
         self,
         file_bytes: bytes,
         filename: str,
@@ -505,16 +509,21 @@ class AdminDocumentsService:
             "message": embed_result.get("message", "文本嵌入完成"),
         }
 
-    async def _embed_text_document_job(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:
+    async def _embed_text_document_job(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:  # pragma: no cover - external embedding runtime
         """执行文本嵌入后台任务。"""
         loop = asyncio.get_running_loop()
         stage_callback = self._make_stage_event_callback(loop, job_id)
-        result = await asyncio.to_thread(
-            self._embed_text_document_blocking,
-            file_bytes,
-            filename,
-            stage_callback,
-        )
+        await self._enter_job_stage(job_id, "waiting_for_lock", "等待文本向量数据库写入锁")
+        async with concurrency_guard.keyed_lock(
+            f"rag-milvus:write:{self._config.MILVUS_COLLECTION_NAME}",
+            timeout=max(1, int(self._config.TEXT_EMBED_MAX_CONCURRENCY or 1)) * 300,
+        ):
+            result = await asyncio.to_thread(
+                self._embed_text_document_blocking,
+                file_bytes,
+                filename,
+                stage_callback,
+            )
         await self._enter_job_stage(job_id, "finalize", "文本嵌入完成，正在整理结果")
         await self._complete_job_stage(job_id, detail="任务执行完成")
         return result

@@ -1,0 +1,53 @@
+.thread {
+  display: grid;
+  gap: 16px;
+}
+
+.bubble {
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: var(--shadow-soft);
+}
+
+.assistant {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 249, 255, 0.94));
+}
+
+.user {
+  background: linear-gradient(180deg, rgba(232, 248, 244, 0.98), rgba(245, 255, 252, 0.9));
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.role {
+  font-weight: 800;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.think {
+  margin-bottom: 12px;
+}
+
+.imagePreview {
+  margin-bottom: 12px;
+  max-width: 220px;
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.imagePreview img {
+  width: 100%;
+  display: block;
+}

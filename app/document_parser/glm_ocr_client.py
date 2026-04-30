@@ -14,6 +14,7 @@ import base64
 import io
 import logging
 import math
+import threading
 from typing import Any, Dict, Optional
 
 from zhipuai import ZhipuAI
@@ -367,6 +368,7 @@ class GlmOcrClient:
 
 
 _glm_ocr_client: Optional[GlmOcrClient] = None
+_glm_ocr_client_lock = threading.Lock()
 
 
 def get_glm_ocr_client() -> GlmOcrClient:
@@ -378,6 +380,8 @@ def get_glm_ocr_client() -> GlmOcrClient:
     """
     global _glm_ocr_client
     if _glm_ocr_client is None:
-        conf = Config()
-        _glm_ocr_client = GlmOcrClient(api_key=conf.ZHIPU_API_KEY)
+        with _glm_ocr_client_lock:
+            if _glm_ocr_client is None:
+                conf = Config()
+                _glm_ocr_client = GlmOcrClient(api_key=conf.ZHIPU_API_KEY)
     return _glm_ocr_client

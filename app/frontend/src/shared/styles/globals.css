@@ -1,0 +1,205 @@
+@import "./tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(68, 202, 230, 0.18), transparent 28%),
+    radial-gradient(circle at right 20%, rgba(40, 199, 111, 0.14), transparent 22%),
+    linear-gradient(180deg, #f4fbff 0%, #eef7fb 100%);
+  color: var(--color-slate-900);
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+.pageShell {
+  display: grid;
+  gap: 24px;
+}
+
+.pageGrid {
+  display: grid;
+  gap: 24px;
+}
+
+.splitGrid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+}
+
+.threeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.stack {
+  display: grid;
+  gap: 16px;
+}
+
+.inlineMeta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--color-slate-600);
+}
+
+.dangerText {
+  color: var(--color-danger-700);
+}
+
+.successText {
+  color: var(--color-success-700);
+}
+
+.messageMarkdown {
+  display: grid;
+  gap: 10px;
+}
+
+.messageMarkdown .md-paragraph {
+  margin: 0;
+}
+
+.messageMarkdown .md-h1,
+.messageMarkdown .md-h2,
+.messageMarkdown .md-h3,
+.messageMarkdown .md-h4,
+.messageMarkdown .md-h5,
+.messageMarkdown .md-h6 {
+  margin: 6px 0 0;
+  color: var(--color-slate-900);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.messageMarkdown .md-h1 {
+  font-size: 26px;
+}
+
+.messageMarkdown .md-h2 {
+  font-size: 22px;
+}
+
+.messageMarkdown .md-h3 {
+  font-size: 18px;
+}
+
+.messageMarkdown code {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: var(--color-slate-100);
+  color: var(--color-slate-900);
+  font-family: Consolas, SFMono-Regular, monospace;
+}
+
+.messageMarkdown .md-code-block {
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid var(--color-slate-200);
+}
+
+.messageMarkdown .md-code-block code {
+  padding: 0;
+  background: transparent;
+}
+
+.messageMarkdown .md-code-lang {
+  margin-bottom: 8px;
+  color: var(--color-slate-500);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.messageMarkdown .md-list,
+.messageMarkdown .md-ordered-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.messageMarkdown .md-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--color-slate-200);
+  border-radius: 14px;
+}
+
+.messageMarkdown .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+.messageMarkdown .md-table th,
+.messageMarkdown .md-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-slate-200);
+  text-align: left;
+  vertical-align: top;
+}
+
+.messageMarkdown .md-table th {
+  background: var(--color-primary-50);
+  color: var(--color-slate-800);
+  font-weight: 800;
+}
+
+.messageMarkdown a {
+  color: var(--color-primary-700);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.messageMarkdown .md-quote {
+  margin: 10px 0;
+  padding: 10px 14px;
+  border-left: 4px solid var(--color-primary-400);
+  background: var(--color-primary-50);
+  border-radius: 12px;
+}
+
+.messageMarkdown .medical-disclaimer-block {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-left: 4px solid var(--color-danger-500);
+  background: var(--color-danger-50);
+  border-radius: 12px;
+  color: var(--color-danger-700);
+}
+
+@media (max-width: 1100px) {
+  .splitGrid,
+  .threeGrid {
+    grid-template-columns: 1fr;
+  }
+}

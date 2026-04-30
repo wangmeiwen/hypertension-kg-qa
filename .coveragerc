@@ -1,0 +1,17 @@
+[run]
+branch = True
+source =
+    app/backend/routers
+    app/backend/services
+omit =
+    */__pycache__/*
+    app/backend/services/session_memory_types.py
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 75
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError

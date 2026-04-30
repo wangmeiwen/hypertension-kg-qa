@@ -44,6 +44,8 @@ class GraphPublicService:
             "target_name": row.get("target_name") or tid,
             "source_labels": row.get("source_labels") or ["Entity"],
             "target_labels": row.get("target_labels") or ["Entity"],
+            "source_props": row.get("source_props") or {},
+            "target_props": row.get("target_props") or {},
             "rel_type": row.get("rel_type") or "RELATED_TO",
         }
 
@@ -118,19 +120,39 @@ class GraphPublicService:
         )
         q = (keyword or "").strip()
         try:
+            node_rows: list[dict[str, Any]] = []
             if q:
                 rows = await self._await_call(
                     self._neo4j_client.run_cypher,
                     """
                     MATCH (a)-[r]->(b)
-                    WHERE toString(a.name) CONTAINS $q OR toString(b.name) CONTAINS $q
+                    WHERE toString(coalesce(a.name, "")) CONTAINS $q
+                       OR toString(coalesce(b.name, "")) CONTAINS $q
+                       OR toString(coalesce(a.test_run_id, "")) CONTAINS $q
+                       OR toString(coalesce(b.test_run_id, "")) CONTAINS $q
+                       OR toString(coalesce(r.test_run_id, "")) CONTAINS $q
                     RETURN id(a) AS source_id, id(b) AS target_id,
                            labels(a) AS source_labels, labels(b) AS target_labels,
                            a.name AS source_name, b.name AS target_name,
+                           properties(a) AS source_props, properties(b) AS target_props,
                            type(r) AS rel_type
                      LIMIT $limit
-                     """,
+                    """,
                     {"q": q, "limit": query_limit},
+                )
+                node_rows = await self._await_call(
+                    self._neo4j_client.run_cypher,
+                    """
+                    MATCH (n)
+                    WHERE toString(coalesce(n.name, "")) CONTAINS $q
+                       OR toString(coalesce(n.test_run_id, "")) CONTAINS $q
+                    RETURN id(n) AS id,
+                           labels(n) AS labels,
+                           n.name AS name,
+                           properties(n) AS props
+                    LIMIT $limit
+                    """,
+                    {"q": q, "limit": safe_limit},
                 )
             else:
                 rows = await self._await_call(
@@ -140,6 +162,7 @@ class GraphPublicService:
                     RETURN id(a) AS source_id, id(b) AS target_id,
                            labels(a) AS source_labels, labels(b) AS target_labels,
                            a.name AS source_name, b.name AS target_name,
+                           properties(a) AS source_props, properties(b) AS target_props,
                            type(r) AS rel_type
                      LIMIT $limit
                      """,
@@ -158,35 +181,68 @@ class GraphPublicService:
         for row in selected_rows:
             sid = str(row.get("source_id"))
             tid = str(row.get("target_id"))
-            sname = row.get("source_name") or sid
-            tname = row.get("target_name") or tid
-            slabel = (row.get("source_labels") or ["Entity"])[0]
-            tlabel = (row.get("target_labels") or ["Entity"])[0]
+            source_props = dict(row.get("source_props") or {})
+            target_props = dict(row.get("target_props") or {})
+            sname = row.get("source_name") or source_props.get("name") or sid
+            tname = row.get("target_name") or target_props.get("name") or tid
+            source_labels = row.get("source_labels") or ["Entity"]
+            target_labels = row.get("target_labels") or ["Entity"]
+            slabel = source_labels[0]
+            tlabel = target_labels[0]
             if sid not in node_map:
-                node_map[sid] = {"id": sid, "name": sname, "label": slabel}
+                node_map[sid] = {
+                    "id": sid,
+                    "name": sname,
+                    "label": slabel,
+                    "labels": source_labels,
+                    "properties": source_props,
+                }
             if tid not in node_map:
-                node_map[tid] = {"id": tid, "name": tname, "label": tlabel}
+                node_map[tid] = {
+                    "id": tid,
+                    "name": tname,
+                    "label": tlabel,
+                    "labels": target_labels,
+                    "properties": target_props,
+                }
             links.append(
                 {
                     "source": sid,
                     "target": tid,
                     "label": row.get("rel_type") or "RELATED_TO",
+                    "rel_type": row.get("rel_type") or "RELATED_TO",
                 }
             )
+
+        for row in node_rows if isinstance(node_rows, list) else []:
+            node_id = str(row.get("id"))
+            if node_id in node_map:
+                continue
+            labels = row.get("labels") or ["Entity"]
+            props = dict(row.get("props") or {})
+            node_map[node_id] = {
+                "id": node_id,
+                "name": row.get("name") or props.get("name") or node_id,
+                "label": labels[0],
+                "labels": labels,
+                "properties": props,
+            }
 
         return {"ok": True, "nodes": list(node_map.values()), "links": links, "count": len(links)}
 
     async def get_entity_detail(self, entity_id: str) -> dict[str, Any]:
         """获取实体详细信息。"""
         try:
+            if not str(entity_id or "").strip().isdigit():
+                raise ValueError(f"invalid literal for int() with base 10: {entity_id!r}")
             entity_result = await self._await_call(
                 self._neo4j_client.run_cypher,
                 """
                 MATCH (n)
-                WHERE id(n) = $entity_id
+                WHERE toString(id(n)) = $entity_id
                 RETURN id(n) AS id, labels(n) AS labels, n.name AS name, properties(n) AS props
                 """,
-                {"entity_id": int(entity_id)},
+                {"entity_id": str(entity_id)},
             )
 
             if not entity_result:
@@ -207,24 +263,24 @@ class GraphPublicService:
                 self._neo4j_client.run_cypher,
                 """
                 MATCH (a)-[r]->(b)
-                WHERE id(b) = $entity_id
+                WHERE toString(id(b)) = $entity_id
                 RETURN id(a) AS source_id, a.name AS source_name, labels(a) AS source_labels,
                        type(r) AS rel_type, properties(r) AS rel_props
                 LIMIT 50
                 """,
-                {"entity_id": int(entity_id)},
+                {"entity_id": str(entity_id)},
             )
 
             outgoing = await self._await_call(
                 self._neo4j_client.run_cypher,
                 """
                 MATCH (a)-[r]->(b)
-                WHERE id(a) = $entity_id
+                WHERE toString(id(a)) = $entity_id
                 RETURN id(b) AS target_id, b.name AS target_name, labels(b) AS target_labels,
                        type(r) AS rel_type, properties(r) AS rel_props
                 LIMIT 50
                 """,
-                {"entity_id": int(entity_id)},
+                {"entity_id": str(entity_id)},
             )
 
             relationships = {

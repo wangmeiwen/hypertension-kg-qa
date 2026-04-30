@@ -37,6 +37,7 @@ import numpy as np
 from pymilvus import DataType, MilvusClient
 from sentence_transformers import SentenceTransformer
 
+from app.common.concurrency import LockAcquireTimeout, concurrency_guard
 from app.common.config import Config
 from app.common.perf_logger import log_duration
 from app.knowledge_graph.neo4j_manager import neo4j_client
@@ -586,6 +587,26 @@ class KgMilvusStore:
         return inserted
 
     async def rebuild_from_neo4j(
+        self,
+        neo4j_client,
+        labels: Optional[List[str]] = None,
+        batch_size: int = 100,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
+        timeout = float(Config().KG_MILVUS_REBUILD_LOCK_TIMEOUT_SECONDS)
+        lock_timeout = None if timeout < 0 else timeout
+        async with concurrency_guard.writer_lock(
+            f"kg-milvus:{self.collection_name}",
+            timeout=lock_timeout,
+        ):
+            return await self._rebuild_from_neo4j_unlocked(
+                neo4j_client,
+                labels=labels,
+                batch_size=batch_size,
+                progress_callback=progress_callback,
+            )
+
+    async def _rebuild_from_neo4j_unlocked(
         self,
         neo4j_client,
         labels: Optional[List[str]] = None,
@@ -1253,6 +1274,55 @@ class KgMilvusStore:
         disambiguation_margin: Optional[float] = None,
         disambiguation_resolver: Optional[Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        try:
+            async with concurrency_guard.reader_lock(f"kg-milvus:{self.collection_name}", timeout=2.0):
+                return await self._search_entity_relations_unlocked(
+                    query=query,
+                    top_k=top_k,
+                    lexical_weight=lexical_weight,
+                    expansion_limit=expansion_limit,
+                    enable_disambiguation=enable_disambiguation,
+                    enable_community_detection=enable_community_detection,
+                    community_top_k=community_top_k,
+                    disambiguation_margin=disambiguation_margin,
+                    disambiguation_resolver=disambiguation_resolver,
+                )
+        except LockAcquireTimeout:
+            return {
+                "entities": [],
+                "relationships": [],
+                "disambiguated_entities": [],
+                "ambiguous_entities": [],
+                "canonical_mapping": {},
+                "alias_groups": {},
+                "communities": [],
+                "community_reports": [],
+                "collection_name": self.collection_name,
+                "token_usage": self._empty_token_usage(),
+                "llm_calls": 0,
+                "degraded": True,
+                "unavailable": True,
+                "dependency": "kg_milvus",
+                "reason": "kg_milvus_rebuild_in_progress",
+                "retrieval_meta": {
+                    "degraded": True,
+                    "unavailable": True,
+                    "reason": "kg_milvus_rebuild_in_progress",
+                },
+            }
+
+    async def _search_entity_relations_unlocked(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        lexical_weight: Optional[float] = None,
+        expansion_limit: Optional[int] = None,
+        enable_disambiguation: bool = True,
+        enable_community_detection: bool = True,
+        community_top_k: Optional[int] = None,
+        disambiguation_margin: Optional[float] = None,
+        disambiguation_resolver: Optional[Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         执行图谱混合检索、实体消歧与社区发现主流程。
 
@@ -1496,4 +1566,3 @@ class KgMilvusStore:
             "query_window_limit": max_query_window,
             "stats_may_be_truncated": len(result) >= max_query_window,
         }
-

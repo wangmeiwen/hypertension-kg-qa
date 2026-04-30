@@ -1,0 +1,60 @@
+.workspace,
+.stack,
+.jobsList,
+.primaryColumn,
+.secondaryColumn {
+  display: grid;
+  gap: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 20px;
+}
+
+.selectedFile {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(233, 247, 255, 0.75);
+  border: 1px solid rgba(31, 135, 199, 0.16);
+}
+
+.jobCard {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  text-align: left;
+  cursor: pointer;
+}
+
+.jobCardActive {
+  border-color: rgba(31, 135, 199, 0.4);
+  box-shadow: 0 0 0 3px rgba(31, 135, 199, 0.08);
+}
+
+.jobHeader,
+.jobMeta,
+.metaRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--color-slate-700);
+}
+
+@media (max-width: 1100px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,36 @@
+.layout {
+  display: grid;
+  gap: 24px;
+}
+
+.body {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+}
+
+.status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.messageCard {
+  min-height: 420px;
+}
+
+.disclaimer {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--color-danger-500);
+  border-radius: 14px;
+  background: var(--color-danger-50);
+  color: var(--color-danger-700);
+}
+
+@media (max-width: 1100px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+}

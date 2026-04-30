@@ -1,0 +1,40 @@
+import { Suspense, lazy } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+
+import AppErrorBoundary from "./error/AppErrorBoundary";
+import AppLayout from "./layout/AppLayout";
+import RouteFallback from "./router/RouteFallback";
+import AdminGuard from "./routes/AdminGuard";
+
+const ChatWorkspacePage = lazy(() => import("../pages/chat/ChatWorkspacePage"));
+const GraphExplorerPage = lazy(() => import("../pages/graph/GraphExplorerPage"));
+const AdminSessionsPage = lazy(() => import("../pages/admin/AdminSessionsPage"));
+const AdminObservabilityPage = lazy(() => import("../pages/admin/AdminObservabilityPage"));
+const AdminGraphPage = lazy(() => import("../pages/admin/AdminGraphPage"));
+const AdminDocumentsPage = lazy(() => import("../pages/admin/AdminDocumentsPage"));
+const AdminSettingsPage = lazy(() => import("../pages/admin/AdminSettingsPage"));
+
+export default function AppRouter() {
+  return (
+    <AppErrorBoundary>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<AppLayout />}>
+            <Route index element={<Navigate to="/chat" replace />} />
+            <Route path="chat" element={<ChatWorkspacePage />} />
+            <Route path="graph" element={<GraphExplorerPage />} />
+            <Route path="admin" element={<AdminGuard />}>
+              <Route index element={<Navigate to="/admin/sessions" replace />} />
+              <Route path="sessions" element={<AdminSessionsPage />} />
+              <Route path="observability" element={<AdminObservabilityPage />} />
+              <Route path="graph" element={<AdminGraphPage />} />
+              <Route path="documents" element={<AdminDocumentsPage />} />
+              <Route path="settings" element={<AdminSettingsPage />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/chat" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </AppErrorBoundary>
+  );
+}

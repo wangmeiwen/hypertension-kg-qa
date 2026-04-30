@@ -307,6 +307,19 @@ async def init_db() -> None:
             FOREIGN KEY (run_id) REFERENCES graph_import_runs(run_id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """,
+        """
+        CREATE TABLE IF NOT EXISTS operation_locks (
+            lock_key VARCHAR(191) PRIMARY KEY,
+            job_id VARCHAR(128) DEFAULT '',
+            owner VARCHAR(128) NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            heartbeat_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_operation_locks_expires_at (expires_at),
+            INDEX idx_operation_locks_job_id (job_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """,
     ]
 
     async with _get_engine().begin() as conn:

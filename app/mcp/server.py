@@ -52,6 +52,7 @@ class MCPServer:
         self._retry_backoff_max_ms = self._resolve_int("MCP_TOOL_RETRY_BACKOFF_MAX_MS", 800, 0, 15000)
         self._tool_circuit_state: dict[str, dict[str, Any]] = {}
         self._circuit_lock = asyncio.Lock()
+        self._cleanup_callbacks: list[Callable[[], Any]] = []
 
     @staticmethod
     def _resolve_bool_env(name: str, default: bool) -> bool:
@@ -223,6 +224,27 @@ class MCPServer:
         self._tools[name] = tool
         canonical = f"{str(tool.server_name or 'local').strip()}::{str(tool.tool_name or name).strip()}"
         self._aliases[canonical] = name
+
+    def register_cleanup_callback(self, callback: Callable[[], Any]) -> None:
+        """注册服务关闭时需要执行的清理回调。"""
+        self._cleanup_callbacks.append(callback)
+
+    async def aclose(self) -> None:
+        """执行已注册的资源清理回调。"""
+        callbacks = list(self._cleanup_callbacks)
+        self._cleanup_callbacks.clear()
+        for callback in callbacks:
+            try:
+                result = callback()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:  # pragma: no cover - defensive shutdown path
+                logger.warning(
+                    "mcp_cleanup_callback_failed: error_type=%s error=%s",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
 
     def list_tools(self) -> list[dict[str, Any]]:
         """列出已注册工具元数据。

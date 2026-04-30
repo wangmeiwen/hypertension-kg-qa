@@ -336,6 +336,11 @@ class KgEntityRelationSearchTool:
             )
             self._llm = None
 
+    async def aclose(self) -> None:
+        """释放实体关系检索工具持有的 LLM 客户端资源。"""
+        if self._llm is not None:
+            await self._llm.aclose()
+
     def _resolve_disambiguation_with_llm(self, query: str, candidates: list[dict[str, Any]], margin: float) -> dict[str, Any]:
         """调用 LLM 对候选实体进行语义消歧。
 
@@ -527,6 +532,15 @@ def get_mcp_server() -> MCPServer:
         _mcp_server_instance = build_mcp_server()
     return _mcp_server_instance
 
+
+async def close_mcp_server() -> None:
+    """关闭并清空全局 MCPServer 单例。"""
+    global _mcp_server_instance
+    server = _mcp_server_instance
+    _mcp_server_instance = None
+    if server is not None:
+        await server.aclose()
+
 def build_mcp_server() -> MCPServer:
     """构建并注册 MCP 工具服务。
 
@@ -609,6 +623,7 @@ def build_mcp_server() -> MCPServer:
 
     try:
         kg_er_tool = KgEntityRelationSearchTool(conf)
+        server.register_cleanup_callback(kg_er_tool.aclose)
 
         preload_embedder = _to_bool(
             os.getenv("KG_ENTITY_RELATION_PRELOAD_EMBEDDER", "1"),

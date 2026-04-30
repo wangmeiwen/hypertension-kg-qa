@@ -1,0 +1,10 @@
+.boundary {
+  min-height: 100vh;
+  padding: 32px;
+  display: grid;
+  place-items: center;
+}
+
+.panel {
+  width: min(760px, 100%);
+}

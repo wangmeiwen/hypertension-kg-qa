@@ -1,0 +1,150 @@
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import ChatWorkspacePage from "./ChatWorkspacePage";
+import { useSessionStore } from "../../entities/session/model/useSessionStore";
+import { renderWithProviders } from "../../test/testUtils";
+
+const sessionClientMocks = vi.hoisted(() => ({
+  cancelQaJob: vi.fn(),
+  createSession: vi.fn(),
+  getSession: vi.fn(),
+  listSessions: vi.fn(),
+  rollbackToQuestion: vi.fn(),
+  streamProcessWithSession: vi.fn(),
+  uploadChatFile: vi.fn(),
+}));
+
+vi.mock("../../shared/api/sessionClient", () => ({
+  cancelQaJob: sessionClientMocks.cancelQaJob,
+  createSession: sessionClientMocks.createSession,
+  getSession: sessionClientMocks.getSession,
+  listSessions: sessionClientMocks.listSessions,
+  rollbackToQuestion: sessionClientMocks.rollbackToQuestion,
+  streamProcessWithSession: sessionClientMocks.streamProcessWithSession,
+  uploadChatFile: sessionClientMocks.uploadChatFile,
+}));
+
+vi.mock("../../shared/lib/observability", () => ({
+  reportFrontendError: vi.fn(),
+  trackEvent: vi.fn(),
+}));
+
+async function* successfulStream() {
+  yield { type: "job" as const, job_id: "job-1" };
+  yield { type: "session" as const, session_id: "s1" };
+  yield { type: "persisted" as const, user_message_id: 11, assistant_message_id: 12 };
+  yield { type: "msg" as const, msg: "running orchestrator", stage: "orchestrator" };
+  yield { type: "reply" as const, msg: "基于当前知识库，建议规律监测血压。" };
+  yield { type: "done" as const, status: "succeeded" };
+}
+
+async function* failedStream() {
+  yield { type: "msg" as const, msg: "准备失败" };
+  throw new Error("问答流式请求失败");
+}
+
+describe("ChatWorkspacePage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useSessionStore.setState({
+      currentSessionId: null,
+      messages: [],
+      draft: "",
+      loading: false,
+      selectedFile: null,
+      filePreview: null,
+      currentJobId: "",
+      stoppingJob: false,
+    });
+    sessionClientMocks.listSessions.mockResolvedValue([]);
+    sessionClientMocks.createSession.mockResolvedValue({
+      id: "s1",
+      user_id: "u1",
+      title: "新建会话",
+      message_count: 0,
+      created_at: "2026-01-01",
+      updated_at: "2026-01-01",
+    });
+    sessionClientMocks.getSession.mockResolvedValue({
+      id: "s1",
+      user_id: "u1",
+      title: "新建会话",
+      message_count: 0,
+      created_at: "2026-01-01",
+      updated_at: "2026-01-01",
+      messages: [],
+    });
+    sessionClientMocks.rollbackToQuestion.mockResolvedValue({ question: "高血压怎么管理？" });
+    sessionClientMocks.cancelQaJob.mockResolvedValue(undefined);
+    sessionClientMocks.uploadChatFile.mockResolvedValue({ base64: "file-data" });
+  });
+
+  it("sends a question and renders streaming response", async () => {
+    const user = userEvent.setup();
+    sessionClientMocks.streamProcessWithSession.mockImplementation(successfulStream);
+    sessionClientMocks.getSession.mockResolvedValue({
+      id: "s1",
+      user_id: "u1",
+      title: "新建会话",
+      message_count: 2,
+      created_at: "2026-01-01",
+      updated_at: "2026-01-01",
+      messages: [
+        { id: 11, role: "user", content: "高血压怎么管理？" },
+        { id: 12, role: "assistant", content: "基于当前知识库，建议规律监测血压。" },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspacePage />);
+
+    await user.type(screen.getByRole("textbox", { name: "问题输入" }), "高血压怎么管理？");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findByText("基于当前知识库，建议规律监测血压。")).toBeVisible();
+    expect(sessionClientMocks.streamProcessWithSession).toHaveBeenCalledWith(
+      "高血压怎么管理？",
+      expect.any(String),
+      "s1",
+      null,
+      "",
+    );
+  });
+
+  it("shows failure feedback when streaming fails", async () => {
+    const user = userEvent.setup();
+    sessionClientMocks.streamProcessWithSession.mockImplementation(failedStream);
+
+    renderWithProviders(<ChatWorkspacePage />);
+
+    await user.type(screen.getByRole("textbox", { name: "问题输入" }), "触发失败");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findAllByText("问答流式请求失败")).not.toHaveLength(0);
+  });
+
+  it("restores a user message for resend", async () => {
+    const user = userEvent.setup();
+    sessionClientMocks.getSession.mockResolvedValue({
+      id: "s1",
+      user_id: "u1",
+      title: "新建会话",
+      message_count: 1,
+      created_at: "2026-01-01",
+      updated_at: "2026-01-01",
+      messages: [{ id: 1, role: "user", content: "高血压怎么管理？" }],
+    });
+    useSessionStore.setState({
+      messages: [{ id: 1, role: "user", content: "高血压怎么管理？" }],
+      currentSessionId: "s1",
+    });
+
+    renderWithProviders(<ChatWorkspacePage />);
+
+    await user.click(screen.getByRole("button", { name: "重新发送" }));
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "问题输入" })).toHaveValue("高血压怎么管理？"));
+    expect(screen.getByText("已将消息重新写回输入框，可继续发送。")).toBeVisible();
+  });
+});

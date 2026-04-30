@@ -1,0 +1,81 @@
+.workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+  gap: 20px;
+}
+
+.primaryColumn,
+.secondaryColumn,
+.detailStack,
+.modalStack,
+.jobsList {
+  display: grid;
+  gap: 16px;
+}
+
+.toolbar,
+.inlineActions,
+.relationshipMeta,
+.jobHeader,
+.jobMeta,
+.pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pagination {
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.properties,
+.relationshipList {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.propertyRow {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.relationshipItem,
+.jobCard {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.relationshipActions {
+  display: grid;
+  gap: 10px;
+}
+
+.mono {
+  font-family: Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--color-slate-700);
+}
+
+@media (max-width: 1200px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

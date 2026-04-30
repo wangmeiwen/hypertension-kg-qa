@@ -9,6 +9,8 @@ import shutil
 from typing import Any, Awaitable, Callable
 
 from app.backend.repositories.database import MessageManager, SessionManager
+from app.common.concurrency import concurrency_guard
+from app.common.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class AdminSessionsService:
         """
         self._await_call = await_call
         self._get_session_memory_service = get_session_memory_service
+        self._config = Config()
 
     @staticmethod
     def _project_root() -> Path:
@@ -98,14 +101,15 @@ class AdminSessionsService:
     def _delete_session_log_artifacts(self, session_id: str) -> tuple[bool, str]:
         """删除单个会话的日志 JSON/JSONL 目录，限制在 logs/sessions 内。"""
         try:
-            logs_root = (self._project_root() / "logs" / "sessions").resolve()
-            target_dir = (logs_root / self._safe_log_id(session_id)).resolve()
-            if target_dir == logs_root or not self._is_relative_to(target_dir, logs_root):
-                return False, "unsafe_log_path"
-            if not target_dir.exists():
+            with concurrency_guard.sync_keyed_lock(f"session-artifacts:{self._safe_log_id(session_id)}"):
+                logs_root = (self._project_root() / "logs" / "sessions").resolve()
+                target_dir = (logs_root / self._safe_log_id(session_id)).resolve()
+                if target_dir == logs_root or not self._is_relative_to(target_dir, logs_root):
+                    return False, "unsafe_log_path"
+                if not target_dir.exists():
+                    return True, ""
+                shutil.rmtree(target_dir)
                 return True, ""
-            shutil.rmtree(target_dir)
-            return True, ""
         except Exception as exc:  # pragma: no cover - filesystem failures depend on OS state
             logger.exception(
                 "delete_session_log_artifacts_failed: session_id=%s error_type=%s error=%s",
@@ -931,7 +935,11 @@ class AdminSessionsService:
         if removed_count > 0:
             await self._await_call(MessageManager.delete_messages, session_id)
         memory_cleared, memory_error_type = await self._clear_session_memory(session_id)
-        log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
+        async with concurrency_guard.keyed_lock(
+            f"session-artifacts:{session_id}",
+            timeout=self._config.SESSION_ARTIFACT_LOCK_TIMEOUT_SECONDS,
+        ):
+            log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
         await self._await_call(SessionManager.update_session_time, session_id)
 
         response: dict[str, Any] = {
@@ -952,7 +960,11 @@ class AdminSessionsService:
         memory_cleared, memory_error_type = await self._clear_session_memory(session_id)
         success = await self._await_call(SessionManager.delete_session, session_id)
         if success:
-            log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
+            async with concurrency_guard.keyed_lock(
+                f"session-artifacts:{session_id}",
+                timeout=self._config.SESSION_ARTIFACT_LOCK_TIMEOUT_SECONDS,
+            ):
+                log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
             response: dict[str, Any] = {
                 "ok": True,
                 "message": "会话已删除",

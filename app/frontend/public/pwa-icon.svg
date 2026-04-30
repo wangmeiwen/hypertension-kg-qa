@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="HypertensionKG">
+  <rect width="512" height="512" rx="116" fill="#0f766e" />
+  <circle cx="378" cy="132" r="64" fill="#7dd3fc" opacity="0.7" />
+  <path
+    d="M128 170h56v68h144v-68h56v172h-56v-72H184v72h-56V170Z"
+    fill="#ffffff"
+  />
+  <path
+    d="M118 392c50-52 91-78 138-78s88 26 138 78"
+    fill="none"
+    stroke="#99f6e4"
+    stroke-width="26"
+    stroke-linecap="round"
+  />
+</svg>

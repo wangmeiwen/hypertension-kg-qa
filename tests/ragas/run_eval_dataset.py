@@ -12,9 +12,9 @@ from typing import Any, Iterable
 import requests
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET = PROJECT_ROOT / "data" / "ragas_eval_30_hypertension_guideline_2024_userlike_ground_truth.json"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "tests" / "eval_runs"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "tests" / "ragas" / "eval_runs"
 TEXT_KEYS = {
     "text",
     "content",

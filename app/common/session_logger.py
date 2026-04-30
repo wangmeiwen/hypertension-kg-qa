@@ -15,6 +15,7 @@
 
 """
 
+import contextlib
 import contextvars
 from datetime import datetime, timezone
 import hashlib
@@ -27,6 +28,8 @@ import threading
 import uuid
 from typing import Any, Optional
 
+from app.common.concurrency import concurrency_guard
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +41,18 @@ _WRITE_LOCK = threading.Lock()
 _PHONE_PATTERN = re.compile(r"(?<!\d)(1\d{10})(?!\d)")
 _EMAIL_PATTERN = re.compile(r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 _IDCARD_PATTERN = re.compile(r"(?<!\d)(\d{17}[\dXx]|\d{15})(?!\d)")
+
+
+def _session_artifact_lock_key(session_id: str) -> str:
+    return f"session-artifacts:{_safe_id(session_id)}"
+
+
+def _session_artifact_lock_key_for_path(file_path: Path) -> str | None:
+    parts = file_path.parts
+    for idx, part in enumerate(parts):
+        if part == "sessions" and idx + 1 < len(parts):
+            return f"session-artifacts:{parts[idx + 1]}"
+    return None
 
 
 def _utc_now() -> str:
@@ -285,9 +300,17 @@ def _append_jsonl(file_path: Path, payload: dict[str, Any]) -> None:
     """
     file_path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(_mask_sensitive(payload), ensure_ascii=False, default=str)
-    with _WRITE_LOCK:
-        with file_path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+    lock_key = _session_artifact_lock_key_for_path(file_path)
+    lock_cm = concurrency_guard.sync_keyed_lock(lock_key) if lock_key else contextlib.nullcontext()
+    with lock_cm:
+        with _WRITE_LOCK:
+            with file_path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+
+def append_jsonl_atomic(file_path: Path, payload: dict[str, Any]) -> None:
+    """以公共入口追加 JSONL，复用统一写锁和脱敏逻辑。"""
+    _append_jsonl(file_path, payload)
 
 
 def create_request_id() -> str:
@@ -416,30 +439,32 @@ def ensure_session_meta(session_id: str, user_id: str = "") -> None:
     meta_file = session_dir / "session_meta.json"
     now = _utc_now()
 
-    if meta_file.exists():
-        try:
-            existing = json.loads(meta_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError) as exc:
-            logger.warning(
-                "session_logger_meta_read_failed_reset: session_id=%s error_type=%s error=%s",
-                sid,
-                type(exc).__name__,
-                exc,
-            )
-            existing = {}
-    else:
-        existing = {}
+    with concurrency_guard.sync_keyed_lock(_session_artifact_lock_key(sid)):
+        with _WRITE_LOCK:
+            if meta_file.exists():
+                try:
+                    existing = json.loads(meta_file.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError) as exc:
+                    logger.warning(
+                        "session_logger_meta_read_failed_reset: session_id=%s error_type=%s error=%s",
+                        sid,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    existing = {}
+            else:
+                existing = {}
 
-    session_meta = {
-        "session_id": sid,
-        "user_id": str(user_id or existing.get("user_id") or ""),
-        "created_at": str(existing.get("created_at") or now),
-        "latest_request_at": now,
-        "llm_call_count": int(existing.get("llm_call_count") or 0),
-        "op_event_count": int(existing.get("op_event_count") or 0),
-        "tool_event_count": int(existing.get("tool_event_count") or 0),
-    }
-    meta_file.write_text(json.dumps(session_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            session_meta = {
+                "session_id": sid,
+                "user_id": str(user_id or existing.get("user_id") or ""),
+                "created_at": str(existing.get("created_at") or now),
+                "latest_request_at": now,
+                "llm_call_count": int(existing.get("llm_call_count") or 0),
+                "op_event_count": int(existing.get("op_event_count") or 0),
+                "tool_event_count": int(existing.get("tool_event_count") or 0),
+            }
+            meta_file.write_text(json.dumps(session_meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _bump_session_meta_count(session_id: str, field_name: str) -> None:
@@ -455,20 +480,33 @@ def _bump_session_meta_count(session_id: str, field_name: str) -> None:
     """
     sid = _safe_id(session_id)
     meta_file = _sessions_dir() / sid / "session_meta.json"
-    ensure_session_meta(sid, get_user_id())
-    try:
-        data = json.loads(meta_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError) as exc:
-        logger.warning(
-            "session_logger_meta_counter_read_failed_reset: session_id=%s error_type=%s error=%s",
-            sid,
-            type(exc).__name__,
-            exc,
-        )
-        data = {"session_id": sid}
-    data[field_name] = int(data.get(field_name) or 0) + 1
-    data["latest_request_at"] = _utc_now()
-    meta_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    session_dir = _sessions_dir() / sid
+    session_dir.mkdir(parents=True, exist_ok=True)
+    with concurrency_guard.sync_keyed_lock(_session_artifact_lock_key(sid)):
+        with _WRITE_LOCK:
+            if meta_file.exists():
+                try:
+                    data = json.loads(meta_file.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError) as exc:
+                    logger.warning(
+                        "session_logger_meta_counter_read_failed_reset: session_id=%s error_type=%s error=%s",
+                        sid,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    data = {"session_id": sid}
+            else:
+                data = {
+                    "session_id": sid,
+                    "user_id": get_user_id(),
+                    "created_at": _utc_now(),
+                    "llm_call_count": 0,
+                    "op_event_count": 0,
+                    "tool_event_count": 0,
+                }
+            data[field_name] = int(data.get(field_name) or 0) + 1
+            data["latest_request_at"] = _utc_now()
+            meta_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def log_api_call(

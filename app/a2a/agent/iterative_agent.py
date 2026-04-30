@@ -35,6 +35,10 @@ class IterativeAgent:
         self.subagent_client = SubAgentClientFactory(self.graph_subagent, self.rag_subagent)
         self.executor = OrchestratorExecutor(self.subagent_client)
 
+    async def aclose(self) -> None:
+        """释放主代理执行器持有的客户端资源。"""
+        await self.executor.aclose()
+
     async def run(
         self,
         *,

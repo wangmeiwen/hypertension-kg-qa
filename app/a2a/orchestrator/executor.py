@@ -18,6 +18,10 @@ class OrchestratorExecutor:
         self.conf = Config()
         self.controller = UnifiedOrchestratorController(subagent_client, conf=self.conf)
 
+    async def aclose(self) -> None:
+        """释放执行器持有的控制器资源。"""
+        await self.controller.aclose()
+
     @staticmethod
     def _clamp_positive(value: int, lower: int, upper: int) -> int:
         """将数值限制在正向闭区间内。"""
