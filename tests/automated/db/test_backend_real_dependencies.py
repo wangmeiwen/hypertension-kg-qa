@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backend.app_factory import BackendAppTestOverrides, create_app
@@ -22,12 +24,12 @@ from app.rag_core.kg_milvus_store import KgMilvusStore
 pytestmark = [pytest.mark.integration, pytest.mark.db]
 
 
-def _build_real_app(
+def _build_real_fastapi_app(
     *,
     neo4j_override: Any = None,
     get_shared_kg_milvus_store: Any = None,
     get_shared_vector_store: Any = None,
-) -> TestClient:
+) -> FastAPI:
     overrides = BackendAppTestOverrides(
         startup_behavior=StartupRuntimeBehavior(
             initialize_database=True,
@@ -57,6 +59,20 @@ def _build_real_app(
     )
     app = create_app(test_overrides=overrides)
     app.dependency_overrides[require_admin_login] = lambda: None
+    return app
+
+
+def _build_real_app(
+    *,
+    neo4j_override: Any = None,
+    get_shared_kg_milvus_store: Any = None,
+    get_shared_vector_store: Any = None,
+) -> TestClient:
+    app = _build_real_fastapi_app(
+        neo4j_override=neo4j_override,
+        get_shared_kg_milvus_store=get_shared_kg_milvus_store,
+        get_shared_vector_store=get_shared_vector_store,
+    )
     return TestClient(app)
 
 
@@ -140,9 +156,11 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
         },
     )
 
-    client = _build_real_app(neo4j_override=neo4j_client)
+    app = _build_real_fastapi_app(neo4j_override=neo4j_client)
+    transport = httpx.ASGITransport(app=app)
+    client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
     try:
-        graph = client.get("/graph/visualization", params={"keyword": test_run_id, "limit": 20})
+        graph = await client.get("/graph/visualization", params={"keyword": test_run_id, "limit": 20})
         assert graph.status_code == 200
         graph_nodes = graph.json()["nodes"]
         assert any(
@@ -154,13 +172,13 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
         node_id = next(
             row["id"] for row in graph_nodes if "PytestDisease" in (row.get("labels") or [row.get("label")])
         )
-        detail = client.get(f"/graph/entity/{node_id}")
+        detail = await client.get(f"/graph/entity/{node_id}")
         assert detail.status_code == 200
         assert str(detail.json()["entity"]["id"]) == str(node_id)
         assert "PytestDisease" in detail.json()["entity"]["labels"]
         assert detail.json()["entity"]["name"].startswith(test_run_id)
 
-        created = client.post(
+        created = await client.post(
             "/admin/graph/nodes",
             json={
                 "label": "PytestGuideline",
@@ -170,14 +188,14 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
         assert created.status_code == 200
         new_node_id = created.json()["data"]["id"]
 
-        updated = client.put(
+        updated = await client.put(
             f"/admin/graph/nodes/{new_node_id}",
             json={"properties": {"summary": "updated", "test_run_id": test_run_id}},
         )
         assert updated.status_code == 200
         assert updated.json()["ok"] is True
 
-        created_rel = client.post(
+        created_rel = await client.post(
             "/admin/graph/relationships",
             json={
                 "source_id": new_node_id,
@@ -188,20 +206,21 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
         )
         assert created_rel.status_code == 200
 
-        cypher = client.post(
+        cypher = await client.post(
             "/admin/graph/execute-cypher",
             json={"query": "MATCH (n) RETURN count(n) AS total LIMIT 1"},
         )
         assert cypher.status_code == 200
         assert cypher.json()["ok"] is True
 
-        deleted_rel = client.delete(
+        deleted_rel = await client.delete(
             f"/admin/graph/relationships/{created_rel.json()['data']['rel_id']}"
         )
         assert deleted_rel.status_code == 200
-        deleted_node = client.delete(f"/admin/graph/nodes/{new_node_id}")
+        deleted_node = await client.delete(f"/admin/graph/nodes/{new_node_id}")
         assert deleted_node.status_code == 200
     finally:
+        await client.aclose()
         await neo4j_client.run_cypher(
             "MATCH (n {test_run_id: $test_run_id}) DETACH DELETE n",
             {"test_run_id": test_run_id},

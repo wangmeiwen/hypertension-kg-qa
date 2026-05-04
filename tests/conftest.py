@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import sys
 import uuid
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,6 @@ if str(ROOT) not in sys.path:
 
 from app.backend.app_factory import BackendAppTestOverrides, create_app
 from app.backend.dependencies.admin_auth import require_admin_login
-from app.backend.repositories.database import execute
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
 from app.backend.testing.deterministic_support import build_deterministic_test_overrides
 
@@ -180,8 +180,25 @@ def admin_app_client(app_client_factory: Callable[..., TestClient]) -> TestClien
 @pytest.fixture()
 def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
     async def _cleanup(prefix: str) -> None:
+        import asyncmy
+
         like_prefix = f"{prefix}%"
-        await execute("DELETE FROM sessions WHERE user_id LIKE :prefix OR id LIKE :prefix", {"prefix": like_prefix})
+        conn = await asyncmy.connect(
+            host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+            port=int(os.getenv("MYSQL_PORT", "3306")),
+            user=os.getenv("MYSQL_USER", "root"),
+            password=os.getenv("MYSQL_PASSWORD", ""),
+            database=os.getenv("MYSQL_DATABASE", "hypertension_kg"),
+            autocommit=True,
+        )
+        try:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "DELETE FROM sessions WHERE user_id LIKE %s OR id LIKE %s",
+                    (like_prefix, like_prefix),
+                )
+        finally:
+            conn.close()
 
     return _cleanup
 
