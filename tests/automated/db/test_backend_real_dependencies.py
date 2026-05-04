@@ -84,57 +84,60 @@ async def _require_neo4j_and_milvus() -> None:
         pytest.skip("Milvus 未就绪")
 
 
-def test_mysql_session_and_admin_routes_roundtrip(
+@pytest.mark.asyncio
+async def test_mysql_session_and_admin_routes_roundtrip(
     test_data_prefix,
     cleanup_mysql_prefix,
     cleanup_session_artifacts,
 ) -> None:
     user_id = f"{test_data_prefix}user"
-    client = _build_real_app()
+    app = _build_real_fastapi_app()
+    transport = httpx.ASGITransport(app=app)
+    client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    session_id = ""
     try:
-        created = client.post("/sessions", json={"user_id": user_id, "title": "测试会话"})
+        created = await client.post("/sessions", json={"user_id": user_id, "title": "测试会话"})
         assert created.status_code == 200
         session_id = created.json()["data"]["id"]
 
-        add_user = client.post(
+        add_user = await client.post(
             f"/sessions/{session_id}/messages",
             json={"user_id": user_id, "role": "user", "content": "第一问"},
         )
         assert add_user.status_code == 200
 
-        add_assistant = client.post(
+        add_assistant = await client.post(
             f"/sessions/{session_id}/messages",
             json={"user_id": user_id, "role": "assistant", "content": "第一答"},
         )
         assert add_assistant.status_code == 200
 
-        messages = client.get(f"/sessions/{session_id}/messages", params={"user_id": user_id})
+        messages = await client.get(f"/sessions/{session_id}/messages", params={"user_id": user_id})
         assert messages.status_code == 200
         assert len(messages.json()["data"]) == 2
 
-        rollback = client.post(
+        rollback = await client.post(
             f"/sessions/{session_id}/rollback-to-question",
             json={"user_id": user_id, "message_id": messages.json()["data"][0]["id"]},
         )
         assert rollback.status_code == 200
         assert rollback.json()["ok"] is True
 
-        admin_sessions = client.get("/admin/sessions")
+        admin_sessions = await client.get("/admin/sessions")
         assert admin_sessions.status_code == 200
         assert any(row["id"] == session_id for row in admin_sessions.json()["data"])
 
-        admin_messages = client.get(f"/admin/sessions/{session_id}/messages")
+        admin_messages = await client.get(f"/admin/sessions/{session_id}/messages")
         assert admin_messages.status_code == 200
         assert admin_messages.json()["session"]["id"] == session_id
 
-        deleted = client.delete(f"/admin/sessions/{session_id}")
+        deleted = await client.delete(f"/admin/sessions/{session_id}")
         assert deleted.status_code == 200
         assert deleted.json()["ok"] is True
     finally:
-        cleanup_session_artifacts(locals().get("session_id", ""))
-        import asyncio
-
-        asyncio.run(cleanup_mysql_prefix(test_data_prefix))
+        await client.aclose()
+        cleanup_session_artifacts(session_id)
+        await cleanup_mysql_prefix(test_data_prefix)
 
 
 @pytest.mark.asyncio
