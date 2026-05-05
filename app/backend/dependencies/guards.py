@@ -30,7 +30,20 @@ def enforce_heavy_api_rate_limit(
     endpoint_limits: dict[str, dict[str, int]],
     window_seconds: float,
 ) -> Optional[JSONResponse]:
-    """执行重接口限流检查。"""
+    """执行重接口限流检查。
+
+    Args:
+        endpoint: 被保护的接口标识，用于选择限流配置和拼接限流键。
+        user_id: 当前用户 ID，存在时按用户维度限流。
+        session_id: 当前会话 ID，存在时按会话维度限流。
+        request: FastAPI 请求对象，用于提取 trace_id。
+        rate_limiter: 滑动窗口限流器实例；为空时跳过限流。
+        endpoint_limits: 各接口的 user_limit/session_limit 配置。
+        window_seconds: 限流统计窗口长度。
+
+    Returns:
+        未触发限流时返回 None；触发时返回 429 JSONResponse。
+    """
     if not get_feature_flag("ENABLE_HEAVY_API_RATE_LIMIT", True):
         return None
     if rate_limiter is None:

@@ -20,7 +20,11 @@ class A2AServerBundle:
 
 
 def _import_a2a_sdk() -> dict[str, Any]:
-    """按需导入 A2A SDK。"""
+    """按需导入 A2A SDK 中服务器装配所需的类。
+
+    Returns:
+        以类名为键的 SDK 类字典。
+    """
     from a2a.server.apps.jsonrpc.fastapi_app import A2AFastAPIApplication
     from a2a.server.agent_execution import AgentExecutor
     from a2a.server.request_handlers import DefaultRequestHandler
@@ -33,7 +37,14 @@ def _import_a2a_sdk() -> dict[str, Any]:
 
 
 def build_request_handler(agent_executor: Any) -> Any:
-    """基于原生 SDK 构建 request handler。"""
+    """基于原生 SDK 构建 request handler。
+
+    Args:
+        agent_executor: 实现 A2A AgentExecutor 协议的执行器实例。
+
+    Returns:
+        A2A SDK DefaultRequestHandler 实例。
+    """
     sdk = _import_a2a_sdk()
     handler_cls = sdk["DefaultRequestHandler"]
     return handler_cls(agent_executor=agent_executor)
@@ -46,7 +57,17 @@ def build_fastapi_app(
     rpc_url: str,
     card_url: str = "/.well-known/agent-card.json",
 ) -> Any:
-    """基于原生 SDK 构建 FastAPI 子应用。"""
+    """基于原生 SDK 构建 FastAPI 子应用。
+
+    Args:
+        agent_card: 当前 Agent 对外暴露的能力描述。
+        request_handler: SDK request handler 实例。
+        rpc_url: JSON-RPC 路由路径。
+        card_url: Agent Card 暴露路径。
+
+    Returns:
+        可挂载到主 FastAPI 应用的 A2A 子应用。
+    """
     sdk = _import_a2a_sdk()
     app_cls = sdk["A2AFastAPIApplication"]
 
@@ -79,5 +100,11 @@ def build_fastapi_app(
 
 
 def mount_agent_app(root_app: Any, mount_path: str, agent_app: Any) -> None:
-    """将子应用挂载到主应用。"""
+    """将 A2A 子应用挂载到主应用。
+
+    Args:
+        root_app: 主 FastAPI 应用实例。
+        mount_path: 子应用挂载路径。
+        agent_app: 由 SDK 构建出的 A2A 子应用。
+    """
     root_app.mount(str(mount_path or "/").strip(), agent_app)

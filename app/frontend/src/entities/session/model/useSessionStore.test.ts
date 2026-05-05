@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearTestStorage } from "../../../test/testUtils";
 
 describe("useSessionStore", () => {
+  // 重新导入 store 以验证模块初始化时的 localStorage 恢复逻辑。
   beforeEach(() => {
     clearTestStorage();
     vi.resetModules();

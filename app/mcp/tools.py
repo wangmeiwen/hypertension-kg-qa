@@ -501,7 +501,15 @@ class HistoryReadTool:
         self._memory = SessionMemoryService()
 
     async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """按 history_id 或用户问题读取会话内历史检索记录。"""
+        """按 history_id 或用户问题读取会话内历史检索记录。
+
+        Args:
+            payload: 工具输入参数，包含 session_id 以及 history_id
+                或 user_question 中的至少一项。
+
+        Returns:
+            dict[str, Any]: 历史检索匹配结果；参数缺失时返回明确错误码。
+        """
         session_id = str(payload.get("session_id") or "").strip()
         history_id = str(payload.get("history_id") or "").strip()
         user_question = str(payload.get("user_question") or "").strip()
@@ -534,7 +542,11 @@ def get_mcp_server() -> MCPServer:
 
 
 async def close_mcp_server() -> None:
-    """关闭并清空全局 MCPServer 单例。"""
+    """关闭并清空全局 MCPServer 单例。
+
+    该函数会先移除全局引用，再触发服务清理回调，避免关闭期间
+    其他调用继续复用正在释放的旧实例。
+    """
     global _mcp_server_instance
     server = _mcp_server_instance
     _mcp_server_instance = None
@@ -703,7 +715,14 @@ def build_mcp_server() -> MCPServer:
     history_read_tool = HistoryReadTool()
 
     async def history_read_handler(payload: dict[str, Any]) -> dict[str, Any]:
-        """处理 `history_read` 请求，返回指定历史问题下的检索记录。"""
+        """处理 `history_read` 请求，返回指定历史问题下的检索记录。
+
+        Args:
+            payload: 工具输入参数字典。
+
+        Returns:
+            dict[str, Any]: 会话历史检索读取结果。
+        """
         return await history_read_tool.query(payload)
 
     builtin_registry["history_read"] = {

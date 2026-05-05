@@ -23,6 +23,7 @@ vi.mock("./ForceGraphCanvas", () => ({
     { graphData, onNodeClick, onBackgroundClick }: ForceGraphMockProps,
     ref,
   ) {
+    // mock 暴露 KnowledgeGraphCanvas 会调用的最小 imperative API。
     useImperativeHandle(ref, () => ({
       d3Force: () => undefined,
       d3ReheatSimulation: vi.fn(),

@@ -28,11 +28,11 @@ class AgentRunService:
         log_api_error: Any,
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            get_a2a: 函数输入参数。
-            log_api_error: 函数输入参数。
-        
+            get_a2a: 延迟获取 A2AService 的回调，用于避免服务初始化阶段立即构建运行时。
+            log_api_error: 统一记录 API 错误的回调，保留端点、错误类别和上下文信息。
+
         Returns:
             None: 无返回值。
         """
@@ -92,7 +92,20 @@ class AgentRunService:
         trace_id: str,
         a2a_mode: str,
     ) -> Dict[str, Any]:
-        """执行 Agent 请求并输出兼容响应。"""
+        """执行一次 Agent 请求并转换为旧接口兼容响应。
+
+        Args:
+            input_text: 用户原始问题文本。
+            session_id: 会话标识，用于绑定上下文和追踪日志。
+            user_id: 用户标识，用于会话归属和追踪维度。
+            strategy: Agent 运行策略名称。
+            max_turns: 可选的最大迭代轮数。
+            trace_id: 本次请求的追踪标识。
+            a2a_mode: 调用方传入的 A2A 运行模式。
+
+        Returns:
+            Dict[str, Any]: 兼容前端消费的成功或失败响应。
+        """
         if session_id:
             ensure_session_meta(str(session_id), str(user_id or ""))
         session_tokens = set_session_context(str(session_id or ""), str(user_id or ""))
@@ -145,7 +158,23 @@ class AgentRunService:
         max_turns: Optional[int],
         trace_id: str,
     ) -> Dict[str, Any]:
-        """通过 A2A 服务执行一次 Agent 调用。"""
+        """通过 A2A 服务提交任务、轮询结果并提取最终响应。
+
+        Args:
+            input_text: 用户原始问题文本。
+            session_id: 会话标识，会写入 A2A message metadata。
+            user_id: 用户标识，会写入 A2A message metadata。
+            strategy: Agent 运行策略名称。
+            max_turns: 可选的最大迭代轮数。
+            trace_id: 本次请求的追踪标识。
+
+        Returns:
+            Dict[str, Any]: 从 A2A task artifact 和 status 中整理出的 Agent 结果。
+
+        Raises:
+            RuntimeError: A2A 任务缺失、失败、取消或返回结构不满足预期。
+            TimeoutError: A2A 任务超过配置的等待时间。
+        """
         service: A2AService = self._get_a2a()
         metadata: Dict[str, Any] = {
             "session_id": str(session_id or ""),

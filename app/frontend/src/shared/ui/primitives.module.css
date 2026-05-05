@@ -309,6 +309,10 @@
   border: 1px solid rgba(15, 23, 42, 0.06);
 }
 
+.scrollViewport {
+  overflow: auto;
+}
+
 .virtualViewport {
   overflow: auto;
   position: relative;

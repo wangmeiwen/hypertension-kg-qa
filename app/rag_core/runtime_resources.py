@@ -2,6 +2,7 @@
 RAG 运行时共享资源。
 
 集中复用 Milvus 向量存储对象，避免在热路径重复初始化模型与客户端。
+缓存作用域为当前 Python 进程，进程退出或测试手动清理前会一直持有实例。
 """
 
 from __future__ import annotations
@@ -104,5 +105,4 @@ def get_shared_kg_milvus_store(conf: Optional[Config] = None) -> KgMilvusStore:
             )
             _KG_STORES[key] = store
     return store
-
 

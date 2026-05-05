@@ -3,6 +3,7 @@ import { create } from "zustand";
 const USER_ID_KEY = "hypertensionkg_user_id";
 const CURRENT_SESSION_KEY_PREFIX = "current_session_";
 
+// UI 层消息模型同时承载后端消息 ID、前端临时 ID、思考内容和附件预览。
 export interface UiMessage {
   id?: number;
   clientId?: string;
@@ -14,6 +15,7 @@ export interface UiMessage {
 }
 
 function getOrCreateUserId(): string {
+  // 本地匿名用户 ID 用于把普通会话和浏览器实例绑定。
   const cached = window.localStorage.getItem(USER_ID_KEY);
   if (cached) return cached;
   const next = `user_${Math.random().toString(36).slice(2, 10)}`;
@@ -64,6 +66,7 @@ interface SessionState {
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
+  // Zustand store 管理聊天页跨组件共享的会话、输入框、附件和任务状态。
   userId: initialUserId,
   currentSessionId: getStoredSessionId(initialUserId),
   messages: [],

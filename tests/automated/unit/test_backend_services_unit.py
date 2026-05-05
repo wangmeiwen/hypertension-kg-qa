@@ -1,3 +1,9 @@
+"""后端服务层单元测试集合。
+
+该文件集中覆盖 A2A 流式事件、会话历史、文档任务、图谱管理、
+公开图谱、管理员会话观测和会话流式持久化等服务层行为。
+"""
+
 import asyncio
 import io
 import json
@@ -16,6 +22,7 @@ pytestmark = pytest.mark.unit
 
 
 def upload_file(name: str, body: bytes) -> UploadFile:
+    """构造 Starlette UploadFile，供服务层上传接口测试复用。"""
     return UploadFile(filename=name, file=io.BytesIO(body))
 
 

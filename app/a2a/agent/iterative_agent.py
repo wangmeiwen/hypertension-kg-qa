@@ -1,4 +1,4 @@
-﻿"""主代理迭代执行器（兼容层）。"""
+"""主代理迭代执行器（兼容层）。"""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ class IterativeAgent:
         graph_subagent: GraphSubAgent | None = None,
         rag_subagent: RagSubAgent | None = None,
     ) -> None:
-        """初始化 IterativeAgent 实例。
-        
+        """初始化主代理兼容层并装配本地图谱/RAG 子代理。
+
         Args:
-            mcp_server: 参数。
-            graph_subagent: 参数。
-            rag_subagent: 参数。
+            mcp_server: 可选 MCP 服务实例；为空时使用项目默认 MCP 服务。
+            graph_subagent: 可选图谱子代理实例，主要用于测试或外部注入。
+            rag_subagent: 可选 RAG 子代理实例，主要用于测试或外部注入。
         """
         mcp = mcp_server if mcp_server is not None else get_mcp_server()
         self.conf = Config()
@@ -53,19 +53,22 @@ class IterativeAgent:
         cancel_check: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> dict[str, Any]:
-        """执行 run。
-        
+        """执行一次高血压问答主代理编排流程。
+
         Args:
-            input_text: 参数。
-            session_id: 参数。
-            user_id: 参数。
-            strategy: 参数。
-            max_turns: 参数。
-            cancel_check: 参数。
-            progress_callback: 参数。
-        
+            input_text: 当前需要回答的用户问题。
+            session_id: 会话 ID，用于关联历史和运行追踪。
+            user_id: 用户 ID，用于区分不同用户上下文。
+            strategy: 编排策略名称，默认使用 iterative 迭代策略。
+            max_turns: 最大编排轮次；为空时读取配置并受上限约束。
+            image_data: 可选图片数据，透传给编排执行器。
+            original_input_text: 未经过前置改写的原始问题文本。
+            memory_context: 会话记忆上下文。
+            cancel_check: 外部取消检查回调，返回 True 时提前终止。
+            progress_callback: 编排过程事件回调。
+
         Returns:
-            执行结果。
+            包含最终答案、证据摘要、工具观察和遥测信息的结果字典。
         """
         if cancel_check is not None and bool(cancel_check()):
             return {

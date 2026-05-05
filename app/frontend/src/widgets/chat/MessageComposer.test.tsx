@@ -6,6 +6,7 @@ import MessageComposer from "./MessageComposer";
 import { renderWithProviders } from "../../test/testUtils";
 
 describe("MessageComposer", () => {
+  // 输入框组件只验证回调触发和附件展示，业务校验留给页面层。
   it("edits draft text and sends the message", async () => {
     const user = userEvent.setup();
     const onDraftChange = vi.fn();

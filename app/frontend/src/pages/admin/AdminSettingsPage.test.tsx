@@ -17,6 +17,7 @@ vi.mock("../../shared/api/runtimeClient", () => ({
 }));
 
 describe("AdminSettingsPage", () => {
+  // 设置页当前是只读面板，测试锁定运行时、队列和性能 JSON 展示。
   beforeEach(() => {
     vi.clearAllMocks();
     runtimeClientMocks.getAdminRuntimeFlags.mockResolvedValue({ flags: { test_mode: true }, updated_at: "2026-01-01T00:00:00Z" });

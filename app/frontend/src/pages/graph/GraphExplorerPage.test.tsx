@@ -29,6 +29,7 @@ vi.mock("../../entities/graph/ui/KnowledgeGraphCanvas", () => ({
 }));
 
 describe("GraphExplorerPage", () => {
+  // mock 图谱 Canvas，使页面测试聚焦查询参数和实体详情弹窗。
   beforeEach(() => {
     vi.clearAllMocks();
     graphClientMocks.fetchGraph.mockResolvedValue({

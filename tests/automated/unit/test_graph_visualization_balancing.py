@@ -7,6 +7,7 @@ from app.backend.services.graph_public_service import GraphPublicService
 
 
 def test_balanced_relationship_rows_prioritize_multiple_nodes_before_expanding_cap():
+    """验证公开图谱关系筛选会保留多个源节点，而不是被 hub 节点完全占满。"""
     rows = [
         {
             "source_id": "hub",

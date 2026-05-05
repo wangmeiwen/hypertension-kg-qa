@@ -1,6 +1,6 @@
 ﻿"""repositories 模块。
 
-提供 repositories 相关能力与对外接口。
+导出后端 MySQL 仓储初始化入口和各业务数据管理器。
 """
 
 

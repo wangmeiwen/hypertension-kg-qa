@@ -9,6 +9,7 @@ import { queryKeys } from "../../shared/queries/queryKeys";
 import { Badge, Button, Card, InlineNotice, Input, Modal, PageHeader, Select } from "../../shared/ui/primitives";
 
 function renderPropertyList(properties: Record<string, unknown> | undefined) {
+  // 实体和关系属性统一按 key/value 列表展示，复杂值以 JSON 文本兜底。
   const entries = Object.entries(properties || {});
   if (!entries.length) {
     return <div className="muted">-</div>;
@@ -35,6 +36,7 @@ function renderRelationshipList(
   }>,
   t: (key: string) => string,
 ) {
+  // 入边和出边详情共用渲染逻辑，相关节点名称由 source/target 字段推断。
   if (!items.length) return <div className="muted">{t("graph.noRelationships")}</div>;
   return (
     <div className={styles.relationshipList}>
@@ -67,6 +69,7 @@ export default function GraphExplorerPage() {
   const [selectedNodeId, setSelectedNodeId] = useState("");
 
   const graphQuery = useQuery({
+    // submittedKeyword 与输入框草稿分离，只有点击搜索才触发新的图谱查询 key。
     queryKey: queryKeys.graph.visualization(submittedKeyword, limit),
     queryFn: () => fetchGraph(submittedKeyword, limit),
   });
@@ -122,6 +125,7 @@ export default function GraphExplorerPage() {
       </Card>
 
       <Modal open={selectedEntityId != null} onClose={() => setSelectedEntityId(null)}>
+        {/* 详情弹窗按需查询实体关系，避免点击前加载全部节点明细。 */}
         {entityQuery.data ? (
           <div className={styles.entityMeta}>
             <h2 style={{ margin: 0 }}>{t("graph.entityDetail")}</h2>

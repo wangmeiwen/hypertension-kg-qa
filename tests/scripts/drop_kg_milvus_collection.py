@@ -1,4 +1,4 @@
-﻿"""
+"""
 删除并重新创建知识图谱 Milvus 集合脚本
 用于解决 schema 不匹配问题或更新集合结构
 """
@@ -21,7 +21,11 @@ except ImportError:
 
 
 def get_kg_milvus_config():
-    """获取知识图谱 Milvus 配置"""
+    """获取知识图谱 Milvus 配置。
+
+    Returns:
+        dict: Milvus 连接信息和知识图谱集合名称。
+    """
     conf = Config()
     collection_name = os.getenv("KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection")
     return {
@@ -58,7 +62,7 @@ def create_kg_collection_with_schema(
 ) -> bool:
     """
     创建知识图谱 Milvus 集合并设置 Schema
-    
+
     Args:
         client: Milvus 客户端
         collection_name: 集合名称
@@ -67,7 +71,7 @@ def create_kg_collection_with_schema(
     try:
         # 创建集合 Schema，启用自动 ID，禁用动态字段
         schema = client.create_schema(auto_id=True, enable_dynamic_field=False)
-        
+
         # 添加字段
         schema.add_field(field_name="pk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
         schema.add_field(field_name="doc_id", datatype=DataType.VARCHAR, max_length=64)
@@ -82,10 +86,10 @@ def create_kg_collection_with_schema(
         schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
         schema.add_field(field_name="timestamp", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=embedding_dim)
-        
+
         # 创建索引参数
         index_params = client.prepare_index_params()
-        
+
         # 向量索引
         index_params.add_index(
             field_name="embedding",
@@ -94,20 +98,20 @@ def create_kg_collection_with_schema(
             metric_type="COSINE",
             params={"nlist": 128}
         )
-        
+
         # 创建集合
         client.create_collection(
             collection_name=collection_name,
             schema=schema,
             index_params=index_params
         )
-        
+
         print(f"✅ 已创建知识图谱集合: {collection_name}")
         print(f"   - 向量维度: {embedding_dim}")
         print(f"   - 字段: pk_id, doc_id, item_type, name, label, source_name, source_label,")
         print(f"           relation_type, target_name, target_label, text, timestamp, embedding")
         return True
-        
+
     except Exception as e:
         print(f"❌ 创建集合失败: {e}")
         return False
@@ -116,14 +120,17 @@ def create_kg_collection_with_schema(
 def recreate_kg_collection(embedding_dim: int = 1024, skip_confirm: bool = False):
     """
     删除并重新创建知识图谱集合
-    
+
     Args:
         embedding_dim: 向量维度
         skip_confirm: 是否跳过确认提示
+
+    Returns:
+        bool: 重建成功返回 True，否则返回 False。
     """
     config = get_kg_milvus_config()
     collection_name = config["collection_name"]
-    
+
     print("=" * 60)
     print("知识图谱 Milvus 集合重建工具")
     print("=" * 60)
@@ -131,24 +138,24 @@ def recreate_kg_collection(embedding_dim: int = 1024, skip_confirm: bool = False
     print(f"数据库: {config['database']}")
     print(f"集合名: {collection_name}")
     print("=" * 60)
-    
+
     # 确认操作
     if not skip_confirm:
         confirm = input(f"\n⚠️  警告: 这将删除知识图谱集合 '{collection_name}' 中的所有数据！\n是否继续? (yes/no): ")
         if confirm.lower() not in ['yes', 'y']:
             print("❌ 操作已取消")
             return False
-    
+
     try:
         # 创建客户端
         client = MilvusClient(
             uri=f"http://{config['host']}:{config['port']}",
             db_name=config["database"]
         )
-        
+
         # 删除现有集合
         drop_collection(client, collection_name)
-        
+
         # 创建新集合
         if create_kg_collection_with_schema(client, collection_name, embedding_dim):
             # 加载集合
@@ -158,7 +165,7 @@ def recreate_kg_collection(embedding_dim: int = 1024, skip_confirm: bool = False
             return True
         else:
             return False
-            
+
     except Exception as e:
         print(f"❌ 操作失败: {e}")
         return False
@@ -168,27 +175,27 @@ def get_kg_collection_stats():
     """获取知识图谱集合统计信息"""
     config = get_kg_milvus_config()
     collection_name = config["collection_name"]
-    
+
     try:
         client = MilvusClient(
             uri=f"http://{config['host']}:{config['port']}",
             db_name=config["database"]
         )
-        
+
         if not client.has_collection(collection_name):
             print(f"ℹ️ 集合不存在: {collection_name}")
             return None
-        
+
         # 获取集合统计
         stats = client.get_collection_stats(collection_name)
         row_count = stats.get("row_count", 0)
-        
+
         print("=" * 60)
         print("知识图谱集合统计")
         print("=" * 60)
         print(f"集合名: {collection_name}")
         print(f"文档总数: {row_count}")
-        
+
         if row_count > 0:
             # 查询实体和关系数量
             max_query_window = 16384
@@ -198,18 +205,18 @@ def get_kg_collection_stats():
                 output_fields=["item_type"],
                 limit=max_query_window,
             )
-            
+
             entity_count = sum(1 for row in result if row.get("item_type") == "entity")
             rel_count = sum(1 for row in result if row.get("item_type") == "relationship")
-            
+
             print(f"实体数量: {entity_count}")
             print(f"关系数量: {rel_count}")
-            
+
             if len(result) >= max_query_window:
                 print(f"⚠️  注意: 统计可能被截断（查询窗口限制: {max_query_window}）")
-        
+
         return stats
-        
+
     except Exception as e:
         print(f"❌ 获取统计失败: {e}")
         return None
@@ -281,7 +288,7 @@ def main():
         None: 无返回值。
     """
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="知识图谱 Milvus 集合管理工具")
     parser.add_argument(
         "--recreate", "-r",
@@ -309,9 +316,9 @@ def main():
         action="store_true",
         help="跳过确认提示"
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.stats:
         get_kg_collection_stats()
         sys.exit(0)

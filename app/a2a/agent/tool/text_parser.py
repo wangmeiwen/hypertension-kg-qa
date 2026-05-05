@@ -1,8 +1,4 @@
-"""
-A2A agent/tool/text_parser.py 模块。
-
-本模块提供 text_parser 相关实现。
-"""
+"""提供 A2A 工具调用结果解析时使用的文本和 JSON 清洗工具。"""
 
 import json
 import logging
@@ -12,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _strip_code_block(text: str) -> str:
-    """去除 markdown 代码块包裹并返回纯文本。"""
+    """去除 Markdown 代码块包装，返回可继续解析的纯文本内容。"""
     content = (text or "").strip()
 
     if content.startswith("```"):
@@ -27,7 +23,7 @@ def _strip_code_block(text: str) -> str:
 
 
 def _extract_json_object(text: str) -> Dict[str, Any]:
-    """从文本中提取 JSON 对象。"""
+    """从文本中提取 JSON 对象，支持完整 JSON 或夹杂说明文字的 JSON 片段。"""
     cleaned = _strip_code_block(text)
 
     try:
@@ -51,7 +47,7 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 
 
 def _to_compact_text(data: Any, max_chars: int = 2600) -> str:
-    """将对象序列化为紧凑文本，超长时截断。"""
+    """将任意对象序列化为紧凑文本，并在超过长度限制时截断。"""
     try:
         text = json.dumps(data, ensure_ascii=False)
     except (TypeError, ValueError):
@@ -64,7 +60,7 @@ def _to_compact_text(data: Any, max_chars: int = 2600) -> str:
 
 
 def _compact_summary(value: Any, max_len: int = 180) -> str:
-    """压缩文本摘要到指定长度。"""
+    """生成指定最大长度内的单段文本摘要。"""
     text = str(value or "").strip()
 
     if len(text) <= max_len:

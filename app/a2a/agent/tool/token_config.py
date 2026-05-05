@@ -1,15 +1,11 @@
-"""
-A2A agent/tool/token_config.py 模块。
-
-本模块提供 token_config 相关实现。
-"""
+"""提供 A2A 工具调用链路中 token 统计和开关配置的解析工具。"""
 
 import os
 from typing import Any, Dict
 
 
 def _normalize_token_usage(metric_obj: Any) -> Dict[str, int]:
-    """将 token 统计对象规范化为整数计数字段。"""
+    """将模型或工具返回的 token 统计对象规范化为统一的整数计数字段。"""
     metric = metric_obj if isinstance(metric_obj, dict) else {}
 
     prompt_tokens = int(metric.get("prompt_tokens") or 0)
@@ -27,7 +23,7 @@ def _normalize_token_usage(metric_obj: Any) -> Dict[str, int]:
 
 
 def _extract_token_usage(result: Dict[str, Any]) -> Dict[str, int]:
-    """从工具结果中提取并规范化 token 使用量。"""
+    """从标准工具调用结果的 meta.token_usage 中提取 token 使用量。"""
     if not isinstance(result, dict):
         return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -39,6 +35,6 @@ def _extract_token_usage(result: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
-    """读取并解析布尔型环境变量。"""
+    """按常见真假值约定读取布尔型环境变量。"""
     value = str(os.getenv(name, default)).strip().lower()
     return value in {"1", "true", "yes", "on"}

@@ -49,7 +49,23 @@ class OrchestratorExecutor:
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        """执行统一主控循环并返回最终编排结果。"""
+        """执行统一主控循环并返回最终编排结果。
+
+        Args:
+            input_text: 当前用户问题。
+            session_id: 会话 ID，用于关联记忆和历史检索索引。
+            user_id: 用户 ID，当前透传给控制器。
+            trace_id: 兼容旧接口的追踪 ID，当前由上层链路处理。
+            strategy: 兼容旧接口的策略名，当前统一使用控制器策略。
+            max_turns: 主控最大决策轮数。
+            image_data: 可选图片数据，透传给最终回答生成阶段。
+            original_input_text: 兼容旧接口的原始输入文本。
+            memory_context: 会话记忆和历史检索索引上下文。
+            progress_callback: 过程事件回调。
+
+        Returns:
+            包含回答、证据摘要、处理步骤和遥测信息的编排结果。
+        """
         _ = trace_id
         _ = strategy
         _ = original_input_text

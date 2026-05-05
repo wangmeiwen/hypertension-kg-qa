@@ -20,7 +20,16 @@ def create_a2a_router(
     get_a2a: Callable[[], A2AService],
     dispatch_service: A2ADispatchService,
 ) -> APIRouter:
-    """创建 A2A 路由。"""
+    """创建 A2A 协议相关的主代理和子代理路由集合。
+
+    Args:
+        get_trace_id: 从请求中提取 trace_id 的函数。
+        get_a2a: 获取主代理 A2AService 的函数。
+        dispatch_service: 统一处理 RPC、任务查询、事件流和取消操作的服务。
+
+    Returns:
+        已注册 A2A 路由的 APIRouter。
+    """
     router = APIRouter()
 
     @router.get("/a2a/agent-card")
@@ -73,43 +82,43 @@ def create_a2a_router(
 
     @router.post("/a2a/rpc")
     async def a2a_rpc(data: dict, request: Request) -> JSONResponse:
-        """执行a2a_rpc流程并返回结果。
-        
+        """处理主编排 Agent 的 A2A JSON-RPC 请求。
+
         Args:
-            data: 函数输入参数。
-            request: 函数输入参数。
-        
+            data: JSON-RPC 请求体。
+            request: 当前 FastAPI 请求对象。
+
         Returns:
-            JSONResponse: 执行结果。
+            JSON-RPC 响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("orchestrator", data, trace_id, "/a2a/rpc")
 
     @router.get("/a2a/tasks")
     async def a2a_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
-        """执行a2a_list_tasks流程并返回结果。
-        
+        """查询主编排 Agent 的任务列表。
+
         Args:
-            request: 函数输入参数。
-            context_id: 对象标识。
-            limit: 函数输入参数。
-        
+            request: 当前 FastAPI 请求对象。
+            context_id: 可选上下文 ID，用于筛选同一会话任务。
+            limit: 返回任务数量上限。
+
         Returns:
-            dict[str, Any]: 结构化结果数据。
+            包含任务列表和 trace_id 的结构化结果。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("orchestrator", trace_id, "/a2a/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/tasks/{task_id}")
     async def a2a_get_task(task_id: str, request: Request) -> Any:
-        """执行a2a_get_task流程并返回结果。
-        
+        """查询主编排 Agent 的单个任务快照。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+
         Returns:
-            Any: 执行结果。
+            任务详情或错误响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("orchestrator", task_id, trace_id, "/a2a/tasks/{task_id}")
@@ -122,17 +131,17 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
-        """执行a2a_task_events流程并返回结果。
-        
+        """订阅主编排 Agent 的任务事件流。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-            cursor: 函数输入参数。
-            poll_ms: 函数输入参数。
-            timeout_seconds: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+            cursor: 事件游标位置。
+            poll_ms: 轮询间隔毫秒数。
+            timeout_seconds: 长连接最长等待时间。
+
         Returns:
-            Any: 执行结果。
+            SSE StreamingResponse 或错误响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
@@ -152,15 +161,15 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
-        """执行a2a_cancel_task流程并返回结果。
-        
+        """取消主编排 Agent 的指定任务。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-            data: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+            data: 可选取消原因请求体。
+
         Returns:
-            Any: 执行结果。
+            取消操作结果。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(
@@ -173,43 +182,43 @@ def create_a2a_router(
 
     @router.post("/a2a/graph/rpc")
     async def a2a_graph_rpc(data: dict, request: Request) -> JSONResponse:
-        """执行a2a_graph_rpc流程并返回结果。
-        
+        """处理图谱子 Agent 的 A2A JSON-RPC 请求。
+
         Args:
-            data: 函数输入参数。
-            request: 函数输入参数。
-        
+            data: JSON-RPC 请求体。
+            request: 当前 FastAPI 请求对象。
+
         Returns:
-            JSONResponse: 执行结果。
+            JSON-RPC 响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("graph", data, trace_id, "/a2a/graph/rpc")
 
     @router.get("/a2a/graph/tasks")
     async def a2a_graph_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
-        """执行a2a_graph_list_tasks流程并返回结果。
-        
+        """查询图谱子 Agent 的任务列表。
+
         Args:
-            request: 函数输入参数。
-            context_id: 对象标识。
-            limit: 函数输入参数。
-        
+            request: 当前 FastAPI 请求对象。
+            context_id: 可选上下文 ID，用于筛选同一会话任务。
+            limit: 返回任务数量上限。
+
         Returns:
-            dict[str, Any]: 结构化结果数据。
+            包含任务列表和 trace_id 的结构化结果。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("graph", trace_id, "/a2a/graph/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/graph/tasks/{task_id}")
     async def a2a_graph_get_task(task_id: str, request: Request) -> Any:
-        """执行a2a_graph_get_task流程并返回结果。
-        
+        """查询图谱子 Agent 的单个任务快照。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+
         Returns:
-            Any: 执行结果。
+            任务详情或错误响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("graph", task_id, trace_id, "/a2a/graph/tasks/{task_id}")
@@ -222,17 +231,17 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
-        """执行a2a_graph_task_events流程并返回结果。
-        
+        """订阅图谱子 Agent 的任务事件流。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-            cursor: 函数输入参数。
-            poll_ms: 函数输入参数。
-            timeout_seconds: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+            cursor: 事件游标位置。
+            poll_ms: 轮询间隔毫秒数。
+            timeout_seconds: 长连接最长等待时间。
+
         Returns:
-            Any: 执行结果。
+            SSE StreamingResponse 或错误响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
@@ -252,15 +261,15 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
-        """执行a2a_graph_cancel_task流程并返回结果。
-        
+        """取消图谱子 Agent 的指定任务。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-            data: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+            data: 可选取消原因请求体。
+
         Returns:
-            Any: 执行结果。
+            取消操作结果。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(
@@ -273,43 +282,43 @@ def create_a2a_router(
 
     @router.post("/a2a/retrieval/rpc")
     async def a2a_retrieval_rpc(data: dict, request: Request) -> JSONResponse:
-        """执行a2a_retrieval_rpc流程并返回结果。
-        
+        """处理检索子 Agent 的 A2A JSON-RPC 请求。
+
         Args:
-            data: 函数输入参数。
-            request: 函数输入参数。
-        
+            data: JSON-RPC 请求体。
+            request: 当前 FastAPI 请求对象。
+
         Returns:
-            JSONResponse: 执行结果。
+            JSON-RPC 响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.handle_rpc("retrieval", data, trace_id, "/a2a/retrieval/rpc")
 
     @router.get("/a2a/retrieval/tasks")
     async def a2a_retrieval_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
-        """执行a2a_retrieval_list_tasks流程并返回结果。
-        
+        """查询检索子 Agent 的任务列表。
+
         Args:
-            request: 函数输入参数。
-            context_id: 对象标识。
-            limit: 函数输入参数。
-        
+            request: 当前 FastAPI 请求对象。
+            context_id: 可选上下文 ID，用于筛选同一会话任务。
+            limit: 返回任务数量上限。
+
         Returns:
-            dict[str, Any]: 结构化结果数据。
+            包含任务列表和 trace_id 的结构化结果。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.list_tasks("retrieval", trace_id, "/a2a/retrieval/tasks", context_id=context_id, limit=limit)
 
     @router.get("/a2a/retrieval/tasks/{task_id}")
     async def a2a_retrieval_get_task(task_id: str, request: Request) -> Any:
-        """执行a2a_retrieval_get_task流程并返回结果。
-        
+        """查询检索子 Agent 的单个任务快照。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+
         Returns:
-            Any: 执行结果。
+            任务详情或错误响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.get_task("retrieval", task_id, trace_id, "/a2a/retrieval/tasks/{task_id}")
@@ -322,17 +331,17 @@ def create_a2a_router(
         poll_ms: int = 500,
         timeout_seconds: int = 300,
     ) -> Any:
-        """执行a2a_retrieval_task_events流程并返回结果。
-        
+        """订阅检索子 Agent 的任务事件流。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-            cursor: 函数输入参数。
-            poll_ms: 函数输入参数。
-            timeout_seconds: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+            cursor: 事件游标位置。
+            poll_ms: 轮询间隔毫秒数。
+            timeout_seconds: 长连接最长等待时间。
+
         Returns:
-            Any: 执行结果。
+            SSE StreamingResponse 或错误响应。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.stream_task_events(
@@ -352,15 +361,15 @@ def create_a2a_router(
         request: Request,
         data: Optional[dict[str, Any]] = None,
     ) -> Any:
-        """执行a2a_retrieval_cancel_task流程并返回结果。
-        
+        """取消检索子 Agent 的指定任务。
+
         Args:
-            task_id: 对象标识。
-            request: 函数输入参数。
-            data: 函数输入参数。
-        
+            task_id: A2A 任务 ID。
+            request: 当前 FastAPI 请求对象。
+            data: 可选取消原因请求体。
+
         Returns:
-            Any: 执行结果。
+            取消操作结果。
         """
         trace_id = get_trace_id(request)
         return await dispatch_service.cancel_task(

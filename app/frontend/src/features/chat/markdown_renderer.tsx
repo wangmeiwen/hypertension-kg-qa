@@ -20,6 +20,7 @@ const MEDICAL_DISCLAIMER_PATTERNS = [
 ];
 
 const isMarkdownTableSeparator = (line: string): boolean => {
+  // 判断 Markdown 表格分隔行，例如 | --- | :---: |。
   const trimmed = String(line || "").trim();
   if (!trimmed || !trimmed.includes("|")) return false;
   const cleaned = trimmed.replace(/^\|/, "").replace(/\|$/, "").trim();
@@ -35,6 +36,7 @@ const parseMarkdownTableRow = (line: string): string[] => {
 };
 
 const renderInlineMarkdown = (text: string, keyPrefix: string): ReactNode[] | string => {
+  // 仅支持项目回答中常见的粗体、行内代码和 http/mailto 链接。
   const safeText = String(text || "");
   if (!safeText) return "";
 
@@ -73,6 +75,7 @@ const getDisclaimerBlockClass = (text: string): string => {
 };
 
 export const renderMarkdownContent = (content: string): ReactNode[] | string => {
+  // 轻量块级 Markdown 渲染器，避免在聊天气泡中引入完整 Markdown 运行时。
   const text = String(content || "").replace(/\r\n/g, "\n");
   if (!text.trim()) return "Processing...";
 

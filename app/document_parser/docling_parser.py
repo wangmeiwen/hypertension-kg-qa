@@ -1,4 +1,4 @@
-﻿"""
+"""
 Docling 文档解析模块。
 
 本模块基于 IBM Docling 提供文档解析功能，支持：
@@ -95,6 +95,11 @@ class DoclingParser:
 
         Args:
             enable_image_ocr: 是否启用图片 OCR 功能，默认为 True
+            strict_image_ocr: 是否在图片 OCR 失败时直接抛错。
+            progress_callback: 可选进度回调，用于后台任务状态展示。
+
+        Returns:
+            None: 无返回值。
         """
         self.enable_image_ocr = enable_image_ocr
         self.strict_image_ocr = strict_image_ocr
@@ -119,6 +124,11 @@ class DoclingParser:
         )
 
     def _ensure_repo_root_on_sys_path(self) -> Path:
+        """确保仓库根目录位于 sys.path，便于 Docling 插件发现本地包。
+
+        Returns:
+            Path: 仓库根目录路径。
+        """
         repo_root = Path(__file__).resolve().parents[2]
         repo_root_str = str(repo_root)
         if repo_root_str not in sys.path:
@@ -126,6 +136,14 @@ class DoclingParser:
         return repo_root
 
     def _ensure_docling_plugin_ready(self) -> None:
+        """检查 Docling 外部 OCR 插件是否已安装并可被 entry point 发现。
+
+        Returns:
+            None: 无返回值。
+
+        Raises:
+            RuntimeError: 未发现 GLM OCR Docling 插件。
+        """
         self._ensure_repo_root_on_sys_path()
         entry_points = importlib.metadata.entry_points(group="docling")
         if not any(ep.name == DOCLING_GLM_PLUGIN_ENTRYPOINT for ep in entry_points):
@@ -134,6 +152,11 @@ class DoclingParser:
             )
 
     def _build_pdf_pipeline_options(self) -> ThreadedPdfPipelineOptions:
+        """构建启用 GLM OCR 插件的 PDF/Image pipeline 选项。
+
+        Returns:
+            ThreadedPdfPipelineOptions: Docling PDF pipeline 配置。
+        """
         from app.document_parser.docling_glm_ocr_plugin import GlmVisionOcrOptions
 
         return ThreadedPdfPipelineOptions(
@@ -143,6 +166,11 @@ class DoclingParser:
         )
 
     def _build_converter(self) -> DocumentConverter:
+        """构建 Docling DocumentConverter。
+
+        Returns:
+            DocumentConverter: 启用或禁用外部 OCR 插件的转换器实例。
+        """
         if not self.enable_image_ocr:
             return DocumentConverter()
 
@@ -154,7 +182,7 @@ class DoclingParser:
                 InputFormat.IMAGE: ImageFormatOption(pipeline_options=image_options),
             }
         )
-    
+
     def parse_file(self, file_path: Union[str, Path]) -> ParsedDocument:
         """
         解析本地文件。
@@ -180,16 +208,16 @@ class DoclingParser:
             解析后的文档数据
         """
         suffix = Path(filename).suffix.lower()
-        
+
         if suffix == ".pdf":
             return self._parse_pdf_with_docling_fallback(file_bytes, filename)
-        
+
         # 其他格式使用 Docling
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
-        
+
         try:
             if self.progress_callback:
                 self.progress_callback("enter", "parse_document", "Docling 正在解析文档结构")
@@ -238,7 +266,7 @@ class DoclingParser:
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-    
+
     def parse_url(self, url: str) -> ParsedDocument:
         """
         解析远程 URL 文档。
@@ -265,6 +293,7 @@ class DoclingParser:
         Args:
             result: Docling 转换结果
             source: 文档来源
+            metadata_overrides: 可选元数据覆盖项，用于记录 PDF 降级状态。
 
         Returns:
             解析后的文档数据
@@ -273,14 +302,14 @@ class DoclingParser:
 
         if self.progress_callback:
             self.progress_callback("heartbeat", "parse_document", "Docling 文档结构解析完成，正在整理正文")
-        
+
         page_text_map = self._build_docling_page_text_map(doc)
         page_markdown_map = self._build_docling_page_markdown_map(doc)
         pages = self._build_docling_pages(doc)
         tables = self._extract_tables(doc)
         images, ocr_texts_by_page = self._extract_docling_images(doc)
         text, markdown = self._compose_document_from_page_maps(page_text_map, page_markdown_map, ocr_texts_by_page)
-        
+
         # 元数据
         metadata: Dict[str, Any] = {
             "filename": doc.origin.filename if doc.origin else None,
@@ -295,10 +324,10 @@ class DoclingParser:
         }
         if metadata_overrides:
             metadata.update(metadata_overrides)
-        
+
         # 识别格式
         format_type = self._detect_format(source)
-        
+
         return ParsedDocument(
             source=source,
             format=format_type,
@@ -311,7 +340,14 @@ class DoclingParser:
         )
 
     def _get_conversion_status_name(self, result: ConversionResult) -> str:
-        """统一提取 ConversionResult 状态。"""
+        """统一提取 ConversionResult 状态。
+
+        Args:
+            result: Docling 转换结果。
+
+        Returns:
+            str: 小写状态文本。
+        """
         status = getattr(result, "status", None)
         if isinstance(status, ConversionStatus):
             return status.value.lower()
@@ -323,7 +359,15 @@ class DoclingParser:
         return status_text.lower()
 
     def _extract_failed_page_numbers(self, result: ConversionResult, total_pages: int) -> list[int]:
-        """根据 Docling 返回结果推导失败页。"""
+        """根据 Docling 返回结果推导失败页。
+
+        Args:
+            result: Docling 转换结果。
+            total_pages: PDF 总页数。
+
+        Returns:
+            list[int]: 失败页页码列表。
+        """
         success_pages = {int(page.page_no) for page in getattr(result, "pages", []) if getattr(page, "page_no", None)}
         failed_pages = sorted(page_no for page_no in range(1, total_pages + 1) if page_no not in success_pages)
         if failed_pages:
@@ -344,7 +388,17 @@ class DoclingParser:
         result: ConversionResult,
         status_name: str,
     ) -> ParsedDocument:
-        """Docling 失败后，对失败页或整份 PDF 执行 PyMuPDF + 图片 OCR 降级。"""
+        """Docling 失败后，对失败页或整份 PDF 执行 PyMuPDF + 图片 OCR 降级。
+
+        Args:
+            file_bytes: PDF 文件二进制内容。
+            filename: 原始文件名。
+            result: Docling 部分成功或失败的转换结果。
+            status_name: Docling 转换状态。
+
+        Returns:
+            ParsedDocument: 合并 Docling 成功页和 PyMuPDF 降级页后的文档。
+        """
         import fitz
 
         pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -481,7 +535,14 @@ class DoclingParser:
         return None
 
     def _extract_docling_images(self, doc) -> tuple[List[Dict[str, Any]], Dict[int, List[str]]]:
-        """提取 Docling 图片信息并做 OCR。"""
+        """提取 Docling 图片信息并做 OCR。
+
+        Args:
+            doc: Docling 文档对象。
+
+        Returns:
+            tuple[List[Dict[str, Any]], Dict[int, List[str]]]: 图片元数据列表和按页聚合的 OCR 文本。
+        """
         images: List[Dict[str, Any]] = []
         ocr_texts_by_page: Dict[int, List[str]] = {}
         total_pictures = len(doc.pictures)
@@ -547,7 +608,16 @@ class DoclingParser:
         page_markdown_map: Dict[int, str],
         ocr_texts_by_page: Dict[int, List[str]],
     ) -> tuple[str, str]:
-        """按页拼装正文和 Markdown。"""
+        """按页拼装正文和 Markdown。
+
+        Args:
+            page_text_map: 按页纯文本映射。
+            page_markdown_map: 按页 Markdown 映射。
+            ocr_texts_by_page: 按页聚合的 OCR 文本。
+
+        Returns:
+            tuple[str, str]: 拼接后的纯文本和 Markdown。
+        """
         ordered_pages = sorted(set(page_text_map.keys()) | set(page_markdown_map.keys()))
         text_parts: List[str] = []
         markdown_parts: List[str] = []
@@ -569,7 +639,16 @@ class DoclingParser:
         return "\n\n".join(part for part in text_parts if part), "\n\n".join(part for part in markdown_parts if part)
 
     def _extract_pdf_page_with_pymupdf(self, doc, page_no: int, total_pages: int) -> Dict[str, Any]:
-        """使用 PyMuPDF 提取单页正文并对该页图片执行 OCR。"""
+        """使用 PyMuPDF 提取单页正文并对该页图片执行 OCR。
+
+        Args:
+            doc: PyMuPDF 文档对象。
+            page_no: 页码，1 起始。
+            total_pages: PDF 总页数。
+
+        Returns:
+            Dict[str, Any]: 单页文本、Markdown、页面信息、图片信息和 OCR 文本。
+        """
         page = doc[page_no - 1]
         page_text = page.get_text("text") or ""
         page_images = []
@@ -625,7 +704,7 @@ class DoclingParser:
             "ocr_texts": ocr_texts,
             "page_source": page_source,
         }
-    
+
     def _extract_image_bytes(self, picture, doc) -> Optional[bytes]:
         """
         从 Docling picture 对象中提取图片二进制数据。
@@ -640,7 +719,7 @@ class DoclingParser:
         try:
             # 尝试从picture对象获取图像数据
             # Docling的Picture对象可能有不同的属性来获取图像
-            
+
             # 方法1: 尝试获取image属性
             if hasattr(picture, 'image') and picture.image:
                 img = picture.image
@@ -648,11 +727,11 @@ class DoclingParser:
                     return img.to_bytes()
                 elif hasattr(img, 'data'):
                     return img.data
-            
+
             # 方法2: 尝试获取bitmap或pixel数据
             if hasattr(picture, 'bitmap') and picture.bitmap:
                 return picture.bitmap
-            
+
             # 方法3: 尝试导出为PIL Image然后转为bytes
             if hasattr(picture, 'get_image'):
                 pil_img = None
@@ -665,21 +744,21 @@ class DoclingParser:
                     img_buffer = io.BytesIO()
                     pil_img.save(img_buffer, format='PNG')
                     return img_buffer.getvalue()
-            
+
             # 方法4: 尝试从document的原始二进制中提取
             if hasattr(picture, 'uri') and picture.uri:
                 # 如果是本地文件，尝试读取
                 if os.path.exists(picture.uri):
                     with open(picture.uri, 'rb') as f:
                         return f.read()
-            
+
             logger.warning("无法从picture对象提取图像数据，可用属性: %s", dir(picture))
             return None
-            
+
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
             logger.warning("提取图片数据失败: %s", e)
             return None
-    
+
     def _detect_format(self, source: str) -> str:
         """
         检测文档格式。
@@ -706,7 +785,7 @@ class DoclingParser:
             ".png": "image",
         }
         return format_map.get(suffix, "unknown")
-    
+
     def to_langchain_documents(self, file_path: Union[str, Path]) -> List[Any]:
         """
         使用 LangChain DoclingLoader 加载文档。
@@ -763,13 +842,13 @@ def parse_to_markdown(source: Union[str, bytes], filename: Optional[str] = None)
 if __name__ == "__main__":
     # 测试代码
     import sys
-    
+
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
         print(f"解析文件: {file_path}")
-        
+
         result = parse_document(file_path)
-        
+
         print(f"\n格式: {result.format}")
         print(f"页数: {len(result.pages)}")
         print(f"表格数: {len(result.tables)}")

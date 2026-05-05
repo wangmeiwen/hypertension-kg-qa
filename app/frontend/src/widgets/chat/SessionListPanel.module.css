@@ -1,6 +1,19 @@
 .panel {
   display: grid;
   gap: 14px;
+  position: sticky;
+  top: 28px;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  align-self: start;
+}
+
+.panel > div:last-child {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .header {
@@ -13,6 +26,8 @@
 .list {
   display: grid;
   gap: 12px;
+  min-height: 0;
+  height: 100%;
 }
 
 .item {
@@ -51,4 +66,12 @@
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+@media (max-width: 1100px) {
+  .panel {
+    position: static;
+    height: auto;
+    max-height: none;
+  }
 }

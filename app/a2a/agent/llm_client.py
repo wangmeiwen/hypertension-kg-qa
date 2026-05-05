@@ -151,6 +151,17 @@ class LLMStreamEvent:
         total_tokens: int = 0,
         raw_response: dict[str, Any] | None = None,
     ) -> None:
+        """初始化一条流式 LLM 事件。
+
+        Args:
+            type: 事件类型，通常为 delta 或 done。
+            delta: 本次流式增量文本。
+            finish_reason: 模型结束生成的原因。
+            prompt_tokens: 当前响应记录的输入 token 数。
+            completion_tokens: 当前响应记录的输出 token 数。
+            total_tokens: 当前响应记录的总 token 数。
+            raw_response: 原始流式响应片段，便于调试和审计。
+        """
         self.type = str(type or "").strip() or "delta"
         self.delta = str(delta or "")
         self.finish_reason = str(finish_reason or "")
@@ -323,7 +334,18 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> LLMResponse:
-        """调用大模型并返回内容和 token 使用量"""
+        """同步调用文本大模型并返回标准化内容和 token 使用量。
+
+        Args:
+            messages: Chat Completions 格式的消息列表。
+            temperature: 采样温度。
+            timeout: 单次请求超时时间，单位秒。
+            actor_role: 调用方角色，用于链路日志。
+            actor_name: 调用方名称，用于链路日志。
+
+        Returns:
+            标准化 LLM 响应对象。
+        """
 
         set_trace_metadata(
             {
@@ -492,7 +514,18 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> LLMResponse:
-        """异步调用大模型并返回内容和 token 使用量"""
+        """异步调用文本大模型并返回标准化内容和 token 使用量。
+
+        Args:
+            messages: Chat Completions 格式的消息列表。
+            temperature: 采样温度。
+            timeout: 单次请求超时时间，单位秒。
+            actor_role: 调用方角色，用于链路日志。
+            actor_name: 调用方名称，用于链路日志。
+
+        Returns:
+            标准化 LLM 响应对象。
+        """
         set_trace_metadata(
             {
                 "session_id": get_session_id(),
@@ -665,7 +698,18 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
-        """异步流式调用大模型并持续产出增量正文。"""
+        """异步流式调用文本大模型并持续产出增量正文。
+
+        Args:
+            messages: Chat Completions 格式的消息列表。
+            temperature: 采样温度。
+            timeout: 单次流式请求超时时间，单位秒。
+            actor_role: 调用方角色，用于链路日志。
+            actor_name: 调用方名称，用于链路日志。
+
+        Yields:
+            delta 事件携带增量文本，done 事件携带最终 token 统计。
+        """
         set_trace_metadata(
             {
                 "session_id": get_session_id(),
@@ -884,7 +928,19 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> LLMResponse:
-        """调用支持视觉的大模型，支持图片输入"""
+        """同步调用视觉模型，并在用户消息中附加图片数据。
+
+        Args:
+            messages: Chat Completions 格式的消息列表。
+            image_data: 图片 URL 或 base64 data URL。
+            temperature: 采样温度。
+            timeout: 单次请求超时时间，单位秒。
+            actor_role: 调用方角色，用于链路日志。
+            actor_name: 调用方名称，用于链路日志。
+
+        Returns:
+            标准化 LLM 响应对象。
+        """
         prepared_messages = _prepare_vision_messages(messages, image_data)
         return self.chat_with_tokens(
             prepared_messages,
@@ -903,7 +959,19 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> LLMResponse:
-        """异步调用支持视觉的大模型，支持图片输入"""
+        """异步调用视觉模型，并在用户消息中附加图片数据。
+
+        Args:
+            messages: Chat Completions 格式的消息列表。
+            image_data: 图片 URL 或 base64 data URL。
+            temperature: 采样温度。
+            timeout: 单次请求超时时间，单位秒。
+            actor_role: 调用方角色，用于链路日志。
+            actor_name: 调用方名称，用于链路日志。
+
+        Returns:
+            标准化 LLM 响应对象。
+        """
         prepared_messages = _prepare_vision_messages(messages, image_data)
         return await self.chat_with_tokens_async(
             prepared_messages,
@@ -922,7 +990,19 @@ class LLMClient:
         actor_role: str | None = None,
         actor_name: str | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
-        """异步流式调用支持视觉的大模型。"""
+        """异步流式调用视觉模型，并逐步产出文本增量事件。
+
+        Args:
+            messages: Chat Completions 格式的消息列表。
+            image_data: 图片 URL 或 base64 data URL。
+            temperature: 采样温度。
+            timeout: 单次流式请求超时时间，单位秒。
+            actor_role: 调用方角色，用于链路日志。
+            actor_name: 调用方名称，用于链路日志。
+
+        Yields:
+            视觉模型返回的流式 delta/done 事件。
+        """
         prepared_messages = _prepare_vision_messages(messages, image_data)
         async for event in self.stream_chat_with_tokens_async(
             prepared_messages,

@@ -6,6 +6,8 @@ from app.backend.routers.admin_graph import create_admin_graph_router
 
 
 class GraphServiceStub:
+    """记录 admin graph router 调用的服务桩。"""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
@@ -35,6 +37,7 @@ class GraphServiceStub:
 
 
 def create_client(service: GraphServiceStub) -> TestClient:
+  """构建只挂载 admin graph router 的测试客户端。"""
   app = FastAPI()
   app.include_router(create_admin_graph_router(service))
   app.dependency_overrides[require_admin_login] = lambda: None

@@ -1,3 +1,4 @@
+// React Query key 工厂集中管理缓存命名，避免页面之间手写 key 不一致。
 export const queryKeys = {
   auth: {
     status: ["auth", "status"] as const,

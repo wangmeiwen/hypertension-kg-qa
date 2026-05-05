@@ -1,4 +1,4 @@
-﻿"""项目配置加载模块。
+"""项目配置加载模块。
 
 职责说明：
 1) 从项目根目录 .env 读取配置并覆盖进程环境变量。
@@ -183,7 +183,11 @@ class Config:
         self.SUB_CHUNK_OVERLAP = int(os.getenv("SUB_CHUNK_OVERLAP", "50"))
 
     def _build_graph_llm_lane_configs(self) -> list[dict[str, str | int]]:
-        """构建图谱抽取专用的多路模型配置。"""
+        """构建图谱抽取专用的多路模型配置。
+
+        Returns:
+            list[dict[str, str | int]]: 可用 lane 配置列表，每个元素包含 lane_id、api_key、base_url、model_name 和 source。
+        """
         lanes: list[dict[str, str | int]] = []
         for lane_id in range(1, 4):
             api_key = os.getenv(f"GRAPH_LLM_{lane_id}_API_KEY")

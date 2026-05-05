@@ -1,4 +1,4 @@
-﻿"""RAG 子代理 LangGraph 节点。"""
+"""RAG 子代理 LangGraph 节点。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from app.a2a.subagents.rag.state import RagSubAgentState
 
 
 def _is_statistical_query(query: str) -> bool:
+    """判断查询是否属于需要保留精简百分比证据的统计类问题。"""
     text = str(query or "").replace(" ", "").strip()
     if not text:
         return False
@@ -19,6 +20,7 @@ def _is_statistical_query(query: str) -> bool:
 
 
 def _trim_hit_snippet(query: str, snippet: str) -> str:
+    """根据查询类型裁剪 RAG 命中文本，避免长片段淹没关键证据。"""
     text = str(snippet or "").replace("\n", " ").strip()
     if not text:
         return ""
@@ -95,13 +97,13 @@ def _build_query_records(
 
 
 async def node_validate_constraints(state: RagSubAgentState) -> RagSubAgentState:
-    """执行 node_validate_constraints 节点逻辑。
-    
+    """校验 RAG 子代理执行约束并收敛最大工具调用次数。
+
     Args:
-        state: 参数。
-    
+        state: RAG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入规范化 constraints 后的状态。
     """
     constraints_obj = state.get("constraints")
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
@@ -114,13 +116,13 @@ async def node_validate_constraints(state: RagSubAgentState) -> RagSubAgentState
 
 
 async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentState:
-    """执行 node_generate_query_statement 节点逻辑。
-    
+    """根据输入问题和参数生成 rag_search 查询载荷。
+
     Args:
-        state: 参数。
-    
+        state: RAG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入 query_statements 与 tool_calls 后的状态。
     """
     question = str(state.get("input_question") or "").strip()
     arguments_obj = state.get("arguments")
@@ -136,14 +138,14 @@ async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentS
 
 
 async def node_execute_rag_search(state: RagSubAgentState, tool_gateway: MCPToolGateway) -> RagSubAgentState:
-    """执行 node_execute_rag_search 节点逻辑。
-    
+    """调用 MCP 网关执行 RAG 检索工具。
+
     Args:
-        state: 参数。
-        tool_gateway: 参数。
-    
+        state: RAG 子代理当前状态。
+        tool_gateway: 负责白名单校验和 MCP 调用的工具网关。
+
     Returns:
-        执行结果。
+        写入 tool_results 后的状态。
     """
     calls_obj = state.get("tool_calls")
     calls = calls_obj if isinstance(calls_obj, list) else []
@@ -153,13 +155,13 @@ async def node_execute_rag_search(state: RagSubAgentState, tool_gateway: MCPTool
 
 
 async def node_normalize_results(state: RagSubAgentState) -> RagSubAgentState:
-    """执行 node_normalize_results 节点逻辑。
-    
+    """归一化 RAG 命中结果并计算信号强度基础统计。
+
     Args:
-        state: 参数。
-    
+        state: RAG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入 evidence、no_signal、reason 和 telemetry 后的状态。
     """
     rows_obj = state.get("tool_results")
     rows = rows_obj if isinstance(rows_obj, list) else []
@@ -187,13 +189,13 @@ async def node_normalize_results(state: RagSubAgentState) -> RagSubAgentState:
 
 
 async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
-    """执行 node_build_response 节点逻辑。
-    
+    """构建 RAG 子代理最终 SubAgentResult 响应。
+
     Args:
-        state: 参数。
-    
+        state: RAG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入 final_result 后的状态。
     """
     evidence_rows_obj = state.get("evidence")
     evidence_rows = evidence_rows_obj if isinstance(evidence_rows_obj, list) else []

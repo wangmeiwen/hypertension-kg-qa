@@ -45,6 +45,22 @@ class StartupRuntimeService:
         get_shared_kg_milvus_store: Callable[[], Any] | None = None,
         neo4j_client: Any = None,
     ) -> None:
+        """初始化生命周期服务并注入可替换的启动依赖。
+
+        Args:
+            runtime_container: 后端运行时容器，用于保存初始化状态和共享资源。
+            a2a_runtime: A2A 运行时服务。
+            log_api_error: 统一记录生命周期错误的回调。
+            behavior: 可选启动/关闭行为开关，主要用于测试隔离。
+            database_initializer: MySQL 初始化函数。
+            database_checker: 数据库健康检查函数。
+            get_shared_vector_store: 可选文本向量库预热工厂。
+            get_shared_kg_milvus_store: 可选图谱向量库预热工厂。
+            neo4j_client: 可选 Neo4j 客户端，便于测试替换。
+
+        Returns:
+            None: 无返回值。
+        """
         self._runtime = runtime_container
         self._a2a_runtime = a2a_runtime
         self._log_api_error = log_api_error
@@ -56,7 +72,7 @@ class StartupRuntimeService:
         self._neo4j_client = neo4j_client
 
     async def startup(self) -> None:
-        """执行应用启动流程。"""
+        """执行应用启动流程，包含数据库、检索资源、MCP 和 A2A 初始化。"""
         logger.info("%s", "=" * 50)
         if self._behavior.initialize_database:
             logger.info("正在初始化 MySQL 数据库...")
@@ -166,7 +182,7 @@ class StartupRuntimeService:
         logger.info("%s", "=" * 50)
 
     async def shutdown(self) -> None:
-        """执行应用关闭流程。"""
+        """执行应用关闭流程，释放 A2A、LLM、MCP 和 Neo4j 资源。"""
         await self._a2a_runtime.shutdown_all()
         await self._close_llm_runtime_resources()
         if not self._behavior.close_neo4j_on_shutdown:

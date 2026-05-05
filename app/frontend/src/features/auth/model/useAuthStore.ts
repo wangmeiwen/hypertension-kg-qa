@@ -10,6 +10,7 @@ interface AuthState {
   closeLoginDialog: () => void;
 }
 
+// 管理员认证 UI 状态，初始值从本地 token 是否存在推断。
 export const useAuthStore = create<AuthState>((set) => ({
   isAdminAuthenticated: hasAdminToken(),
   isLoginDialogOpen: false,

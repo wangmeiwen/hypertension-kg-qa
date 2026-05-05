@@ -132,6 +132,7 @@ function getNodeLabel(node: GraphNode): string {
 }
 
 function buildAdjacency(nodes: GraphCanvasNode[], links: GraphCanvasLink[]): Map<string, Set<string>> {
+  // 构建无向邻接表，用于 hover/selected 节点的邻域高亮。
   const adjacency = new Map<string, Set<string>>(nodes.map((node) => [String(node.id), new Set<string>()]));
   for (const link of links) {
     const source = getEndpointId(link.source);
@@ -143,6 +144,7 @@ function buildAdjacency(nodes: GraphCanvasNode[], links: GraphCanvasLink[]): Map
 }
 
 function getConnectedComponents(nodes: GraphCanvasNode[], links: GraphCanvasLink[]): GraphCanvasNode[][] {
+  // 找出连通分量，后续用于大图采样和初始布局分区。
   const adjacency = buildAdjacency(nodes, links);
   const seen = new Set<string>();
   const components: GraphCanvasNode[][] = [];
@@ -207,6 +209,7 @@ function sampleGraph(
   links: GraphCanvasLink[],
   maxNodes: number,
 ): { nodes: GraphCanvasNode[]; links: GraphCanvasLink[]; truncated: boolean } {
+  // 大图按连通分量和节点度数轮询采样，避免只保留单个高密度子图。
   if (nodes.length <= maxNodes) {
     return { nodes, links, truncated: false };
   }
@@ -251,6 +254,7 @@ function sampleGraph(
 }
 
 function seedNodePositions(nodes: GraphCanvasNode[], links: GraphCanvasLink[]): GraphCanvasNode[] {
+  // 给每个连通分量设置初始环形坐标，减少力导向图冷启动重叠。
   const components = getConnectedComponents(nodes, links);
   const componentCount = Math.max(components.length, 1);
   const ringRadius = Math.max(85, Math.min(220, componentCount * 34));
@@ -281,6 +285,7 @@ function prepareGraph(
   rawGraph: GraphVisualization | null | undefined,
   options: { labelFilter?: string; maxNodes?: number } = {},
 ): PreparedGraph {
+  // 将后端图谱响应转换为 react-force-graph 可直接渲染的数据结构。
   const labelFilter = options.labelFilter || "";
   const maxNodes = options.maxNodes || GRAPH_RENDER_LIMIT;
   const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
@@ -374,6 +379,7 @@ export default function KnowledgeGraphCanvas({
     const graphApi = graphRef.current;
     if (!graphApi) return;
 
+    // 调整力导向参数，让医学实体图在较小画布内保持紧凑且可读。
     const chargeForce = graphApi.d3Force("charge") as D3ChargeForce | undefined;
     if (chargeForce?.strength) {
       chargeForce.strength(-95);

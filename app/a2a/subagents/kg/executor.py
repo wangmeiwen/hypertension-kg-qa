@@ -1,6 +1,6 @@
-﻿"""executor 模块。
+"""executor 模块。
 
-提供 executor 相关能力与对外接口。
+提供知识图谱子代理 LangGraph 的执行器封装。
 """
 
 
@@ -17,22 +17,22 @@ class KgSubAgentExecutor:
     """执行 KG 子代理 LangGraph。"""
 
     def __init__(self, tool_gateway: MCPToolGateway):
-        """初始化 KgSubAgentExecutor 实例。
-        
+        """初始化图谱子代理执行图。
+
         Args:
-            tool_gateway: 参数。
+            tool_gateway: 负责调用知识图谱 MCP 工具的网关。
         """
         self.tool_gateway = tool_gateway
         self.graph = compile_kg_graph(tool_gateway)
 
     async def run_request(self, request: dict[str, Any]) -> dict[str, Any]:
-        """执行 request。
-        
+        """将单次图谱检索请求转换为状态并运行 LangGraph。
+
         Args:
-            request: 参数。
-        
+            request: 子代理请求字典，包含子问题、工具名、工具参数和执行约束。
+
         Returns:
-            执行结果。
+            图谱子代理最终标准化结果。
         """
         req = request if isinstance(request, dict) else {}
         state: KgSubAgentState = {

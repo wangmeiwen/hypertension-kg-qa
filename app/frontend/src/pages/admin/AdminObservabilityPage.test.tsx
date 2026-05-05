@@ -26,6 +26,7 @@ vi.mock("../../shared/api/observabilityClient", () => ({
 }));
 
 describe("AdminObservabilityPage", () => {
+  // 观测页测试用固定 run/turn/event 数据覆盖聚合、泳道和详情弹窗。
   beforeEach(() => {
     vi.clearAllMocks();
     observabilityClientMocks.getAdminAgentObservabilitySummary.mockResolvedValue({

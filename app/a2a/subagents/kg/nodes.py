@@ -1,4 +1,4 @@
-﻿"""KG 子代理 LangGraph 节点。"""
+"""KG 子代理 LangGraph 节点。"""
 
 from __future__ import annotations
 
@@ -76,13 +76,13 @@ def _build_query_records(
 
 
 async def node_validate_constraints(state: KgSubAgentState) -> KgSubAgentState:
-    """执行 node_validate_constraints 节点逻辑。
-    
+    """校验 KG 子代理执行约束并收敛最大工具调用次数。
+
     Args:
-        state: 参数。
-    
+        state: KG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入规范化 constraints 后的状态。
     """
     constraints_obj = state.get("constraints")
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
@@ -95,13 +95,13 @@ async def node_validate_constraints(state: KgSubAgentState) -> KgSubAgentState:
 
 
 def _resolve_tool_plan(state: KgSubAgentState) -> list[dict[str, Any]]:
-    """执行 _resolve_tool_plan 内部逻辑。
-    
+    """根据请求工具名和参数生成实际要执行的 KG 工具计划。
+
     Args:
-        state: 参数。
-    
+        state: KG 子代理当前状态。
+
     Returns:
-        执行结果。
+        工具调用计划列表，每项包含工具名、问题、参数和查询词。
     """
     tool_name = str(state.get("tool_name") or "kg_entity_relation_search").strip() or "kg_entity_relation_search"
     question = str(state.get("input_question") or "").strip()
@@ -124,13 +124,13 @@ def _resolve_tool_plan(state: KgSubAgentState) -> list[dict[str, Any]]:
 
 
 async def node_generate_query_statements(state: KgSubAgentState) -> KgSubAgentState:
-    """执行 node_generate_query_statements 节点逻辑。
-    
+    """根据工具计划生成 KG 查询语句和工具调用载荷。
+
     Args:
-        state: 参数。
-    
+        state: KG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入 query_statements 与 tool_calls 后的状态。
     """
     plans = _resolve_tool_plan(state)
     constraints = state.get("constraints") if isinstance(state.get("constraints"), dict) else {}
@@ -164,14 +164,14 @@ async def node_generate_query_statements(state: KgSubAgentState) -> KgSubAgentSt
 
 
 async def node_execute_tools(state: KgSubAgentState, tool_gateway: MCPToolGateway) -> KgSubAgentState:
-    """执行 node_execute_tools 节点逻辑。
-    
+    """调用 MCP 网关执行 KG 工具调用列表。
+
     Args:
-        state: 参数。
-        tool_gateway: 参数。
-    
+        state: KG 子代理当前状态。
+        tool_gateway: 负责白名单校验和 MCP 调用的工具网关。
+
     Returns:
-        执行结果。
+        写入 tool_results 后的状态。
     """
     calls_obj = state.get("tool_calls")
     calls = calls_obj if isinstance(calls_obj, list) else []
@@ -181,13 +181,13 @@ async def node_execute_tools(state: KgSubAgentState, tool_gateway: MCPToolGatewa
 
 
 def _extract_evidence_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """执行 _extract_evidence_from_row 内部逻辑。
-    
+    """从单条 KG 工具结果中抽取统一证据列表。
+
     Args:
-        row: 参数。
-    
+        row: 标准化后的工具调用结果。
+
     Returns:
-        执行结果。
+        包含实体、关系或 Cypher 记录的证据项列表。
     """
     tool_name = str(row.get("tool_name") or "")
     result_obj = row.get("result")
@@ -216,13 +216,13 @@ def _extract_evidence_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def node_normalize_results(state: KgSubAgentState) -> KgSubAgentState:
-    """执行 node_normalize_results 节点逻辑。
-    
+    """归一化 KG 工具结果并计算信号强度基础统计。
+
     Args:
-        state: 参数。
-    
+        state: KG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入 evidence、no_signal、reason 和 telemetry 后的状态。
     """
     rows_obj = state.get("tool_results")
     rows = rows_obj if isinstance(rows_obj, list) else []
@@ -244,13 +244,13 @@ async def node_normalize_results(state: KgSubAgentState) -> KgSubAgentState:
 
 
 async def node_build_response(state: KgSubAgentState) -> KgSubAgentState:
-    """执行 node_build_response 节点逻辑。
-    
+    """构建 KG 子代理最终 SubAgentResult 响应。
+
     Args:
-        state: 参数。
-    
+        state: KG 子代理当前状态。
+
     Returns:
-        执行结果。
+        写入 final_result 后的状态。
     """
     evidence_rows_obj = state.get("evidence")
     evidence_rows = evidence_rows_obj if isinstance(evidence_rows_obj, list) else []

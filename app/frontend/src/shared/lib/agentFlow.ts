@@ -12,6 +12,7 @@ const DISCLAIMER_PATTERNS = [
   /urgent medical care/i,
 ];
 
+// 根据后端观测事件的 lane/actor/title/summary 文本推断展示泳道。
 export function classifyObservabilityLane(event: {
   lane?: string;
   actor?: string;
@@ -25,6 +26,7 @@ export function classifyObservabilityLane(event: {
 }
 
 export function containsMedicalDisclaimer(text: string): boolean {
+  // 用中英文常见免责声明片段判断回答是否已包含医疗风险提示。
   const normalized = String(text || "");
   return DISCLAIMER_PATTERNS.some((pattern) => pattern.test(normalized));
 }

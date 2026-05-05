@@ -5,6 +5,7 @@ import type { UiMessage } from "../../entities/session/model/useSessionStore";
 import { renderMarkdownContent } from "../../features/chat/markdown_renderer";
 import { Button, EmptyState, VirtualList } from "../../shared/ui/primitives";
 
+// 消息线程负责展示用户/助手消息，并暴露复制、回滚、重新发送等动作入口。
 export default function MessageThread({
   messages,
   loading,
@@ -25,6 +26,7 @@ export default function MessageThread({
   }
 
   const renderMessage = (message: UiMessage, index: number) => (
+    // assistant 消息使用 Markdown 渲染，user 消息保留同一渲染路径以支持附件文本。
     <article
       className={`${styles.bubble} ${message.role === "assistant" ? styles.assistant : styles.user}`.trim()}
     >
@@ -61,8 +63,8 @@ export default function MessageThread({
       items={messages}
       className={styles.thread}
       estimateSize={178}
-      threshold={80}
-      maxHeight={680}
+      threshold={10000}
+      maxHeight="none"
       getKey={(message, index) => message.id || message.clientId || `${message.role}-${index}`}
       renderItem={renderMessage}
     />

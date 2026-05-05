@@ -3,6 +3,7 @@ import threading
 
 
 def test_get_glm_ocr_client_initializes_once_under_concurrency(monkeypatch):
+    """验证 OCR 全局客户端在并发首次访问时只初始化一次。"""
     from app.document_parser import glm_ocr_client as module
 
     created = []

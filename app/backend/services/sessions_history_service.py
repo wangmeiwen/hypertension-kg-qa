@@ -24,15 +24,15 @@ class SessionsHistoryService:
         log_api_error: Callable[..., None],
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            await_call: 函数输入参数。
-            is_session_owner: 函数输入参数。
-            get_a2a: 函数输入参数。
-            get_session_memory_service: 函数输入参数。
-            upload_dir: 函数输入参数。
-            log_api_error: 函数输入参数。
-        
+            await_call: 兼容同步/异步仓储和文件操作的执行器。
+            is_session_owner: 校验会话归属的回调。
+            get_a2a: 延迟获取 A2A 服务实例的回调。
+            get_session_memory_service: 延迟获取会话记忆服务的回调。
+            upload_dir: 聊天上传文件保存目录。
+            log_api_error: 统一记录会话历史接口错误的回调。
+
         Returns:
             None: 无返回值。
         """
@@ -44,7 +44,16 @@ class SessionsHistoryService:
         self._log_api_error = log_api_error
 
     async def _refresh_memory_after_rollback(self, session_id: str, user_id: str, operation: str) -> dict[str, Any]:
-        """回撤消息后按剩余历史重建会话记忆。"""
+        """回撤消息后按剩余历史重建会话记忆。
+
+        Args:
+            session_id: 会话标识。
+            user_id: 用户标识。
+            operation: 当前回撤操作名称，用于错误日志分类。
+
+        Returns:
+            dict[str, Any]: 记忆清理、重建状态和可选错误类型。
+        """
         result: dict[str, Any] = {
             "memory_cleared": False,
             "memory_rebuilt": False,
@@ -67,21 +76,44 @@ class SessionsHistoryService:
         return result
 
     async def create_session(self, data: dict[str, Any]) -> dict[str, Any]:
-        """创建新会话。"""
+        """创建新会话。
+
+        Args:
+            data: 包含 user_id 和 title 的会话创建 payload。
+
+        Returns:
+            dict[str, Any]: 新建会话数据。
+        """
         user_id = data.get("user_id") or str(uuid.uuid4())
         title = data.get("title", "新会话")
         session = await self._await_call(SessionManager.create_session, user_id, title)
         return {"ok": True, "data": session}
 
     async def list_sessions(self, user_id: str = "", limit: int = 50) -> dict[str, Any]:
-        """获取用户会话列表。"""
+        """获取用户会话列表。
+
+        Args:
+            user_id: 用户标识。
+            limit: 返回数量上限。
+
+        Returns:
+            dict[str, Any]: 用户会话列表或缺少用户标识错误。
+        """
         if not user_id:
             return {"ok": False, "error": "user_id_required", "data": []}
         sessions = await self._await_call(SessionManager.get_sessions, user_id, limit)
         return {"ok": True, "data": sessions}
 
     async def get_session(self, session_id: str, user_id: str = "") -> dict[str, Any]:
-        """获取会话详情。"""
+        """获取会话详情和消息列表。
+
+        Args:
+            session_id: 会话标识。
+            user_id: 用户标识。
+
+        Returns:
+            dict[str, Any]: 会话详情、消息列表或归属校验错误。
+        """
         if not user_id:
             return {"ok": False, "error": "user_id_required"}
 
@@ -93,7 +125,15 @@ class SessionsHistoryService:
         return {"ok": True, "data": {**session, "messages": messages}}
 
     async def update_session(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        """更新会话标题。"""
+        """更新会话标题。
+
+        Args:
+            session_id: 会话标识。
+            data: 包含 user_id 和 title 的更新 payload。
+
+        Returns:
+            dict[str, Any]: 更新结果或校验错误。
+        """
         title = data.get("title")
         user_id = str(data.get("user_id") or "").strip()
         if not user_id:
@@ -110,7 +150,15 @@ class SessionsHistoryService:
         return {"ok": True}
 
     async def delete_session(self, session_id: str, user_id: str = "") -> dict[str, Any]:
-        """删除会话。"""
+        """删除用户自己的会话。
+
+        Args:
+            session_id: 会话标识。
+            user_id: 用户标识。
+
+        Returns:
+            dict[str, Any]: 删除结果或归属校验错误。
+        """
         if not user_id:
             return {"ok": False, "error": "user_id_required"}
 
@@ -123,7 +171,15 @@ class SessionsHistoryService:
         return {"ok": True}
 
     async def add_message(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        """添加消息到会话。"""
+        """添加消息到用户会话。
+
+        Args:
+            session_id: 会话标识。
+            data: 包含 user_id、role、content 和可选 think_content 的消息 payload。
+
+        Returns:
+            dict[str, Any]: 新增消息数据或校验错误。
+        """
         user_id = str(data.get("user_id") or "").strip()
         role = data.get("role")
         content = data.get("content")
@@ -142,7 +198,15 @@ class SessionsHistoryService:
         return {"ok": True, "data": message}
 
     async def get_messages(self, session_id: str, user_id: str = "") -> dict[str, Any]:
-        """获取会话消息。"""
+        """获取用户会话消息列表。
+
+        Args:
+            session_id: 会话标识。
+            user_id: 用户标识。
+
+        Returns:
+            dict[str, Any]: 消息列表或归属校验错误。
+        """
         if not user_id:
             return {"ok": False, "error": "user_id_required"}
 
@@ -154,7 +218,15 @@ class SessionsHistoryService:
         return {"ok": True, "data": messages}
 
     async def rollback_to_question(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        """回撤到指定用户问题。"""
+        """回撤会话到指定用户问题，并重建会话记忆。
+
+        Args:
+            session_id: 会话标识。
+            data: 包含 user_id 和 message_id 的回撤 payload。
+
+        Returns:
+            dict[str, Any]: 回撤结果、删除数量、原问题和记忆重建状态。
+        """
         user_id = str(data.get("user_id") or "").strip()
         if not user_id:
             return {"ok": False, "error": "user_id_required"}
@@ -182,7 +254,14 @@ class SessionsHistoryService:
         }
 
     async def upload_file(self, file: UploadFile) -> dict[str, Any]:
-        """上传聊天文件并返回 URL。"""
+        """上传聊天文件并返回前端可用的文件信息。
+
+        Args:
+            file: FastAPI 上传文件对象。
+
+        Returns:
+            dict[str, Any]: 保存后的文件名、URL、原始名和可选图片 base64。
+        """
         if not file.filename:
             return {"ok": False, "error": "文件名不能为空"}
 
@@ -226,7 +305,15 @@ class SessionsHistoryService:
             return {"ok": False, "error": f"上传失败: {str(exc)}"}
 
     async def cancel_qa_job(self, job_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        """兼容接口：取消 A2A 任务。"""
+        """兼容旧接口，校验归属后取消 A2A 任务。
+
+        Args:
+            job_id: A2A 任务标识。
+            data: 包含 user_id 和 session_id 的取消 payload。
+
+        Returns:
+            dict[str, Any]: 取消请求结果或任务归属校验错误。
+        """
         user_id = str(data.get("user_id") or "").strip()
         session_id = str(data.get("session_id") or "").strip()
         if not user_id or not session_id:

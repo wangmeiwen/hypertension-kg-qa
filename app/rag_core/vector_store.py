@@ -186,7 +186,15 @@ class VectorStore:
         return client
 
     def _search_with_params(self, search_kwargs: dict, search_params: dict):
-        """单版本检索参数：仅使用 search_params。"""
+        """用当前 pymilvus 客户端参数格式执行向量检索。
+
+        Args:
+            search_kwargs: Milvus search 的基础关键字参数。
+            search_params: 向量检索参数，如 metric_type、nprobe 等。
+
+        Returns:
+            list: Milvus 原始命中结果。
+        """
         return self.client.search(**search_kwargs, search_params=search_params)
 
     def __init__(self,
@@ -484,29 +492,29 @@ class VectorStore:
             list: 按融合分数排序后的实体列表。
         """
         from collections import defaultdict
-        
+
         # 存储每个文档的 RRF 分数
         rrf_scores = defaultdict(float)
         # 存储文档 ID 到文档对象的映射
         doc_map = {}
-        
+
         # 处理稠密向量检索结果
         for rank, hit in enumerate(dense_results):
             doc_id = hit["entity"].get("parent_id") or hit["entity"].get("text")
             rrf_scores[doc_id] += 1.0 / (k + rank + 1)  # rank 从 0 开始，所以 +1
             if doc_id not in doc_map:
                 doc_map[doc_id] = hit["entity"]
-        
+
         # 处理稀疏向量检索结果
         for rank, hit in enumerate(sparse_results):
             doc_id = hit["entity"].get("parent_id") or hit["entity"].get("text")
             rrf_scores[doc_id] += 1.0 / (k + rank + 1)
             if doc_id not in doc_map:
                 doc_map[doc_id] = hit["entity"]
-        
+
         # 按 RRF 分数降序排序
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        
+
         # 返回排序后的文档对象列表
         fused_entities = []
         for doc_id, score in sorted_docs:
@@ -787,7 +795,11 @@ class VectorStore:
 
     async def hybrid_search_with_rerank(self, query, k=conf.RETRIEVAL_K, source_filter=None):
         """
-        执行混合检索并返回重排序后的父文档。
+        执行混合检索并返回重排序后的子块文档。
+
+        流程包括查询 embedding、稠密检索、稀疏检索、RRF 融合、
+        子块去重以及 reranker 二次排序。若集合没有稀疏向量字段，
+        会自动降级为稠密检索加重排。
 
         Args:
             query: 查询文本。
@@ -795,7 +807,7 @@ class VectorStore:
             source_filter: 来源过滤条件。
 
         Returns:
-            list[Document]: 重排序后的父文档列表。
+            list[Document]: 重排序后的子块文档列表。
         """
         with log_duration("milvus.hybrid_search_with_rerank", k=k, source_filter=source_filter):
             final_limit = max(1, int(k or 1))
@@ -880,6 +892,9 @@ class VectorStore:
     def _get_unique_parent_docs(self, sub_chunks):
         """
         从子块结果中提取去重父文档。
+
+        该函数保留父块内容并沿用首个命中子块元数据，
+        适用于需要把子块证据折叠为父块展示的调用路径。
 
         Args:
             sub_chunks: 子块文档列表。

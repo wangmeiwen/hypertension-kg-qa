@@ -1,4 +1,4 @@
-﻿"""MCP 工具调度服务（纯异步单版本）。"""
+"""MCP 工具调度服务（纯异步单版本）。"""
 
 from __future__ import annotations
 
@@ -226,11 +226,22 @@ class MCPServer:
         self._aliases[canonical] = name
 
     def register_cleanup_callback(self, callback: Callable[[], Any]) -> None:
-        """注册服务关闭时需要执行的清理回调。"""
+        """注册服务关闭时需要执行的清理回调。
+
+        Args:
+            callback: 同步或异步清理函数。
+
+        Returns:
+            None: 无返回值。
+        """
         self._cleanup_callbacks.append(callback)
 
     async def aclose(self) -> None:
-        """执行已注册的资源清理回调。"""
+        """执行已注册的资源清理回调。
+
+        Returns:
+            None: 无返回值。
+        """
         callbacks = list(self._cleanup_callbacks)
         self._cleanup_callbacks.clear()
         for callback in callbacks:

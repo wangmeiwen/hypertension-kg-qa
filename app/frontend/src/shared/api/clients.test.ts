@@ -20,6 +20,7 @@ vi.mock("./http", () => ({
   setAdminToken: httpMocks.setAdminToken,
 }));
 
+// 用异步生成器模拟 fetchStream 的逐行输出。
 async function* streamLines(lines: string[]) {
   for (const line of lines) {
     yield line;

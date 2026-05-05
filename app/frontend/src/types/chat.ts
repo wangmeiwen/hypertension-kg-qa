@@ -1,3 +1,4 @@
+// 聊天域历史类型定义，描述会话、消息、上传结果和流式事件。
 export type ChatRole = "user" | "assistant";
 
 export interface ChatMessage {

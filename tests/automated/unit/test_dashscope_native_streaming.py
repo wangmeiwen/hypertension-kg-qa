@@ -11,6 +11,8 @@ if str(ROOT) not in sys.path:
 
 
 class _FakeStreamResponse:
+    """模拟 httpx stream 上下文管理器和逐行 SSE 输出。"""
+
     def __init__(self, lines):
         self._lines = list(lines)
 
@@ -29,6 +31,8 @@ class _FakeStreamResponse:
 
 
 class _FakeAsyncClient:
+    """记录 DashScope 异步请求参数的 httpx.AsyncClient 替身。"""
+
     lines = []
     payloads = []
     post_payloads = []
@@ -90,6 +94,7 @@ class _FakeJsonResponse:
 
 
 def test_llm_client_parses_dashscope_stream(monkeypatch):
+    """验证 DashScope 兼容流式响应能解析 delta 和 usage。"""
     monkeypatch.setenv("MODEL_API_KEY", "test-key")
     monkeypatch.setenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     monkeypatch.setenv("MODEL_NAME", "qwen-plus")

@@ -10,6 +10,7 @@ import { reportFrontendError, trackEvent } from "../../shared/lib/observability"
 import { queryKeys } from "../../shared/queries/queryKeys";
 import { Button, Card, EmptyState, Input, Skeleton, VirtualList } from "../../shared/ui/primitives";
 
+// 会话侧栏负责普通用户会话的创建、选择、重命名和删除。
 export default function SessionListPanel() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -30,6 +31,7 @@ export default function SessionListPanel() {
   const createMutation = useMutation({
     mutationFn: () => createSession(userId),
     onSuccess: async (session) => {
+      // 新会话创建后立即选中，并清空当前消息展示。
       trackEvent("chat_new_session", { sessionId: session.id });
       setCurrentSessionId(session.id);
       setMessages([]);
@@ -70,6 +72,7 @@ export default function SessionListPanel() {
   });
 
   async function handleSave(sessionId: string) {
+    // 失焦保存重命名；空标题视为取消编辑。
     const nextTitle = draftTitle.trim();
     if (!nextTitle) {
       setEditingId(null);
@@ -79,6 +82,7 @@ export default function SessionListPanel() {
   }
 
   const sessions = sessionsQuery.data || [];
+  // 会话项在普通列表和虚拟列表路径下共用。
   const renderSession = (session: (typeof sessions)[number]) => (
     <div
       className={`${styles.item} ${currentSessionId === session.id ? styles.active : ""}`.trim()}
@@ -158,7 +162,7 @@ export default function SessionListPanel() {
         className={styles.list}
         estimateSize={132}
         threshold={100}
-        maxHeight={620}
+        maxHeight="100%"
         getKey={(session) => session.id}
         renderItem={renderSession}
       />

@@ -5,6 +5,7 @@ import { ErrorState, PageSkeleton, VirtualList } from "./primitives";
 import { renderWithProviders } from "../../test/testUtils";
 
 describe("shared ui primitives", () => {
+  // 覆盖共享 UI 的可访问性语义和虚拟列表降 DOM 行为。
   it("renders page skeleton and error state primitives", () => {
     renderWithProviders(
       <>

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import styles from "./ChatWorkspacePage.module.css";
@@ -14,12 +14,13 @@ import {
 } from "../../shared/api/sessionClient";
 import { reportFrontendError, trackEvent } from "../../shared/lib/observability";
 import { queryKeys } from "../../shared/queries/queryKeys";
-import { Badge, Card, InlineNotice, PageHeader } from "../../shared/ui/primitives";
+import { Card, InlineNotice } from "../../shared/ui/primitives";
 import MessageComposer from "../../widgets/chat/MessageComposer";
 import MessageThread from "../../widgets/chat/MessageThread";
 import SessionListPanel from "../../widgets/chat/SessionListPanel";
 
 function formatSessionMessages(session: Awaited<ReturnType<typeof getSession>> | undefined): UiMessage[] {
+  // 将后端持久化消息字段转换为前端消息线程使用的 UI 模型。
   return (session?.messages || []).map((message) => ({
     id: message.id,
     role: message.role,
@@ -78,13 +79,8 @@ export default function ChatWorkspacePage() {
     scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: loading ? "auto" : "smooth" });
   }, [loading, messages]);
 
-  const chatStatus = useMemo(() => {
-    if (loading) return t("common.statusRunning");
-    if (currentSessionId) return t("chat.sessionReady");
-    return t("chat.askHint");
-  }, [currentSessionId, loading, t]);
-
   async function ensureSession(): Promise<string> {
+    // 用户首次发送时自动创建会话，并刷新侧栏列表。
     if (currentSessionId) return currentSessionId;
     const session = await createSession(userId, t("chat.newSession"));
     setCurrentSessionId(session.id);
@@ -103,6 +99,7 @@ export default function ChatWorkspacePage() {
   }
 
   async function handleSend(overrideQuestion?: string): Promise<void> {
+    // 串起附件上传、会话准备、SSE 事件消费、临时消息更新和查询缓存刷新。
     const normalizedQuestion = (overrideQuestion ?? draft).trim();
     if (!normalizedQuestion || loading) return;
 
@@ -149,6 +146,7 @@ export default function ChatWorkspacePage() {
       trackEvent("chat_send", { sessionId: streamSessionId });
 
       for await (const event of streamProcessWithSession(normalizedQuestion, userId, streamSessionId, imageBase64, fileName)) {
+        // 流式事件分为任务、会话、持久化 ID、思考状态和回答增量。
         if (event.type === "job" && event.job_id) {
           setCurrentJobId(event.job_id);
         }
@@ -224,6 +222,7 @@ export default function ChatWorkspacePage() {
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>): void {
+    // 图片在前端预读为 base64 预览，普通文件延迟到发送时上传。
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 20 * 1024 * 1024) {
@@ -244,6 +243,7 @@ export default function ChatWorkspacePage() {
   }
 
   async function handleRollback(message: UiMessage): Promise<void> {
+    // 回滚后把历史问题写回输入框，便于用户调整后重新发送。
     if (!message.id || !currentSessionId) return;
     try {
       const result = await rollbackToQuestion(currentSessionId, userId, message.id);
@@ -259,6 +259,7 @@ export default function ChatWorkspacePage() {
   }
 
   function handleCopy(message: UiMessage, index: number): void {
+    // 复制只操作消息正文，thinkContent 和附件不进入剪贴板。
     void navigator.clipboard.writeText(message.content || "");
     setCopiedMessageKey(`${message.id || message.clientId || index}`);
   }
@@ -270,43 +271,38 @@ export default function ChatWorkspacePage() {
 
   return (
     <div className={styles.layout}>
-      <PageHeader
-        eyebrow={t("chat.eyebrow")}
-        title={t("chat.title")}
-        description={t("chat.description")}
-        actions={<Badge>{chatStatus}</Badge>}
-      />
-
-      {feedback ? <InlineNotice tone="info">{feedback}</InlineNotice> : null}
+      <h1 className={styles.title}>{t("chat.title")}</h1>
 
       <div className={styles.body}>
         <SessionListPanel />
-        <div className="stack">
-          <Card className={styles.messageCard}>
-            <div ref={scrollRef}>
-              <MessageThread
-                messages={messages}
-                loading={loading}
-                onCopy={handleCopy}
-                onRollback={handleRollback}
-                onResend={handleResend}
-              />
+        <div className={styles.chatColumn}>
+          <Card className={styles.chatBox}>
+            <div ref={scrollRef} className={styles.chatScroll}>
+              <div className={styles.messageArea}>
+                {feedback ? <InlineNotice tone="info">{feedback}</InlineNotice> : null}
+                <MessageThread
+                  messages={messages}
+                  loading={loading}
+                  onCopy={handleCopy}
+                  onRollback={handleRollback}
+                  onResend={handleResend}
+                />
+              </div>
+              <div className={styles.composerDock}>
+                <MessageComposer
+                  draft={draft}
+                  loading={loading}
+                  stopping={stoppingJob}
+                  selectedFile={selectedFile}
+                  filePreview={filePreview}
+                  onDraftChange={setDraft}
+                  onFileChange={handleFileChange}
+                  onClearFile={clearAttachment}
+                  onSend={() => void handleSend()}
+                  onStop={() => void handleStop()}
+                />
+              </div>
             </div>
-          </Card>
-          <Card title={<div className={styles.status}><Badge>{chatStatus}</Badge></div>}>
-            <MessageComposer
-              draft={draft}
-              loading={loading}
-              stopping={stoppingJob}
-              selectedFile={selectedFile}
-              filePreview={filePreview}
-              onDraftChange={setDraft}
-              onFileChange={handleFileChange}
-              onClearFile={clearAttachment}
-              onSend={() => void handleSend()}
-              onStop={() => void handleStop()}
-            />
-            <div className={styles.disclaimer}>{t("chat.disclaimer")}</div>
           </Card>
         </div>
       </div>

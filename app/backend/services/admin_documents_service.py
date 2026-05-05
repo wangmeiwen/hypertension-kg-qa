@@ -37,7 +37,16 @@ class AdminDocumentsService:
         get_shared_vector_store: Callable[[], Any],
         log_api_error: Callable[..., None],
     ) -> None:
-        """初始化实例并注入运行依赖。"""
+        """初始化实例并注入管理员文档任务运行依赖。
+
+        Args:
+            await_call: 兼容同步/异步函数的调用适配器。
+            get_shared_vector_store: 获取共享向量库实例的回调。
+            log_api_error: 统一记录管理员接口错误的回调。
+
+        Returns:
+            None: 无返回值。
+        """
         self._await_call = await_call
         self._get_shared_vector_store = get_shared_vector_store
         self._log_api_error = log_api_error
@@ -83,7 +92,14 @@ class AdminDocumentsService:
         }
 
     async def _register_job(self, job_type: str) -> dict[str, Any]:
-        """注册后台任务。"""
+        """注册一个新的内存后台任务并执行保留数量裁剪。
+
+        Args:
+            job_type: 后台任务类型。
+
+        Returns:
+            dict[str, Any]: 新建任务的快照数据。
+        """
         async with self._job_lock:
             job_id = f"text-embed-job-{uuid4().hex}"
             job = {
@@ -111,7 +127,7 @@ class AdminDocumentsService:
             return dict(job)
 
     def _prune_jobs_locked(self) -> None:
-        """裁剪旧任务。"""
+        """在持有任务锁时裁剪已结束的旧任务，限制内存保留数量。"""
         if len(self._jobs) <= self._max_retained_jobs:
             return
         removable = sorted(self._jobs.values(), key=lambda item: item.get("created_at") or "")
@@ -125,7 +141,16 @@ class AdminDocumentsService:
                 self._jobs.pop(candidate["job_id"], None)
 
     def _mark_current_trace_finished(self, job: dict[str, Any], status: str, error: Optional[str] = None) -> None:
-        """收口当前 trace 阶段。"""
+        """把任务当前运行中的 trace 阶段标记为结束。
+
+        Args:
+            job: 内存任务对象。
+            status: 阶段结束状态。
+            error: 可选错误文本，失败时写入 trace。
+
+        Returns:
+            None: 无返回值。
+        """
         trace = job.get("trace") or []
         for item in reversed(trace):
             if not item.get("finished_at"):
@@ -150,7 +175,20 @@ class AdminDocumentsService:
         started: bool = False,
         finished: bool = False,
     ) -> None:
-        """更新任务状态。"""
+        """更新内存任务状态、结果、错误和生命周期时间。
+
+        Args:
+            job_id: 任务标识。
+            status: 可选任务状态。
+            progress_text: 可选进度文案。
+            result: 可选任务结果。
+            error: 可选错误文本。
+            started: 是否写入开始时间。
+            finished: 是否写入结束时间。
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -170,7 +208,16 @@ class AdminDocumentsService:
                 job["finished_at"] = self._utc_now_iso()
 
     async def _enter_job_stage(self, job_id: str, stage: str, detail: str = "") -> None:
-        """进入新阶段。"""
+        """进入任务新阶段并追加 trace 记录。
+
+        Args:
+            job_id: 任务标识。
+            stage: 阶段名称。
+            detail: 阶段说明文本。
+
+        Returns:
+            None: 无返回值。
+        """
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
@@ -203,7 +250,16 @@ class AdminDocumentsService:
         detail: Optional[str] = None,
         progress_text: Optional[str] = None,
     ) -> None:
-        """更新当前阶段心跳。"""
+        """刷新当前阶段心跳、进度文案和 trace 明细。
+
+        Args:
+            job_id: 任务标识。
+            detail: 可选阶段明细。
+            progress_text: 可选对外进度文案。
+
+        Returns:
+            None: 无返回值。
+        """
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
@@ -223,7 +279,15 @@ class AdminDocumentsService:
                     break
 
     async def _complete_job_stage(self, job_id: str, detail: Optional[str] = None) -> None:
-        """完成当前阶段。"""
+        """完成任务当前阶段并收口 trace。
+
+        Args:
+            job_id: 任务标识。
+            detail: 可选完成明细。
+
+        Returns:
+            None: 无返回值。
+        """
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
@@ -246,7 +310,16 @@ class AdminDocumentsService:
         *,
         elapsed_seconds: Optional[int] = None,
     ) -> None:
-        """为任务追加 warning。"""
+        """为任务追加可展示的 warning 信息。
+
+        Args:
+            job_id: 任务标识。
+            message: warning 文本。
+            elapsed_seconds: 可选阶段已耗时秒数。
+
+        Returns:
+            None: 无返回值。
+        """
         warning = {
             "message": message,
             "stage": None,
@@ -261,7 +334,7 @@ class AdminDocumentsService:
             job.setdefault("warnings", []).append(warning)
 
     async def _watch_job_soft_timeout(self, job_id: str) -> None:  # pragma: no cover - wall-clock watchdog
-        """监控单阶段运行时长。"""
+        """监控单阶段运行时长，超过软超时后周期性追加 warning。"""
         try:
             while True:
                 await asyncio.sleep(5)
@@ -295,7 +368,7 @@ class AdminDocumentsService:
             raise
 
     def _make_stage_event_callback(self, loop: asyncio.AbstractEventLoop, job_id: str) -> Callable[..., None]:  # pragma: no cover - background thread callback
-        """生成线程安全的任务阶段事件回调。"""
+        """生成线程安全的任务阶段事件回调，供阻塞嵌入线程回传进度。"""
         def _progress(
             action: str,
             stage: Optional[str] = None,
@@ -326,7 +399,18 @@ class AdminDocumentsService:
         detail: Optional[str] = None,
         progress_text: Optional[str] = None,
     ) -> None:
-        """接收线程回传的阶段事件。"""
+        """接收阻塞线程回传的阶段事件并映射为任务状态更新。
+
+        Args:
+            job_id: 任务标识。
+            action: 阶段事件动作，支持 enter、heartbeat、complete、warning。
+            stage: 可选阶段名称。
+            detail: 可选阶段明细。
+            progress_text: 可选对外进度文案。
+
+        Returns:
+            None: 无返回值。
+        """
         if action == "enter" and stage:
             await self._enter_job_stage(job_id, stage, detail or progress_text or "")
             return
@@ -346,7 +430,14 @@ class AdminDocumentsService:
         *,
         runner: Callable[[str], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
-        """创建后台任务并立即返回任务信息。"""
+        """创建后台任务、启动 watchdog，并立即返回任务提交结果。
+
+        Args:
+            runner: 接收 job_id 并执行实际后台工作的异步函数。
+
+        Returns:
+            dict[str, Any]: 任务提交响应，包含对外 job 快照。
+        """
         job = await self._register_job(self.TEXT_EMBED_JOB_TYPE)
         job_id = job["job_id"]
 
@@ -410,7 +501,18 @@ class AdminDocumentsService:
         return {"ok": True, "data": response_data}
 
     def _validate_file(self, file_bytes: bytes, filename: str) -> str:
-        """校验文件并返回扩展名。"""
+        """校验上传文件基础约束并返回扩展名。
+
+        Args:
+            file_bytes: 上传文件二进制内容。
+            filename: 上传文件名。
+
+        Returns:
+            str: 小写文件扩展名。
+
+        Raises:
+            RuntimeError: 文件名、内容、大小或格式不满足要求。
+        """
         if not filename:
             raise RuntimeError("文件名不能为空")
         if not file_bytes:
@@ -443,7 +545,16 @@ class AdminDocumentsService:
         filename: str,
         stage_callback: Callable[..., None],
     ) -> dict[str, Any]:
-        """在线程中执行文档解析、分块和向量嵌入。"""
+        """在线程中执行文档解析、分块和向量嵌入。
+
+        Args:
+            file_bytes: 上传文件二进制内容。
+            filename: 上传文件名。
+            stage_callback: 线程安全阶段回调，用于向后台 job 汇报进度。
+
+        Returns:
+            dict[str, Any]: 文档解析、分块和向量写入结果摘要。
+        """
         from app.common.config import Config
         from app.document_parser.docling_parser import DoclingParser
         from app.document_parser.document_segmentation import DocumentSegmentation
@@ -510,7 +621,16 @@ class AdminDocumentsService:
         }
 
     async def _embed_text_document_job(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:  # pragma: no cover - external embedding runtime
-        """执行文本嵌入后台任务。"""
+        """执行文本嵌入后台任务，并通过 keyed lock 串行化向量库写入。
+
+        Args:
+            file_bytes: 上传文件二进制内容。
+            filename: 上传文件名。
+            job_id: 后台任务标识。
+
+        Returns:
+            dict[str, Any]: 文档嵌入结果摘要。
+        """
         loop = asyncio.get_running_loop()
         stage_callback = self._make_stage_event_callback(loop, job_id)
         await self._enter_job_stage(job_id, "waiting_for_lock", "等待文本向量数据库写入锁")
@@ -529,7 +649,14 @@ class AdminDocumentsService:
         return result
 
     async def submit_text_embedding_job(self, file: UploadFile) -> dict[str, Any]:
-        """提交文本嵌入后台任务。"""
+        """读取上传文件并提交文本嵌入后台任务。
+
+        Args:
+            file: FastAPI 上传文件对象。
+
+        Returns:
+            dict[str, Any]: 任务提交结果或错误响应。
+        """
         filename = file.filename or "uploaded_file"
         try:
             file_bytes = await file.read()
@@ -542,7 +669,14 @@ class AdminDocumentsService:
             return {"ok": False, "error": f"提交文本嵌入任务失败: {exc}"}
 
     async def get_text_embedding_job(self, job_id: str) -> dict[str, Any]:
-        """获取文本嵌入后台任务状态。"""
+        """获取指定文本嵌入后台任务状态。
+
+        Args:
+            job_id: 任务标识。
+
+        Returns:
+            dict[str, Any]: 任务状态响应，任务不存在时返回错误。
+        """
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -550,7 +684,14 @@ class AdminDocumentsService:
             return {"ok": True, "data": self._build_job_response(job)}
 
     async def list_text_embedding_jobs(self, limit: int = 10) -> dict[str, Any]:
-        """返回最近文本嵌入任务列表。"""
+        """返回最近文本嵌入任务列表。
+
+        Args:
+            limit: 返回数量上限，服务内会裁剪到允许范围。
+
+        Returns:
+            dict[str, Any]: 最近任务快照列表。
+        """
         safe_limit = max(1, min(int(limit or 10), 50))
         async with self._job_lock:
             jobs = sorted(
@@ -561,11 +702,15 @@ class AdminDocumentsService:
         return {"ok": True, "data": jobs}
 
     async def upload_document(self, file: UploadFile) -> dict[str, Any]:
-        """兼容旧 DOCX 上传嵌入接口。"""
+        """兼容旧 DOCX 上传嵌入接口，内部复用文本嵌入任务提交逻辑。"""
         return await self.submit_text_embedding_job(file)
 
     async def get_document_stats(self) -> dict[str, Any]:
-        """获取文档向量库统计。"""
+        """获取文档向量库统计信息。
+
+        Returns:
+            dict[str, Any]: 向量库统计结果或错误响应。
+        """
         try:
             from app.rag_core.document_embedding import DocumentEmbedder
 

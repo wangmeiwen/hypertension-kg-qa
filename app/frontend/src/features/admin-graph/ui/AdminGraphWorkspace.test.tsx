@@ -41,6 +41,7 @@ vi.mock("../../../shared/api/graphClient", () => ({
 }));
 
 describe("AdminGraphWorkspace", () => {
+  // 统一初始化图谱管理页依赖的标签、节点、任务和 mutation mock。
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(window, "confirm").mockReturnValue(true);

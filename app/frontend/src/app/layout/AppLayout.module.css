@@ -87,6 +87,10 @@
   padding: 28px;
 }
 
+.chatContent {
+  padding-top: 16px;
+}
+
 .topbar {
   display: flex;
   justify-content: flex-end;

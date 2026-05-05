@@ -24,6 +24,7 @@ vi.mock("../../shared/api/adminClient", () => ({
 }));
 
 describe("AdminSessionsPage", () => {
+  // 覆盖后台会话页的概览、详情、清空和删除确认流程。
   beforeEach(() => {
     vi.clearAllMocks();
     adminClientMocks.getAdminStats.mockResolvedValue({

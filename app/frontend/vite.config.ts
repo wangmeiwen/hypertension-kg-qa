@@ -29,6 +29,7 @@ export default defineConfig({
         navigateFallback: "/index.html",
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         runtimeCaching: [
+          // 后端接口始终走网络，避免 PWA 缓存污染实时问答、会话和管理数据。
           {
             urlPattern: ({ url }) =>
               /^\/(api|sessions|admin|graph|qa|upload_file)(\/|$)/.test(url.pathname),
@@ -59,6 +60,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
+        // 将 React、查询库和图谱渲染依赖拆成稳定 chunk，降低业务代码变更后的缓存失效范围。
         manualChunks(id) {
           if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router")) {
             return "vendor-react";

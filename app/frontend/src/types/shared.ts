@@ -1,3 +1,4 @@
+// 共享 JSON 与 API envelope 类型，供旧接口类型和少量泛型工具复用。
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export interface JsonObject {

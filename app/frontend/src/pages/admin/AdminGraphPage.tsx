@@ -5,6 +5,7 @@ import AdminGraphWorkspace from "../../features/admin-graph/ui/AdminGraphWorkspa
 import { PageHeader } from "../../shared/ui/primitives";
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
+// 图谱管理后台页面，具体 CRUD 和任务逻辑下沉到 AdminGraphWorkspace。
 export default function AdminGraphPage() {
   const { t } = useTranslation();
 

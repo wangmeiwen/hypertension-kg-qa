@@ -13,6 +13,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_concurrency_guard_reader_times_out_while_writer_holds_lock() -> None:
+    """验证写锁持有期间读锁会按 timeout 快速失败。"""
     from app.common.concurrency import ConcurrencyGuard, LockAcquireTimeout
 
     async def run_case() -> None:
@@ -48,6 +49,7 @@ def test_concurrency_guard_keyed_lock_serializes_same_key() -> None:
 
 
 def test_append_jsonl_atomic_concurrent_writes_are_complete(tmp_path: Path) -> None:
+    """验证多线程追加 JSONL 时不会出现行丢失或半行写入。"""
     from app.common.session_logger import append_jsonl_atomic
 
     target = tmp_path / "logs" / "sessions" / "session-1" / "turns.jsonl"

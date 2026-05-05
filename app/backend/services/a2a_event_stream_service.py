@@ -194,12 +194,12 @@ class A2AEventStreamService:
         get_a2a: Any,
         stream_events_factory: Optional[Any] = None,
     ) -> None:
-        """初始化实例并注入运行依赖。
-        
+        """初始化 A2A 事件流服务。
+
         Args:
-            get_a2a: 函数输入参数。
-            stream_events_factory: 函数输入参数。
-        
+            get_a2a: 获取主编排 A2AService 的函数。
+            stream_events_factory: 可选事件流工厂，主要用于测试替身或外部注入。
+
         Returns:
             None: 无返回值。
         """
@@ -213,7 +213,17 @@ class A2AEventStreamService:
         session_id: str = "",
         request_id: str = "",
     ) -> AsyncIterator[str]:
-        """将 A2A 事件转为逐行 JSON 流输出。"""
+        """将 A2A 事件转为逐行 JSON 流输出。
+
+        Args:
+            input_text: 用户输入问题。
+            user_id: 用户 ID。
+            session_id: 会话 ID。
+            request_id: 当前请求 ID。
+
+        Yields:
+            每行一个 JSON 对象字符串，用于兼容旧前端流式协议。
+        """
         async for msg in self.iter_a2a_stream_events(
             input_text=input_text,
             user_id=user_id,
@@ -223,7 +233,7 @@ class A2AEventStreamService:
             yield json.dumps(msg, ensure_ascii=False) + "\n"
 
     async def iter_a2a_stream_events(self, **kwargs: Any) -> AsyncIterator[Dict[str, Any]]:
-        """统一迭代 A2A 流事件。"""
+        """统一迭代 A2A 流事件，优先使用注入的事件工厂。"""
         if self._stream_events_factory is None:
             async for event in self.generate_a2a_stream_events(**kwargs):
                 yield event
@@ -244,7 +254,22 @@ class A2AEventStreamService:
         original_input_text: str = "",
         memory_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """生成 Agent 流式输出事件。"""
+        """生成 Agent 流式输出事件。
+
+        Args:
+            input_text: 当前用户问题。
+            user_id: 用户 ID。
+            session_id: 会话 ID。
+            request_id: 当前请求 ID。
+            strategy: Agent 运行策略。
+            max_turns: 最大编排轮次。
+            image_data: 可选图片数据。
+            original_input_text: 未改写前的原始输入。
+            memory_context: 会话记忆上下文。
+
+        Yields:
+            前端可消费的 job/msg/reply/done 事件字典。
+        """
         req_id = str(request_id or uuid.uuid4())
         service: A2AService = self._get_a2a()
 

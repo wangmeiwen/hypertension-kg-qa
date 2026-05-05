@@ -5,6 +5,7 @@ import AdminDocumentsWorkspace from "../../features/admin-documents/ui/AdminDocu
 import { PageHeader } from "../../shared/ui/primitives";
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
+// 文档向量化后台页面，组合页头、后台子导航和文档任务工作台。
 export default function AdminDocumentsPage() {
   const { t } = useTranslation();
 

@@ -1,6 +1,6 @@
-﻿"""request_context 模块。
+"""request_context 模块。
 
-提供 request_context 相关能力与对外接口。
+提供 A2A 请求 message 到内部运行上下文的解析能力。
 """
 
 
@@ -25,13 +25,13 @@ class RequestContextParser:
 
     @staticmethod
     def extract_text(parts_obj: Any) -> str:
-        """提取 text。
-        
+        """从 A2A message.parts 中提取所有文本片段。
+
         Args:
-            parts_obj: 参数。
-        
+            parts_obj: A2A message 的 parts 字段，允许非列表输入。
+
         Returns:
-            执行结果。
+            按原顺序拼接后的纯文本内容。
         """
         parts = parts_obj if isinstance(parts_obj, list) else []
         chunks: list[str] = []
@@ -47,13 +47,13 @@ class RequestContextParser:
 
     @classmethod
     def parse_message(cls, message_obj: Any) -> ParsedMessage:
-        """解析 message。
-        
+        """解析 A2A message 并生成内部统一请求上下文。
+
         Args:
-            message_obj: 参数。
-        
+            message_obj: A2A message/send 请求中的 message 对象。
+
         Returns:
-            执行结果。
+            包含问题文本、上下文 ID、用户 ID 和元数据的 ParsedMessage。
         """
         message = message_obj if isinstance(message_obj, dict) else {}
         metadata_obj = message.get("metadata")

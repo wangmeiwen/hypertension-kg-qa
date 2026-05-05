@@ -9,6 +9,7 @@ import { queryKeys } from "../../shared/queries/queryKeys";
 import { Button, Card, PageHeader } from "../../shared/ui/primitives";
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
+// 设置页集中展示前端语言、后端地址、运行时开关、队列和性能基线。
 export default function AdminSettingsPage() {
   const { t, i18n } = useTranslation();
 
@@ -49,6 +50,7 @@ export default function AdminSettingsPage() {
       <div className={styles.twoColumn}>
         <Card title={t("admin.runtimeFlags")}>
           <div className="stack">
+            {/* 当前只读展示 runtime flags，修改能力由后端管理接口决定。 */}
             <div className="muted">
               {t("admin.updatedAt")}: {formatDateTime(runtimeFlagsQuery.data?.updated_at)}
             </div>

@@ -6,8 +6,10 @@ import i18n from "../../shared/lib/i18n";
 import { reportFrontendError } from "../../shared/lib/observability";
 import { queryClient } from "../../shared/queries/queryClient";
 
+// 汇总应用级 Provider，并统一挂载浏览器全局错误上报监听。
 export default function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
+    // 捕获 React 边界外的脚本错误和 Promise 未处理拒绝。
     const onError = (event: ErrorEvent) => {
       reportFrontendError(event.error || event.message, "window_error");
     };

@@ -5,10 +5,12 @@ import { apiEnvelopeSchema, type ApiError } from "./contracts";
 const BASE_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 const ADMIN_TOKEN_KEY = "admin_token";
 
+// 暴露后端基础地址，供诊断界面或测试断言复用。
 export function getBaseUrl(): string {
   return BASE_URL;
 }
 
+// 管理员 token 存在浏览器本地存储中，供需要 auth 的请求注入 Authorization。
 export function getAdminToken(): string {
   return window.localStorage.getItem(ADMIN_TOKEN_KEY) || "";
 }
@@ -28,6 +30,7 @@ function buildError(message: string, status?: number, code = "request_error"): A
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
+  // 后端部分接口可能返回空 body 或非 JSON 错误文本，这里统一转为可解析对象。
   const text = await response.text();
   if (!text) {
     return {};
@@ -40,6 +43,7 @@ async function parseResponse(response: Response): Promise<unknown> {
 }
 
 function extractMessage(payload: unknown, fallback: string): string {
+  // 优先读取标准 envelope.error，其次兼容裸 error 字段。
   const envelope = apiEnvelopeSchema.safeParse(payload);
   if (envelope.success && envelope.data.error) {
     return envelope.data.error;
@@ -56,6 +60,7 @@ export async function fetchJson<T>(
   init: RequestInit = {},
   options: { auth?: boolean; fallbackMessage?: string } = {}
 ): Promise<T> {
+  // fetchJson 解析标准 envelope.data；非 envelope 响应则直接按 schema 校验原始 payload。
   const headers = new Headers(init.headers);
   if (options.auth) {
     const token = getAdminToken();
@@ -101,6 +106,7 @@ export async function fetchJsonEnvelope<T>(
   init: RequestInit = {},
   options: { auth?: boolean; fallbackMessage?: string } = {}
 ): Promise<T> {
+  // fetchJsonEnvelope 保留完整响应 envelope，用于需要读取 ok/token/total 等顶层字段的接口。
   const headers = new Headers(init.headers);
   if (options.auth) {
     const token = getAdminToken();
@@ -141,6 +147,7 @@ export async function* fetchStream(
   payload: Record<string, unknown>,
   onErrorMessage = "Streaming request failed"
 ): AsyncGenerator<string, void, undefined> {
+  // 后端流式接口按换行分隔事件；生成器逐行产出完整事件文本。
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

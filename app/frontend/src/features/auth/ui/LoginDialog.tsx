@@ -8,6 +8,7 @@ import { queryKeys } from "../../../shared/queries/queryKeys";
 import { Button, Input, Modal } from "../../../shared/ui/primitives";
 import { useAuthStore } from "../model/useAuthStore";
 
+// 统一提取未知异常中的可展示错误信息。
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
@@ -26,6 +27,7 @@ export default function LoginDialog({ open, onClose }: { open: boolean; onClose:
   const [pending, setPending] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    // 登录成功后同步本地认证状态和 React Query 缓存，再关闭弹窗。
     event.preventDefault();
     setPending(true);
     setError("");

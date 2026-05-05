@@ -14,6 +14,7 @@ const statusSchema = z
   })
   .passthrough();
 
+// 登录成功后保存后端签发的管理员 token，后续 auth 请求由 http 层自动注入。
 export async function loginAsAdmin(username: string, password: string): Promise<void> {
   const result = await fetchJson(
     "/admin/login",
@@ -32,6 +33,7 @@ export async function loginAsAdmin(username: string, password: string): Promise<
 
 export async function checkAdminStatus(): Promise<boolean> {
   try {
+    // 认证状态校验失败时按未登录处理，并清理可能过期的本地 token。
     const result = await fetchJson("/admin/status", statusSchema, {}, { auth: true, fallbackMessage: "管理员状态校验失败" });
     return result.logged_in;
   } catch {

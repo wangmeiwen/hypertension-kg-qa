@@ -17,6 +17,7 @@ import { queryKeys } from "../../shared/queries/queryKeys";
 import { Badge, Button, Card, ConfirmDialog, DataTable, Modal, PageHeader } from "../../shared/ui/primitives";
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
+// 管理后台会话页展示系统概览、会话列表、消息详情和危险操作入口。
 export default function AdminSessionsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -55,6 +56,7 @@ export default function AdminSessionsPage() {
   const stats = statsQuery.data;
   const readiness = readinessQuery.data;
   const rows =
+      // DataTable 行由会话数据派生，操作列打开详情或进入删除确认。
       sessionsQuery.data?.data.map((session) => [
         session.id,
         truncateText(session.title, 32),
@@ -119,6 +121,7 @@ export default function AdminSessionsPage() {
       </Card>
 
       <Modal open={Boolean(selectedSessionId)} onClose={() => setSelectedSessionId(null)}>
+        {/* 消息详情按选中会话懒加载，避免列表页一次性拉取全部消息。 */}
         <div className={styles.modalSection}>
           <h2 style={{ margin: 0 }}>{sessionDetailQuery.data?.session.title || t("admin.sessionMessages")}</h2>
           <div className="inlineMeta">
@@ -142,6 +145,7 @@ export default function AdminSessionsPage() {
         </div>
       </Modal>
 
+      {/* 删除会话使用共享确认框，避免误删不可恢复数据。 */}
       <ConfirmDialog
         open={Boolean(pendingDeleteSessionId)}
         title={t("admin.deleteSession")}

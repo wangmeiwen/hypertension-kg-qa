@@ -17,6 +17,7 @@ import { Button, Card, DataTable, Modal, PageHeader, VirtualList } from "../../s
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
 function EventDetailPanel({ event, t }: { event: FlowEvent; t: (key: string) => string }) {
+  // 单个 Agent 事件详情面板展示模型输入/输出和工具调用观测字段。
   const detail = event.detail || {};
   return (
     <div className={styles.modalSection}>
@@ -79,6 +80,7 @@ export default function AdminObservabilityPage() {
   });
 
   const groupedRuns = useMemo(() => {
+    // 后端按 run 返回观测记录，前端按 session 聚合成表格行。
     const grouped = new Map<string, { latest: string; turns: number; llm: number; tools: number; tokens: number }>();
     for (const run of runsQuery.data || []) {
       const sessionId = String(run.session_id || "").trim();
@@ -96,6 +98,7 @@ export default function AdminObservabilityPage() {
   }, [runsQuery.data]);
 
   const selectedTurn = turnsQuery.data?.find((turn) => turn.turn_id === selectedTurnId) || turnsQuery.data?.[0];
+  // 将 flow_events 拆分到主控、图谱和检索三条泳道展示。
   const lanes = {
     orchestrator: selectedTurn?.flow_events.filter((event) => classifyObservabilityLane(event) === "orchestrator") || [],
     graph: selectedTurn?.flow_events.filter((event) => classifyObservabilityLane(event) === "graph") || [],

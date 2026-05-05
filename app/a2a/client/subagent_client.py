@@ -1,4 +1,4 @@
-﻿"""主代理到子代理调用客户端。"""
+"""主代理到子代理调用客户端。"""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ class SubAgentClientFactory:
     """主代理子代理客户端。"""
 
     def __init__(self, graph_subagent: Any, rag_subagent: Any):
-        """初始化 SubAgentClientFactory 实例。
-        
+        """初始化主代理可调用的本地子代理客户端集合。
+
         Args:
-            graph_subagent: 参数。
-            rag_subagent: 参数。
+            graph_subagent: 负责图谱检索任务的子代理实例。
+            rag_subagent: 负责语义检索任务的子代理实例。
         """
         self.graph_subagent = graph_subagent
         self.rag_subagent = rag_subagent
@@ -27,14 +27,14 @@ class SubAgentClientFactory:
         task: SubTask,
         raw_result: dict[str, Any],
     ) -> SubAgentResult:
-        """标准化 subagent_response。
-        
+        """将子代理原始批量响应转换为主代理统一结果模型。
+
         Args:
-            task: 参数。
-            raw_result: 参数。
-        
+            task: 主代理下发的子任务定义。
+            raw_result: 子代理 invoke_batch 返回的原始结果字典。
+
         Returns:
-            执行结果。
+            可供主代理证据融合和补检索决策使用的 SubAgentResult。
         """
         payload_obj = raw_result.get("result")
         payload = payload_obj if isinstance(payload_obj, dict) else {}
@@ -117,14 +117,14 @@ class SubAgentClientFactory:
         task: SubTask,
         serial_guard: asyncio.Semaphore | None = None,
     ) -> SubAgentResult:
-        """执行 send_task。
-        
+        """将单个子任务派发给目标子代理并返回标准化结果。
+
         Args:
-            task: 参数。
-            serial_guard: 参数。
-        
+            task: 主代理拆解出的图谱或 RAG 子任务。
+            serial_guard: 可选串行化信号量，用于限制子代理并发调用。
+
         Returns:
-            执行结果。
+            子代理标准化执行结果。
         """
         request = {
             "subquery_id": task.subtask_id,

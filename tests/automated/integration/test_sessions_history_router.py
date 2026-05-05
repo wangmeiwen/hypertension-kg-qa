@@ -5,6 +5,8 @@ from app.backend.routers.sessions_history import create_sessions_router
 
 
 class SessionsHistoryServiceStub:
+    """覆盖会话历史 router 所需方法的服务桩。"""
+
     async def create_session(self, data):
         return {"ok": True, "data": data}
 
@@ -37,6 +39,7 @@ class SessionsHistoryServiceStub:
 
 
 def create_client() -> TestClient:
+    """构建只挂载会话历史 router 的测试客户端。"""
     app = FastAPI()
     app.include_router(create_sessions_router(SessionsHistoryServiceStub()))
     return TestClient(app)

@@ -418,7 +418,15 @@ class KgMilvusStore:
         return expected_metric or None
 
     def _search_with_params(self, search_kwargs: Dict[str, Any], search_params: Dict[str, Any]) -> List[List[dict]]:
-        """单版本检索参数：仅使用 search_params。"""
+        """用当前 pymilvus 客户端参数格式执行向量检索。
+
+        Args:
+            search_kwargs: Milvus search 的基础关键字参数。
+            search_params: 向量索引检索参数。
+
+        Returns:
+            List[List[dict]]: Milvus 返回的命中列表。
+        """
         return self.client.search(**search_kwargs, search_params=search_params)
 
     def clear_collection(self) -> None:
@@ -593,6 +601,17 @@ class KgMilvusStore:
         batch_size: int = 100,
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
+        """加写锁后从 Neo4j 重建图谱向量库。
+
+        Args:
+            neo4j_client: Neo4j 客户端实例。
+            labels: 可选实体标签列表；未传入时读取全部标签。
+            batch_size: Milvus 写入批大小。
+            progress_callback: 可选进度回调，用于后台任务状态展示。
+
+        Returns:
+            Dict[str, Any]: 重建统计信息。
+        """
         timeout = float(Config().KG_MILVUS_REBUILD_LOCK_TIMEOUT_SECONDS)
         lock_timeout = None if timeout < 0 else timeout
         async with concurrency_guard.writer_lock(
@@ -1274,6 +1293,25 @@ class KgMilvusStore:
         disambiguation_margin: Optional[float] = None,
         disambiguation_resolver: Optional[Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        """加读锁后执行图谱实体关系检索。
+
+        读锁用于避免重建 Milvus 集合时并发检索读到半初始化状态；
+        获取锁超时时返回明确 degraded/unavailable 结构，供上层降级。
+
+        Args:
+            query: 查询文本。
+            top_k: 实体与关系各自返回的最大数量。
+            lexical_weight: 关键词分数在混合排序中的权重。
+            expansion_limit: 关系扩展最大数量。
+            enable_disambiguation: 是否启用实体消歧。
+            enable_community_detection: 是否启用社区发现。
+            community_top_k: 返回的社区数量上限。
+            disambiguation_margin: 实体消歧的候选分差阈值。
+            disambiguation_resolver: 可选 LLM 消歧函数。
+
+        Returns:
+            Dict[str, Any]: 图谱检索结果或重建中降级结果。
+        """
         try:
             async with concurrency_guard.reader_lock(f"kg-milvus:{self.collection_name}", timeout=2.0):
                 return await self._search_entity_relations_unlocked(

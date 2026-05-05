@@ -31,6 +31,7 @@ vi.mock("../../shared/lib/observability", () => ({
   trackEvent: vi.fn(),
 }));
 
+// 模拟一次完整成功的 SSE 事件序列。
 async function* successfulStream() {
   yield { type: "job" as const, job_id: "job-1" };
   yield { type: "session" as const, session_id: "s1" };
@@ -41,11 +42,13 @@ async function* successfulStream() {
 }
 
 async function* failedStream() {
+  // 先产出进度事件再抛错，覆盖页面的失败反馈路径。
   yield { type: "msg" as const, msg: "准备失败" };
   throw new Error("问答流式请求失败");
 }
 
 describe("ChatWorkspacePage", () => {
+  // 每个用例重置 store 和 session API mock，避免流式状态串扰。
   beforeEach(() => {
     vi.clearAllMocks();
     useSessionStore.setState({

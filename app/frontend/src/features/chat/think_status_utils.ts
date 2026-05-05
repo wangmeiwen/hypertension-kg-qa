@@ -30,6 +30,7 @@ const THINK_STATUS_META: ThinkStatusMeta[] = [
 const THINK_LABELS = THINK_STATUS_META.map((item) => item.label);
 
 const normalizeThinkStatus = (value: string, stage = ""): string => {
+  // 后端 stage 优先于文本关键词，减少不同语言日志导致的误判。
   const safeStage = String(stage || "").trim().toLowerCase();
   const byStage = THINK_STATUS_META.find((item) => item.stage === safeStage);
   if (byStage) return byStage.label;
@@ -46,6 +47,7 @@ const normalizeThinkStatus = (value: string, stage = ""): string => {
 };
 
 export const appendThinkStatus = (statuses: string[], value: string, stage = ""): string[] => {
+  // 追加前做归一化和去重，保持思考状态时间线简洁。
   const label = normalizeThinkStatus(value, stage);
   if (!label || statuses.includes(label)) return statuses;
   return [...statuses, label];
@@ -54,6 +56,7 @@ export const appendThinkStatus = (statuses: string[], value: string, stage = "")
 export const formatThinkStatuses = (statuses: string[]): string => statuses.filter(Boolean).join("\n");
 
 const getSimplifiedThinkStatuses = (thinkContent: string): string[] => {
+  // 从历史 thinkContent 中提取少量面向用户的阶段标签。
   const text = String(thinkContent || "").trim();
   if (!text) return [];
 

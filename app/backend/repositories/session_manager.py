@@ -1,6 +1,6 @@
 ﻿"""session_manager 模块。
 
-提供 session_manager 相关能力与对外接口。
+提供会话和消息表的异步数据访问能力。
 """
 
 
@@ -18,7 +18,7 @@ class SessionManager:
 
     @staticmethod
     async def create_session(user_id: str, title: str = "新会话") -> dict:
-        """创建资源。
+        """创建新的用户会话记录。
 
         Args:
             user_id: 会话所属用户 ID。
@@ -102,7 +102,7 @@ class SessionManager:
 
     @staticmethod
     async def update_session_title(session_id: str, title: str) -> bool:
-        """更新数据。
+        """更新指定会话的标题。
 
         Args:
             session_id: 会话 ID。
@@ -119,7 +119,7 @@ class SessionManager:
 
     @staticmethod
     async def delete_session(session_id: str) -> bool:
-        """删除数据。
+        """删除指定会话及其级联消息。
 
         Args:
             session_id: 会话 ID。
@@ -132,7 +132,7 @@ class SessionManager:
 
     @staticmethod
     async def update_session_time(session_id: str) -> None:
-        """更新数据。
+        """刷新会话更新时间，用于列表排序和活跃度展示。
 
         Args:
             session_id: 会话 ID。
@@ -269,7 +269,7 @@ class MessageManager:
 
     @staticmethod
     async def delete_messages(session_id: str) -> bool:
-        """删除数据。
+        """删除指定会话下的所有消息。
 
         Args:
             session_id: 会话 ID。

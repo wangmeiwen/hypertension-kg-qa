@@ -7,6 +7,7 @@ import { vi } from "vitest";
 
 import i18n from "../shared/lib/i18n";
 
+// 测试专用 QueryClient 禁用重试和缓存，避免异步用例之间状态残留。
 export function createTestQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -27,6 +28,7 @@ interface ProviderOptions extends Omit<RenderOptions, "wrapper"> {
 }
 
 export function renderWithProviders(ui: ReactElement, options: ProviderOptions = {}) {
+  // 用真实 i18n、React Query 和 MemoryRouter 包裹组件，贴近应用运行环境。
   const { route = "/", queryClient = createTestQueryClient(), ...renderOptions } = options;
 
   function Wrapper({ children }: { children: ReactNode }) {
@@ -46,11 +48,13 @@ export function renderWithProviders(ui: ReactElement, options: ProviderOptions =
 }
 
 export function clearTestStorage() {
+  // 清理浏览器存储，避免 token、语言和会话 ID 影响后续用例。
   window.localStorage.clear();
   window.sessionStorage.clear();
 }
 
 export function mockFetchJson(payload: unknown, init: ResponseInit = {}) {
+  // stub 全局 fetch 返回 JSON Response，供 http client 单测复用。
   const response = new Response(JSON.stringify(payload), {
     status: init.status ?? 200,
     headers: {
@@ -77,6 +81,7 @@ export function mockFetchText(payload: string, init: ResponseInit = {}) {
 }
 
 export function mockFetchStream(lines: string[], init: ResponseInit = {}) {
+  // 构造换行分隔的 ReadableStream，用于验证流式问答解析。
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {

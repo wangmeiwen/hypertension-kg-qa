@@ -24,11 +24,11 @@ class AdminSessionsService:
         get_session_memory_service: Callable[[], Any],
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            await_call: 函数输入参数。
-            get_session_memory_service: 函数输入参数。
-        
+            await_call: 兼容同步/异步仓储和服务调用的执行器。
+            get_session_memory_service: 延迟获取会话记忆服务的回调。
+
         Returns:
             None: 无返回值。
         """
@@ -38,26 +38,26 @@ class AdminSessionsService:
 
     @staticmethod
     def _project_root() -> Path:
-        """执行project_root流程并返回结果。
-        
+        """定位项目根目录。
+
         Args:
             无。
-        
+
         Returns:
-            Path: 执行结果。
+            Path: 当前仓库根目录路径。
         """
         return Path(__file__).resolve().parents[3]
 
     @staticmethod
     def _safe_log_id(raw: str, fallback: str = "unknown") -> str:
-        """执行safe_log_id流程并返回结果。
-        
+        """将会话标识转换为可安全用于日志目录名的文本。
+
         Args:
-            raw: 函数输入参数。
-            fallback: 函数输入参数。
-        
+            raw: 原始会话或请求标识。
+            fallback: 清洗后为空时使用的兜底文本。
+
         Returns:
-            str: 文本结果。
+            str: 仅包含字母、数字、短横线和下划线的目录名片段。
         """
         text = str(raw or "").strip()
         if not text:
@@ -136,13 +136,13 @@ class AdminSessionsService:
         return token or "未知"
 
     def _read_session_turn_records(self, session_id: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-        """读取session_turn_records相关信息并返回结果。
-        
+        """读取指定会话的 turn 观测记录和记忆更新记录。
+
         Args:
             session_id: 会话标识。
-        
+
         Returns:
-            tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]: 执行结果。
+            tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]: turn 记录列表和按 turn_id 索引的记忆更新记录。
         """
         turns_dir = self._project_root() / "logs" / "sessions" / self._safe_log_id(session_id) / "turns"
         turn_rows: list[dict[str, Any]] = []
@@ -177,14 +177,14 @@ class AdminSessionsService:
 
     @staticmethod
     def _merge_turn_memory_update(turn: dict[str, Any], memory_update: dict[str, Any]) -> dict[str, Any]:
-        """合并turn_memory_update相关信息并返回结果。
-        
+        """将 turn 观测记录与同轮记忆更新记录合并。
+
         Args:
-            turn: 函数输入参数。
-            memory_update: 函数输入参数。
-        
+            turn: 原始 turn 观测记录。
+            memory_update: 同一 turn 的记忆更新记录。
+
         Returns:
-            dict[str, Any]: 结构化结果数据。
+            dict[str, Any]: 合并 token、错误类型和记忆快照后的 turn 记录。
         """
         if not memory_update:
             return turn
@@ -227,14 +227,14 @@ class AdminSessionsService:
 
     @staticmethod
     def _sanitize_text(value: Any, limit: int = 240) -> str:
-        """清洗输入并返回可用结果。
-        
+        """清洗并截断用于管理端展示的文本。
+
         Args:
             value: 待处理输入值。
-            limit: 函数输入参数。
-        
+            limit: 最多保留的字符数量。
+
         Returns:
-            str: 文本结果。
+            str: 去除换行并按长度裁剪后的文本。
         """
         text = str(value or "").replace("\n", " ").strip()
         if not text:
@@ -245,15 +245,15 @@ class AdminSessionsService:
 
     @classmethod
     def _join_lines(cls, rows: Any, limit: int = 4, item_limit: int = 100) -> str:
-        """执行join_lines流程并返回结果。
-        
+        """将列表中的前若干项格式化为单行展示文本。
+
         Args:
             rows: 输入数据列表。
-            limit: 函数输入参数。
-            item_limit: 函数输入参数。
-        
+            limit: 最多取用的列表项数量。
+            item_limit: 单项文本最多保留的字符数量。
+
         Returns:
-            str: 文本结果。
+            str: 用中文分号连接的展示文本，空列表返回“无”。
         """
         if not isinstance(rows, list):
             return "无"
@@ -269,13 +269,13 @@ class AdminSessionsService:
 
     @classmethod
     def _humanize_payload(cls, value: Any) -> str:
-        """执行humanize_payload流程并返回结果。
-        
+        """将任意日志 payload 转换为短文本。
+
         Args:
             value: 待处理输入值。
-        
+
         Returns:
-            str: 文本结果。
+            str: 适合在管理端详情中展示的文本。
         """
         if value is None:
             return "无"
@@ -297,13 +297,13 @@ class AdminSessionsService:
 
     @staticmethod
     def _lane_order(name: str) -> int:
-        """执行lane_order流程并返回结果。
-        
+        """返回泳道排序权重。
+
         Args:
-            name: 函数输入参数。
-        
+            name: 泳道名称。
+
         Returns:
-            int: 数值结果。
+            int: 排序权重，未知泳道排在最后。
         """
         mapping = {
             "主控编排": 0,
@@ -315,21 +315,21 @@ class AdminSessionsService:
 
     @staticmethod
     def _safe_event_id(turn_id: str, prefix: str, index: int) -> str:
-        """执行safe_event_id流程并返回结果。
-        
+        """生成管理端泳道事件标识。
+
         Args:
             turn_id: 对象标识。
-            prefix: 函数输入参数。
-            index: 函数输入参数。
-        
+            prefix: 事件类型前缀。
+            index: 当前事件在同类事件中的序号。
+
         Returns:
-            str: 文本结果。
+            str: 由 turn、前缀和序号拼出的稳定事件标识。
         """
         return f"{turn_id}:{prefix}:{index}"
 
     @classmethod
     def _safe_json_text(cls, value: Any, limit: int = 1600) -> str:
-        """将对象安全序列化为文本。"""
+        """将对象安全序列化为展示文本，无法 JSON 编码时退回普通文本。"""
         try:
             return cls._sanitize_text(json.dumps(value, ensure_ascii=False), limit) or "无"
         except (TypeError, ValueError):
@@ -412,7 +412,18 @@ class AdminSessionsService:
         observation: dict[str, Any],
         sequence_index: int,
     ) -> dict[str, Any]:
-        """当某个泳道没有独立 LLM 事件时，为工具调用补一个兜底节点。"""
+        """当某个泳道没有独立 LLM 事件时，为工具调用补一个兜底节点。
+
+        Args:
+            turn_id: turn 标识。
+            turn: 当前 turn 观测记录。
+            lane_name: 工具调用归属泳道。
+            observation: 工具观测记录。
+            sequence_index: 兜底节点序号。
+
+        Returns:
+            dict[str, Any]: 可直接加入泳道图的工具兜底事件。
+        """
         tool_log = observation.get("_tool_log") if isinstance(observation.get("_tool_log"), dict) else {}
         result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
         event_time = str(tool_log.get("ts") or turn.get("finished_at") or turn.get("started_at") or "")
@@ -675,7 +686,16 @@ class AdminSessionsService:
         request_id: str,
         turn: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """基于每次 LLM 调用构建新的泳道图事件。"""
+        """基于 LLM 日志和工具日志构建管理端泳道图事件。
+
+        Args:
+            session_id: 会话标识。
+            request_id: 请求标识，用于筛选同一轮日志。
+            turn: 当前 turn 观测记录。
+
+        Returns:
+            list[dict[str, Any]]: 按执行顺序排序的泳道图事件。
+        """
         turn_id = str(turn.get("turn_id") or "")
         llm_rows = cls._read_session_llm_records(session_id, request_id)
         if not llm_rows:
@@ -844,13 +864,28 @@ class AdminSessionsService:
         return events
 
     async def admin_get_sessions(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
-        """获取所有会话列表。"""
+        """获取管理员会话列表。
+
+        Args:
+            limit: 返回数量上限。
+            offset: 分页偏移量。
+
+        Returns:
+            dict[str, Any]: 会话列表和总数。
+        """
         sessions = await self._await_call(SessionManager.get_all_sessions, limit, offset)
         total = await self._await_call(SessionManager.get_total_sessions_count)
         return {"ok": True, "data": sessions, "total": total}
 
     async def admin_get_session_messages(self, session_id: str) -> dict[str, Any]:
-        """获取指定会话消息。"""
+        """获取指定会话的基础信息和消息列表。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            dict[str, Any]: 会话信息与消息列表，或会话不存在错误。
+        """
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
@@ -858,7 +893,14 @@ class AdminSessionsService:
         return {"ok": True, "session": session, "messages": messages}
 
     async def admin_get_session_observability(self, session_id: str) -> dict[str, Any]:
-        """获取指定会话的按轮次观测详情。"""
+        """获取指定会话的按轮次观测详情。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            dict[str, Any]: 会话信息和标准化后的 turn 观测详情。
+        """
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
@@ -908,7 +950,14 @@ class AdminSessionsService:
         return {"ok": True, "session": session, "turns": normalized_turns}
 
     async def admin_get_session_memory(self, session_id: str) -> dict[str, Any]:
-        """获取指定会话记忆快照。"""
+        """获取指定会话记忆快照。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            dict[str, Any]: 会话记忆快照或会话不存在错误。
+        """
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
@@ -916,7 +965,14 @@ class AdminSessionsService:
         return {"ok": True, "data": snapshot}
 
     async def admin_rebuild_session_memory(self, session_id: str) -> dict[str, Any]:
-        """重建指定会话记忆。"""
+        """清空并基于历史消息重建指定会话记忆。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            dict[str, Any]: 重建后的记忆快照或会话不存在错误。
+        """
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
@@ -925,7 +981,14 @@ class AdminSessionsService:
         return {"ok": True, "data": snapshot}
 
     async def admin_clear_session_messages(self, session_id: str) -> dict[str, Any]:
-        """清空指定会话历史消息。"""
+        """清空指定会话历史消息，并同步清理记忆和日志工件。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            dict[str, Any]: 清理结果、删除数量和附属工件清理状态。
+        """
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
@@ -956,7 +1019,14 @@ class AdminSessionsService:
         return response
 
     async def admin_delete_session(self, session_id: str) -> dict[str, Any]:
-        """删除会话。"""
+        """删除指定会话，并尽量清理记忆和日志工件。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            dict[str, Any]: 删除结果和附属工件清理状态。
+        """
         memory_cleared, memory_error_type = await self._clear_session_memory(session_id)
         success = await self._await_call(SessionManager.delete_session, session_id)
         if success:

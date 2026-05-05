@@ -20,7 +20,7 @@ class OcrDocumentManager:
         file_size: int = 0,
         page_count: int = 0,
     ) -> dict:
-        """创建资源。
+        """创建 OCR 文档元数据记录并标记为处理中。
 
         Args:
             user_id: 文档所属用户 ID。
@@ -67,7 +67,7 @@ class OcrDocumentManager:
         chunk_count: Optional[int] = None,
         error_message: Optional[str] = None,
     ) -> bool:
-        """更新数据。
+        """更新 OCR 文档处理状态、分块数量和错误信息。
 
         Args:
             doc_id: 文档 ID。
@@ -213,7 +213,7 @@ class OcrDocumentManager:
 
     @staticmethod
     async def delete_document(doc_id: str) -> bool:
-        """删除数据。
+        """删除 OCR 文档及其级联页面/token 记录。
 
         Args:
             doc_id: 文档 ID。

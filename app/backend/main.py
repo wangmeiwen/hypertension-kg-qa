@@ -2,15 +2,19 @@
 
 # ruff: noqa: E402
 
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.backend.app_factory import create_app
-
 project_root = Path(__file__).resolve().parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 env_path = project_root / ".env"
-load_dotenv(dotenv_path=env_path, override=False)
+load_dotenv(dotenv_path=env_path, override=True)
+
+from app.backend.app_factory import create_app
 
 app = create_app()
 

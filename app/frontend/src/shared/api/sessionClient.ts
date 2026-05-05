@@ -16,6 +16,7 @@ import { fetchJson, fetchStream } from "./http";
 
 const sessionListSchema = z.array(sessionRecordSchema);
 
+// 创建普通用户会话，title 默认为聊天侧栏展示名称。
 export async function createSession(userId: string, title = "新建会话"): Promise<SessionRecord> {
   return fetchJson(
     "/sessions",
@@ -105,6 +106,7 @@ export async function* streamProcessWithSession(
   imageData: string | null = null,
   fileName = "",
 ): AsyncGenerator<StreamEvent, void, undefined> {
+  // 组装会话流式问答 payload，图片和文件名只在用户上传附件时传递。
   const payload: Record<string, unknown> = {
     input,
     user_id: userId,
@@ -115,6 +117,7 @@ export async function* streamProcessWithSession(
 
   for await (const line of fetchStream("/process_with_session", payload, "问答流式请求失败")) {
     try {
+      // 标准 JSON 事件走 schema 校验；非 JSON 行降级为普通消息，避免流中断。
       const json = JSON.parse(line) as unknown;
       const event = streamEventSchema.parse(json);
       yield event;

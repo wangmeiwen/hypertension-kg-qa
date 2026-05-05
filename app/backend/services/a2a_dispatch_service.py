@@ -24,14 +24,14 @@ class A2ADispatchService:
         get_a2a_retrieval: Callable[[], A2AService],
         log_api_error: Callable[..., None],
     ) -> None:
-        """初始化实例并注入运行依赖。
-        
+        """初始化 A2A 分发服务并注入三类服务获取器。
+
         Args:
-            get_a2a: 函数输入参数。
-            get_a2a_graph: 函数输入参数。
-            get_a2a_retrieval: 函数输入参数。
-            log_api_error: 函数输入参数。
-        
+            get_a2a: 获取主编排 A2AService 的函数。
+            get_a2a_graph: 获取图谱子代理 A2AService 的函数。
+            get_a2a_retrieval: 获取检索子代理 A2AService 的函数。
+            log_api_error: 统一记录 API 异常的函数。
+
         Returns:
             None: 无返回值。
         """
@@ -43,13 +43,13 @@ class A2ADispatchService:
         self._log_api_error = log_api_error
 
     def _get_service(self, service_kind: str) -> A2AService:
-        """获取并返回目标数据。
-        
+        """按服务类型获取目标 A2AService。
+
         Args:
-            service_kind: 函数输入参数。
-        
+            service_kind: 服务类型，支持 orchestrator、graph、retrieval。
+
         Returns:
-            A2AService: 执行结果。
+            对应类型的 A2AService。
         """
         getter = self._service_map.get(service_kind)
         if getter is None:
@@ -76,7 +76,17 @@ class A2ADispatchService:
         trace_id: str,
         endpoint: str,
     ) -> JSONResponse:
-        """分发通用 A2A JSON-RPC 请求。"""
+        """分发通用 A2A JSON-RPC 请求。
+
+        Args:
+            service_kind: 目标 A2A 服务类型。
+            data: JSON-RPC 请求体。
+            trace_id: 当前请求追踪 ID。
+            endpoint: 当前 HTTP endpoint，用于日志标识。
+
+        Returns:
+            包装后的 JSON-RPC HTTP 响应。
+        """
         set_trace_metadata(
             {
                 "trace_id": trace_id,
@@ -176,13 +186,13 @@ class A2ADispatchService:
                 safe_cursor = 0
 
         async def event_stream():
-            """执行event_stream流程并返回结果。
-            
+            """按游标轮询任务事件并生成 SSE 文本块。
+
             Args:
                 无。
-            
+
             Returns:
-                Any: 执行结果。
+                异步生成器逐条产出 SSE 协议字符串。
             """
             nonlocal safe_cursor
             started_at = time.time()

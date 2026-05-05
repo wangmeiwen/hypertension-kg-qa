@@ -13,10 +13,12 @@ pytestmark = pytest.mark.integration
 
 
 def allow_admin(app: FastAPI) -> None:
+    """在测试 app 中绕过管理员登录依赖。"""
     app.dependency_overrides[require_admin_login] = lambda: None
 
 
 def install_unauthorized_handler(app: FastAPI) -> None:
+    """安装 UnauthorizedError 到 401 JSON 响应的测试异常处理器。"""
     @app.exception_handler(UnauthorizedError)
     async def _handle_unauthorized(_, exc: UnauthorizedError) -> JSONResponse:
         return JSONResponse(status_code=401, content={"ok": False, "error": str(exc)})
@@ -112,6 +114,8 @@ def test_system_mcp_router_readiness_tools_invoke_and_rate_limit() -> None:
     from app.backend.routers.system_mcp import create_system_mcp_router
 
     class McpStub:
+        """MCP router 测试用最小工具服务桩。"""
+
         async def list_tools(self) -> list[dict[str, Any]]:
             return [{"name": "search"}]
 
@@ -119,6 +123,7 @@ def test_system_mcp_router_readiness_tools_invoke_and_rate_limit() -> None:
             return [{"ok": True, "result": rows[0]["payload"], "meta": {}}]
 
     async def await_call(func, *args, **kwargs):
+        """兼容同步/异步依赖调用的本地测试辅助函数。"""
         result = func(*args, **kwargs)
         if hasattr(result, "__await__"):
             return await result

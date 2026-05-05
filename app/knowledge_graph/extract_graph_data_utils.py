@@ -1,4 +1,4 @@
-﻿"""
+"""
 高血压知识图谱抽取工具模块。
 
 本模块用于从文本中抽取结构化的高血压临床知识，包括：
@@ -36,9 +36,9 @@ GRAPH_LLM_TIMEOUT_SECONDS = 600
 _default_llm_bundle: Optional[Dict[str, Any]] = None
 
 
-# 
+#
 # 枚举定义：实体类型
-# 
+#
 EntityType = Literal[
     "Disease",             # 高血压、继发性高血压、糖尿病、慢性肾病等
     "DiseaseStage",        # 高血压分期
@@ -66,9 +66,9 @@ EntityType = Literal[
 ]
 
 
-# 
+#
 # 枚举定义：关系类型
-# 
+#
 RelationType = Literal[
     "HAS_STAGE",                 # 疾病 -> 疾病分期
     "HAS_GRADE",                 # 疾病/患者画像 -> 疾病分级
@@ -111,9 +111,9 @@ RelationType = Literal[
 ]
 
 
-# 
+#
 # 实体 / 关系 / 输出结构
-# 
+#
 class Entity(BaseModel):
     """定义知识图谱中的标准化实体结构。"""
 
@@ -141,9 +141,9 @@ class HypertensionKnowledgeGraph(BaseModel):
     relations: List[Relation] = Field(default_factory=list)
 
 
-# 
+#
 # 输出解析器
-# 
+#
 parser = JsonOutputParser(pydantic_object=HypertensionKnowledgeGraph)
 
 
@@ -156,7 +156,19 @@ def create_graph_llm_bundle(
     max_retries: int = 0,
     lane_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """按 lane 创建独立的大模型调用链。"""
+    """按 lane 创建独立的大模型调用链。
+
+    Args:
+        api_key: 模型 API key。
+        base_url: OpenAI 兼容接口 base URL。
+        model_name: 模型名称。
+        timeout: 单次模型请求超时时间。
+        max_retries: ChatOpenAI 内置重试次数。
+        lane_id: 可选并发 lane 标识。
+
+    Returns:
+        Dict[str, Any]: 包含 LLM 实例、主抽取链、漏抽判定链和补抽链的 bundle。
+    """
     llm = ChatOpenAI(
         api_key=api_key,
         base_url=base_url,
@@ -175,7 +187,11 @@ def create_graph_llm_bundle(
 
 
 def _get_default_graph_llm_bundle() -> Dict[str, Any]:
-    """获取默认图谱抽取模型调用链。"""
+    """获取默认图谱抽取模型调用链。
+
+    Returns:
+        Dict[str, Any]: 进程级缓存的默认图谱抽取模型 bundle。
+    """
     global _default_llm_bundle
     if _default_llm_bundle is None:
         conf = Config()
@@ -190,9 +206,9 @@ def _get_default_graph_llm_bundle() -> Dict[str, Any]:
     return _default_llm_bundle
 
 
-# 
+#
 # Prompt（主抽取）
-# 
+#
 primary_prompt = PromptTemplate(
     template=(
         "你是一个高血压临床知识图谱抽取专家。请从输入文本中抽取结构化知识。\n"
@@ -402,9 +418,9 @@ primary_prompt = PromptTemplate(
 )
 
 
-# 
+#
 # Prompt（漏抽判定）
-# 
+#
 omission_judge_prompt = PromptTemplate(
     template=(
         "你是知识图谱抽取质检专家。\n"
@@ -417,9 +433,9 @@ omission_judge_prompt = PromptTemplate(
 )
 
 
-# 
+#
 # Prompt（增量补抽）
-# 
+#
 supplement_prompt = PromptTemplate(
     template=(
         "你是高血压知识图谱补抽专家。\n"
@@ -438,16 +454,26 @@ supplement_prompt = PromptTemplate(
 )
 
 
-# 
+#
 # 抽取主函数
-# 
+#
 def _emit_stage_event(
     stage_callback: Optional[Callable[..., None]],
     action: str,
     stage: str,
     detail: str,
 ) -> None:
-    """安全触发阶段事件回调。"""
+    """安全触发阶段事件回调。
+
+    Args:
+        stage_callback: 可选阶段回调。
+        action: 阶段动作。
+        stage: 阶段名称。
+        detail: 阶段说明。
+
+    Returns:
+        None: 无返回值。
+    """
     if not stage_callback:
         return
     try:
@@ -470,6 +496,8 @@ def extract_hypertension_knowledge(
     Args:
         text: 输入文本
         max_gleanings: 最大补抽次数，默认 1
+        stage_callback: 可选阶段回调，用于后台任务展示抽取进度。
+        llm_bundle: 可选模型调用链 bundle，用于并发 lane 或测试替换。
 
     Returns:
         包含 entities 和 relations 的字典
@@ -536,9 +564,9 @@ def extract_hypertension_knowledge(
     return merged_result
 
 
-# 
+#
 # 标准化抽取结果
-# 
+#
 def normalize_extraction_result(result: Any) -> Dict[str, List[dict]]:
     """
     将模型输出规范化为 entities/relations 两个列表结构。
@@ -594,9 +622,9 @@ def normalize_extraction_result(result: Any) -> Dict[str, List[dict]]:
     }
 
 
-# 
+#
 # 工具函数
-# 
+#
 def sanitize_props(props: dict) -> dict:
     """
     清洗属性字典，仅保留可序列化且键名有效的键值对。
@@ -650,10 +678,10 @@ def canonical_or_name(entity: dict) -> str:
     return canonical_name or name
 
 
-# 
+#
 # 构建去重实体映射
 # key = (canonical_or_name, type)
-# 
+#
 def build_entity_map(entities: List[dict]) -> Dict[Tuple[str, str], dict]:
     """
     基于 (canonical_or_name, type) 构建实体映射并合并属性去重。
@@ -693,9 +721,9 @@ def build_entity_map(entities: List[dict]) -> Dict[Tuple[str, str], dict]:
     return entity_map
 
 
-# 
+#
 # 构建关系列表（去重）
-# 
+#
 def build_relation_list(relations: List[dict]) -> List[dict]:
     """
     基于主客体、关系类型与属性对关系进行去重并标准化。
@@ -744,9 +772,9 @@ def build_relation_list(relations: List[dict]) -> List[dict]:
     return relation_list
 
 
-# 
+#
 # 合并抽取结果
-# 
+#
 def merge_extraction_results(base_result: Dict[str, List[dict]], delta_result: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
     """
     合并主抽取与补抽结果，并通过现有去重逻辑统一输出。
@@ -770,9 +798,9 @@ def merge_extraction_results(base_result: Dict[str, List[dict]], delta_result: D
     }
 
 
-# 
+#
 # 构建 Neo4j 节点查询
-# 
+#
 def build_node_queries(entity_map: Dict[Tuple[str, str], dict]) -> List[Tuple[str, dict]]:
     """
     将实体映射按标签分组，生成批量写入 Neo4j 的节点查询语句。
@@ -811,9 +839,9 @@ def build_node_queries(entity_map: Dict[Tuple[str, str], dict]) -> List[Tuple[st
     return queries
 
 
-# 
+#
 # 构建 Neo4j 关系查询
-# 
+#
 def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
     """
     将关系列表按三元组分组，生成批量写入 Neo4j 的关系查询语句。
@@ -852,9 +880,9 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
     return queries
 
 
-# 
+#
 # 文本 -> 图谱抽取 -> Neo4j 查询
-# 
+#
 def extract_text_to_graph_queries(
     text: str,
     max_chars: int = 12000,
@@ -867,6 +895,8 @@ def extract_text_to_graph_queries(
     Args:
         text: 输入文本
         max_chars: 最大字符数限制，默认 12000
+        stage_callback: 可选阶段回调，用于展示抽取和查询构建进度。
+        llm_bundle: 可选模型调用链 bundle，用于并发 lane 或测试替换。
 
     Returns:
         包含抽取结果、实体映射、关系列表和查询语句的字典
@@ -915,9 +945,9 @@ def extract_text_to_graph_queries(
         }
 
 
-# 
+#
 # 示例运行
-# 
+#
 if __name__ == "__main__":
     demo_cases = [
         {

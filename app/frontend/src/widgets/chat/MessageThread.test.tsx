@@ -6,6 +6,7 @@ import MessageThread from "./MessageThread";
 import { renderWithProviders } from "../../test/testUtils";
 
 describe("MessageThread", () => {
+  // 覆盖医学免责声明样式、用户消息动作和 Markdown 块级渲染。
   it("renders disclaimer styling and triggers resend for user messages", async () => {
     const user = userEvent.setup();
     const onCopy = vi.fn();

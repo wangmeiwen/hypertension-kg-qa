@@ -1,6 +1,7 @@
 import type { ChatRole, SessionRecord } from "./chat";
 import type { UnknownRecord } from "./shared";
 
+// 管理后台历史类型定义，覆盖 readiness、会话、Agent 观测等响应结构。
 export interface ReadinessReport {
   level?: "ready" | "degraded" | "unavailable";
   checked_at?: string;

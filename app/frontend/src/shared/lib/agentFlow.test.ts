@@ -1,6 +1,7 @@
 import { classifyObservabilityLane, containsMedicalDisclaimer } from "./agentFlow";
 
 describe("agentFlow helpers", () => {
+  // 锁定中英文关键词规则，避免观测泳道和免责声明识别被无意改坏。
   it("classifies graph and retrieval lanes with Chinese and English keywords", () => {
     expect(classifyObservabilityLane({ lane: "graph-agent" })).toBe("graph");
     expect(classifyObservabilityLane({ actor: "图谱代理" })).toBe("graph");

@@ -10,6 +10,7 @@ type AppErrorBoundaryState = {
   error: Error | null;
 };
 
+// 错误边界兜底 UI，提供刷新、重试和返回问答页三个恢复入口。
 function AppErrorFallback({ error, onReset }: { error: Error; onReset: () => void }) {
   const { t } = useTranslation();
 
@@ -39,11 +40,13 @@ function AppErrorFallback({ error, onReset }: { error: Error; onReset: () => voi
 export default class AppErrorBoundary extends Component<{ children: ReactNode }, AppErrorBoundaryState> {
   state: AppErrorBoundaryState = { error: null };
 
+  // React class error boundary 必须使用该静态方法把渲染错误同步到 state。
   static getDerivedStateFromError(error: Error): AppErrorBoundaryState {
     return { error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    // 上报组件栈，便于后端 observability 页面定位前端崩溃来源。
     reportFrontendError(
       new Error(`${error.message}\n${info.componentStack || ""}`),
       "app_error_boundary",

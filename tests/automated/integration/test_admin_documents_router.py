@@ -6,6 +6,8 @@ from app.backend.routers.admin_documents import create_admin_documents_router
 
 
 class DocumentsServiceStub:
+    """记录 admin documents router 调用的服务桩。"""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
@@ -31,6 +33,7 @@ class DocumentsServiceStub:
 
 
 def create_client(service: DocumentsServiceStub) -> TestClient:
+    """构建只挂载 admin documents router 的测试客户端。"""
     app = FastAPI()
     app.include_router(create_admin_documents_router(service))
     app.dependency_overrides[require_admin_login] = lambda: None

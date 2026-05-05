@@ -30,6 +30,7 @@ def _build_real_fastapi_app(
     get_shared_kg_milvus_store: Any = None,
     get_shared_vector_store: Any = None,
 ) -> FastAPI:
+    """构建使用真实数据库启动路径、但替换 LLM/A2A/MCP 的 FastAPI 应用。"""
     overrides = BackendAppTestOverrides(
         startup_behavior=StartupRuntimeBehavior(
             initialize_database=True,
@@ -77,6 +78,7 @@ def _build_real_app(
 
 
 async def _require_neo4j_and_milvus() -> None:
+    """真实 DB 测试前检查 Neo4j 与 Milvus，不满足时跳过用例。"""
     status = await check_databases()
     if not bool((status.get("neo4j") or {}).get("is_running")):
         pytest.skip("Neo4j 未就绪")
@@ -231,6 +233,8 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
 
 
 class _MilvusVectorStatsAdapter:
+    """只满足文档统计接口需要的 Milvus 向量库适配器。"""
+
     def __init__(self, collection_name: str) -> None:
         from pymilvus import MilvusClient
 

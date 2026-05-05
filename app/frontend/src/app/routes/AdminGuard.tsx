@@ -9,6 +9,7 @@ import { checkAdminStatus } from "../../shared/api/authClient";
 import { queryKeys } from "../../shared/queries/queryKeys";
 import { Button, Card, InlineNotice, Skeleton } from "../../shared/ui/primitives";
 
+// 管理员路由守卫负责同步服务端登录态，并在未授权时展示登录入口。
 export default function AdminGuard() {
   const { t } = useTranslation();
   const isAuthenticated = useAuthStore((state) => state.isAdminAuthenticated);
@@ -23,6 +24,7 @@ export default function AdminGuard() {
   });
 
   useEffect(() => {
+    // 服务端状态是最终来源，查询结果变化时同步本地 store。
     if (typeof authQuery.data === "boolean" && authQuery.data !== isAuthenticated) {
       setAuthenticated(authQuery.data);
     }

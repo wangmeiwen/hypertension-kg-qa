@@ -1,3 +1,4 @@
+// i18n 文案资源按语言和业务域组织，供 react-i18next 初始化时加载。
 export const resources = {
   "zh-CN": {
     translation: {

@@ -5,6 +5,7 @@ import { clearAdminToken, fetchJson, fetchJsonEnvelope, fetchStream, getAdminTok
 import { clearTestStorage, mockFetchJson, mockFetchStream, mockFetchText } from "../../test/testUtils";
 
 describe("http client", () => {
+  // 每个用例清理 localStorage 与全局 fetch mock，避免 token 状态串扰。
   afterEach(() => {
     clearTestStorage();
     vi.unstubAllGlobals();

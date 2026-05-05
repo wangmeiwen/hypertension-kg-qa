@@ -1,4 +1,4 @@
-﻿"""
+"""
 消息队列管理模块。
 
 本模块提供异步消息队列管理功能，支持：
@@ -68,6 +68,9 @@ class MsgQueueManager:
     def __init__(self):
         """
         初始化消息队列管理器。
+
+        Returns:
+            None: 无返回值。
         """
         self.msg_queue_dict: dict[str, QueueBinding] = {}
         self._lock = threading.Lock()
@@ -110,6 +113,9 @@ class MsgQueueManager:
         Args:
             queue_key: 队列键
             message: 消息字典
+
+        Returns:
+            None: 无返回值。
         """
         await self.get_msg_queue(queue_key).put(message)
 
@@ -120,6 +126,9 @@ class MsgQueueManager:
         Args:
             queue_key: 队列键
             message: 消息字典
+
+        Returns:
+            None: 无返回值。
         """
         binding = self._get_binding(queue_key)
         if binding is None:
@@ -143,6 +152,9 @@ class MsgQueueManager:
 
         Args:
             queue_key: 队列键
+
+        Returns:
+            None: 无返回值。
         """
         with self._lock:
             if queue_key in self.msg_queue_dict:
@@ -160,6 +172,9 @@ async def put_msg_sentence_content(queue_key: str, put_content: str) -> None:
     Args:
         queue_key: 队列键
         put_content: 要放入的内容
+
+    Returns:
+        None: 无返回值。
     """
     await msg_queue_manager.put_async(queue_key, {"type": "msg", "msg": put_content})
     await asyncio.sleep(0.1)
@@ -174,6 +189,9 @@ async def put_reply_content(queue_key: str, put_content: str) -> None:
     Args:
         queue_key: 队列键
         put_content: 回复内容
+
+    Returns:
+        None: 无返回值。
     """
     await msg_queue_manager.put_async(queue_key, {"type": "reply", "msg": put_content})
     await asyncio.sleep(0.1)
@@ -190,6 +208,9 @@ async def put_done_content(queue_key: str, final_output: str = "", traces: Optio
         final_output: 最终输出内容
         traces: 工具调用追踪信息，可选
         status: 状态标识，可选
+
+    Returns:
+        None: 无返回值。
     """
     message = {"type": "done", "msg": final_output or ""}
     if traces is not None:

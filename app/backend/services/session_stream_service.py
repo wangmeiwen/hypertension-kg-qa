@@ -32,26 +32,26 @@ MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗�
 
 
 def _sanitize_text(value: Any, max_len: int) -> str:
-    """清洗输入并返回可用结果。
-    
+    """清洗并截断用于日志、摘要和前端展示的文本。
+
     Args:
         value: 待处理输入值。
-        max_len: 函数输入参数。
-    
+        max_len: 最多保留的字符数量。
+
     Returns:
-        str: 文本结果。
+        str: 去除换行并按长度裁剪后的文本。
     """
     return str(value or "").replace("\n", " ").strip()[:max_len]
 
 
 def _json_text_len(value: Any) -> int:
-    """执行json_text_len流程并返回结果。
-    
+    """计算对象 JSON 序列化后的文本长度。
+
     Args:
         value: 待处理输入值。
-    
+
     Returns:
-        int: 数值结果。
+        int: JSON 文本长度，无法序列化时返回普通字符串长度。
     """
     try:
         return len(json.dumps(value, ensure_ascii=False))
@@ -66,14 +66,14 @@ def _json_text_len(value: Any) -> int:
 
 
 def _build_reply_digest(reply: str, max_len: int = 180) -> str:
-    """构建并返回目标数据。
-    
+    """构建助手回复摘要，优先提取结构化回答段落。
+
     Args:
-        reply: 函数输入参数。
-        max_len: 函数输入参数。
-    
+        reply: 完整助手回复。
+        max_len: 摘要最长字符数。
+
     Returns:
-        str: 文本结果。
+        str: 去除固定医疗免责文本后的短摘要。
     """
     text = _strip_medical_disclaimer(reply).replace("\n", " ").strip()
     if not text:
@@ -118,15 +118,15 @@ def append_medical_disclaimer_if_needed(reply: Any, question_scope: Any) -> str:
 
 
 def _sanitize_list(value: Any, max_items: int, max_len: int) -> List[str]:
-    """清洗输入并返回可用结果。
-    
+    """清洗字符串列表并执行去重、截断和数量限制。
+
     Args:
         value: 待处理输入值。
-        max_items: 函数输入参数。
-        max_len: 函数输入参数。
-    
+        max_items: 最多保留的列表项数量。
+        max_len: 单项最多保留的字符数量。
+
     Returns:
-        List[str]: 处理后的列表结果。
+        List[str]: 清洗后的字符串列表。
     """
     rows_obj = value if isinstance(value, list) else []
     rows: List[str] = []
@@ -145,16 +145,16 @@ def _sanitize_list(value: Any, max_items: int, max_len: int) -> List[str]:
 
 
 def _extract_section_sentences(reply: str, title: str, next_titles: tuple[str, ...], max_items: int = 2) -> List[str]:
-    """提取并返回关键信息。
-    
+    """从结构化回答段落中提取若干句子。
+
     Args:
-        reply: 函数输入参数。
-        title: 函数输入参数。
-        next_titles: 函数输入参数。
-        max_items: 函数输入参数。
-    
+        reply: 完整回答文本。
+        title: 当前段落标题。
+        next_titles: 后续段落标题，用于确定当前段落边界。
+        max_items: 最多提取的句子数量。
+
     Returns:
-        List[str]: 处理后的列表结果。
+        List[str]: 段落中的短句列表。
     """
     text = str(reply or "").replace("**", "").strip()
     if not text:
@@ -187,14 +187,14 @@ def _extract_section_sentences(reply: str, title: str, next_titles: tuple[str, .
 
 
 def _extract_answered_points(evidence_summary: Dict[str, Any], full_reply: str) -> List[str]:
-    """提取并返回关键信息。
-    
+    """提取本轮回答覆盖的关键点。
+
     Args:
-        evidence_summary: 函数输入参数。
-        full_reply: 函数输入参数。
-    
+        evidence_summary: A2A 产出的证据摘要。
+        full_reply: 完整助手回复。
+
     Returns:
-        List[str]: 处理后的列表结果。
+        List[str]: 用于记忆投影的关键回答点。
     """
     supported_points = _sanitize_list(evidence_summary.get("supported_points"), max_items=5, max_len=120)
     if supported_points:
@@ -215,13 +215,13 @@ def _extract_answered_points(evidence_summary: Dict[str, Any], full_reply: str) 
 
 
 def _infer_question_scope(input_text: str) -> str:
-    """推断question_scope相关信息并返回结果。
-    
+    """基于简单关键词推断问题范围。
+
     Args:
-        input_text: 函数输入参数。
-    
+        input_text: 用户输入文本。
+
     Returns:
-        str: 文本结果。
+        str: 问题范围枚举值。
     """
     lowered = str(input_text or "").strip().lower()
     if not lowered:
@@ -274,13 +274,13 @@ def _infer_question_scope(input_text: str) -> str:
 
 
 def _normalize_question_scope(scope: Any) -> str:
-    """规范化输入并返回标准化结果。
-    
+    """规范化问题范围枚举值。
+
     Args:
-        scope: 函数输入参数。
-    
+        scope: 原始问题范围值。
+
     Returns:
-        str: 文本结果。
+        str: 当前支持的问题范围枚举，未知值返回 unknown。
     """
     value = str(scope or "").strip()
     if value in {"medical_qa", "capability_query", "administrative", "small_talk", "unknown"}:
@@ -289,24 +289,24 @@ def _normalize_question_scope(scope: Any) -> str:
 
 
 def _project_root() -> Path:
-    """执行project_root流程并返回结果。
-    
+    """定位项目根目录。
+
     Args:
         无。
-    
+
     Returns:
-        Path: 执行结果。
+        Path: 当前仓库根目录路径。
     """
     return Path(__file__).resolve().parents[3]
 
 
 def _append_jsonl(file_path: Path, payload: Dict[str, Any]) -> None:
-    """执行append_jsonl流程并返回结果。
-    
+    """以原子追加方式写入一行 JSONL 日志。
+
     Args:
-        file_path: 函数输入参数。
-        payload: 函数输入参数。
-    
+        file_path: JSONL 文件路径。
+        payload: 待写入的日志对象。
+
     Returns:
         None: 无返回值。
     """
@@ -314,14 +314,14 @@ def _append_jsonl(file_path: Path, payload: Dict[str, Any]) -> None:
 
 
 def _safe_session_log_id(raw: Any, fallback: str = "unknown") -> str:
-    """执行safe_session_log_id流程并返回结果。
-    
+    """将会话标识转换为可安全用于日志目录名的文本。
+
     Args:
-        raw: 函数输入参数。
-        fallback: 函数输入参数。
-    
+        raw: 原始会话标识。
+        fallback: 清洗后为空时使用的兜底文本。
+
     Returns:
-        str: 文本结果。
+        str: 仅包含字母、数字、短横线和下划线的目录名片段。
     """
     text = str(raw or "").strip()
     if not text:
@@ -334,51 +334,51 @@ def _safe_session_log_id(raw: Any, fallback: str = "unknown") -> str:
 
 
 def _iso_now() -> str:
-    """执行iso_now流程并返回结果。
-    
+    """返回当前本地时间的 ISO 文本。
+
     Args:
         无。
-    
+
     Returns:
-        str: 文本结果。
+        str: 秒级精度 ISO 时间文本。
     """
     return datetime.now().isoformat(timespec="seconds")
 
 
 def _to_iso(value: Any) -> str:
-    """执行to_iso流程并返回结果。
-    
+    """把外部时间值规范化为 ISO 文本，为空时使用当前时间。
+
     Args:
         value: 待处理输入值。
-    
+
     Returns:
-        str: 文本结果。
+        str: 输入时间文本或当前时间文本。
     """
     text = str(value or "").strip()
     return text or _iso_now()
 
 
 def _sanitize_preview(value: Any, max_len: int = 160) -> str:
-    """清洗输入并返回可用结果。
-    
+    """清洗用于预览展示的短文本。
+
     Args:
         value: 待处理输入值。
-        max_len: 函数输入参数。
-    
+        max_len: 最多保留的字符数量。
+
     Returns:
-        str: 文本结果。
+        str: 预览文本。
     """
     return _sanitize_text(value, max_len)
 
 
 def _summarize_tool_result(result_payload: Any) -> str:
-    """执行summarize_tool_result流程并返回结果。
-    
+    """从工具结果中提取可展示摘要。
+
     Args:
-        result_payload: 函数输入参数。
-    
+        result_payload: 工具返回 payload。
+
     Returns:
-        str: 文本结果。
+        str: 优先提取错误、summary、message、answer 或列表规模的摘要。
     """
     result = result_payload if isinstance(result_payload, dict) else {}
     if isinstance(result.get("error"), str) and str(result.get("error")).strip():
@@ -397,27 +397,27 @@ def _summarize_tool_result(result_payload: Any) -> str:
 
 
 def _normalize_timestamp(value: Any, fallback: str) -> str:
-    """规范化输入并返回标准化结果。
-    
+    """规范化日志时间戳，为空时使用兜底时间。
+
     Args:
         value: 待处理输入值。
-        fallback: 函数输入参数。
-    
+        fallback: 时间为空时使用的兜底文本。
+
     Returns:
-        str: 文本结果。
+        str: 规范化后的时间文本。
     """
     text = str(value or "").strip()
     return text or fallback
 
 
 def _extract_llm_role_from_compact(messages_compact: str) -> str:
-    """提取并返回关键信息。
-    
+    """从压缩后的 LLM 输入日志中推断代理泳道。
+
     Args:
-        messages_compact: 函数输入参数。
-    
+        messages_compact: LLM 输入日志压缩文本。
+
     Returns:
-        str: 文本结果。
+        str: 主控、图谱、检索或记忆压缩泳道名称。
     """
     text = str(messages_compact or "")
     if "会话问题改写器" in text:
@@ -434,14 +434,14 @@ def _extract_llm_role_from_compact(messages_compact: str) -> str:
 
 
 def _read_session_llm_records(session_id: str, request_id: str) -> list[dict[str, Any]]:
-    """读取session_llm_records相关信息并返回结果。
-    
+    """读取指定会话和请求的 LLM 调用日志。
+
     Args:
         session_id: 会话标识。
         request_id: 请求标识。
-    
+
     Returns:
-        list[dict[str, Any]]: 处理后的列表结果。
+        list[dict[str, Any]]: 按时间排序的 LLM 日志记录。
     """
     sid = _safe_session_log_id(session_id)
     if not request_id:
@@ -479,14 +479,14 @@ def _build_lane_card_from_tool_observation(
     observation: Dict[str, Any],
     fallback_time: str,
 ) -> Dict[str, Any]:
-    """构建并返回目标数据。
-    
+    """根据工具观测构建一个代理泳道展示卡片。
+
     Args:
-        observation: 函数输入参数。
-        fallback_time: 函数输入参数。
-    
+        observation: 单条工具观测记录。
+        fallback_time: 工具日志缺失时间时使用的兜底时间。
+
     Returns:
-        Dict[str, Any]: 结构化结果数据。
+        Dict[str, Any]: 管理端可展示的泳道卡片。
     """
     tool_name = str(observation.get("tool_name") or observation.get("requested_tool_name") or "").strip()
     question = str(observation.get("subquery") or observation.get("question") or "").strip()
@@ -520,7 +520,18 @@ def _build_orchestrator_cards(
     started_at: str,
     finished_at: str,
 ) -> list[Dict[str, Any]]:
-    """构建并返回目标数据。
+    """构建主控编排泳道的展示卡片。
+
+    Args:
+        input_text: 用户输入文本。
+        memory_context: 本轮进入主控前的记忆上下文。
+        telemetry: A2A 主控返回的遥测信息。
+        llm_rows: 本次请求关联的 LLM 日志记录。
+        started_at: 本轮开始时间。
+        finished_at: 本轮结束时间。
+
+    Returns:
+        list[Dict[str, Any]]: 主控决策和主控 LLM 调用卡片列表。
     """
     cards: list[Dict[str, Any]] = [
         {
@@ -582,20 +593,20 @@ def _build_memory_compression_stages(
     finished_at: str,
     compressed_at: str,
 ) -> list[Dict[str, Any]]:
-    """构建并返回目标数据。
-    
+    """构建管理端展示的记忆压缩/写回阶段说明。
+
     Args:
-        input_text: 函数输入参数。
-        full_reply: 函数输入参数。
+        input_text: 用户输入文本。
+        full_reply: 完整助手回复。
         memory_context: 会话记忆上下文。
-        turn_projection: 函数输入参数。
-        post_memory: 函数输入参数。
-        started_at: 函数输入参数。
-        finished_at: 函数输入参数。
-        compressed_at: 函数输入参数。
-    
+        turn_projection: 从本轮回答和工具结果中提取的记忆投影。
+        post_memory: 写回后的记忆快照，异步写回未完成时可为空。
+        started_at: 本轮开始时间。
+        finished_at: 本轮结束时间。
+        compressed_at: 记忆写回完成时间。
+
     Returns:
-        list[Dict[str, Any]]: 处理后的列表结果。
+        list[Dict[str, Any]]: 管理端可展示的记忆阶段列表。
     """
     qa_before = memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []
     retrieval_before = (
@@ -661,14 +672,18 @@ def _build_turn_memory_projection(
     tool_observations: List[Dict[str, Any]],
     evidence_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """构建并返回目标数据。
-    
+    """从本轮回答和工具观测中构建记忆写回投影。
+
     Args:
-        input_text: 函数输入参数。
-        full_reply: 函数输入参数。
-        processing_steps: 函数输入参数。
-        tool_observations: 函数输入参数。
-        evidence_summary: 函数输入参数。
+        input_text: 用户输入文本。
+        user_message_id: 用户消息 ID。
+        full_reply: 完整助手回复。
+        processing_steps: A2A 主控处理步骤。
+        tool_observations: A2A 工具观测列表。
+        evidence_summary: 证据摘要。
+
+    Returns:
+        Dict[str, Any]: 可传给 SessionMemoryService 的 turn artifacts。
     """
     _ = processing_steps
     _ = evidence_summary
@@ -723,14 +738,14 @@ def _build_turn_memory_projection(
 
 
 def _collect_request_llm_metrics(session_id: str, request_id: str) -> Dict[str, Any]:
-    """收集request_llm_metrics相关信息并返回结果。
-    
+    """收集单次请求的 LLM 调用次数、token 和错误信息。
+
     Args:
         session_id: 会话标识。
         request_id: 请求标识。
-    
+
     Returns:
-        Dict[str, Any]: 结构化结果数据。
+        Dict[str, Any]: LLM 调用记录、调用次数、token 总量和错误计数。
     """
     rows = _read_session_llm_records(session_id, request_id)
     total_tokens = 0
@@ -754,13 +769,13 @@ def _collect_request_llm_metrics(session_id: str, request_id: str) -> Dict[str, 
 
 
 def _derive_tool_metrics(tool_observations: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """执行derive_tool_metrics流程并返回结果。
-    
+    """从工具观测中派生工具调用成功率和错误分类。
+
     Args:
-        tool_observations: 函数输入参数。
-    
+        tool_observations: A2A 工具观测列表。
+
     Returns:
-        Dict[str, Any]: 结构化结果数据。
+        Dict[str, Any]: 工具调用数、阻断数、成功率和错误计数。
     """
     attempted_tool_actions = 0
     blocked_tool_actions = 0
@@ -821,17 +836,29 @@ def _build_turn_observability_payload(
     status: str,
     turn_artifacts: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """构建并返回目标数据。
-    
+    """构建单轮会话可观测性日志 payload。
+
     Args:
         session_id: 会话标识。
         user_id: 用户标识。
         request_id: 请求标识。
-        user_message_id: 对象标识。
-        assistant_message_id: 对象标识。
-        input_text: 函数输入参数。
-        full_reply: 函数输入参数。
+        user_message_id: 用户消息 ID。
+        assistant_message_id: 助手消息 ID。
+        input_text: 用户输入文本。
+        full_reply: 完整助手回复。
         memory_context: 会话记忆上下文。
+        processing_steps: A2A 主控处理步骤。
+        tool_observations: A2A 工具观测列表。
+        evidence_summary: 证据摘要。
+        telemetry: A2A 主控遥测信息。
+        started_at: 本轮开始时间。
+        finished_at: 本轮结束时间。
+        duration_ms: 本轮耗时毫秒数。
+        status: 本轮最终状态。
+        turn_artifacts: 本轮记忆投影数据。
+
+    Returns:
+        Dict[str, Any]: 可写入 turn JSONL 的观测日志 payload。
     """
     llm_metrics = _collect_request_llm_metrics(session_id, request_id)
     tool_metrics = _derive_tool_metrics(tool_observations)
@@ -934,19 +961,19 @@ def _build_turn_memory_update_payload(
     snapshot: Dict[str, Any],
     llm_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """构建并返回目标数据。
-    
+    """构建单轮记忆写回完成后的 JSONL 日志 payload。
+
     Args:
         session_id: 会话标识。
         request_id: 请求标识。
-        user_message_id: 对象标识。
-        assistant_message_id: 对象标识。
-        updated_at: 函数输入参数。
-        snapshot: 函数输入参数。
-        llm_metrics: 函数输入参数。
-    
+        user_message_id: 用户消息 ID。
+        assistant_message_id: 助手消息 ID。
+        updated_at: 记忆更新时间。
+        snapshot: 写回后的记忆快照。
+        llm_metrics: 可选的本轮 LLM 指标。
+
     Returns:
-        Dict[str, Any]: 结构化结果数据。
+        Dict[str, Any]: 可写入 turn JSONL 的记忆更新 payload。
     """
     metrics = llm_metrics if isinstance(llm_metrics, dict) else {}
     return {
@@ -976,14 +1003,14 @@ class SessionStreamService:
         message_manager: Any = MessageManager,
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            await_call: 函数输入参数。
-            get_session_memory_service: 函数输入参数。
-            log_api_error: 函数输入参数。
-            event_stream_service: 函数输入参数。
-            message_manager: 函数输入参数。
-        
+            await_call: 兼容同步/异步仓储和服务调用的执行器。
+            get_session_memory_service: 延迟获取会话记忆服务的回调。
+            log_api_error: 统一记录会话流式接口错误的回调。
+            event_stream_service: A2A 事件流服务实例。
+            message_manager: 消息仓储实现。
+
         Returns:
             None: 无返回值。
         """
@@ -1004,7 +1031,21 @@ class SessionStreamService:
         original_input_text: str = "",
         memory_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[str]:
-        """基于 A2A 生成流式响应并保存助手回复。"""
+        """基于 A2A 生成流式响应、保存助手回复并调度记忆刷新。
+
+        Args:
+            input_text: 当前进入 Agent 的输入文本。
+            user_id: 用户标识。
+            session_id: 会话标识。
+            image_data: 可选图片数据，透传给 A2A 事件流。
+            user_message_id: 本轮用户消息 ID。
+            request_id: 请求追踪标识。
+            original_input_text: 原始用户输入文本。
+            memory_context: 本轮主控可见的会话记忆上下文。
+
+        Yields:
+            str: JSON Lines 格式的流式事件。
+        """
         _ = image_data
         full_reply = ""
         full_think = ""
@@ -1053,26 +1094,12 @@ class SessionStreamService:
             return added
 
         def _turn_log_path() -> Path:
-            """执行turn_log_path流程并返回结果。
-            
-            Args:
-                无。
-            
-            Returns:
-                Path: 执行结果。
-            """
+            """返回当前会话当天的 turn JSONL 日志路径。"""
             sid = _safe_session_log_id(session_id)
             return _project_root() / "logs" / "sessions" / sid / "turns" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
 
         async def persist_assistant_message_once() -> int:
-            """执行persist_assistant_message_once流程并返回结果。
-            
-            Args:
-                无。
-            
-            Returns:
-                int: 数值结果。
-            """
+            """确保助手消息最多落库一次，并返回助手消息 ID。"""
             nonlocal assistant_message_persisted, assistant_message_id
             if assistant_message_persisted:
                 return int(assistant_message_id or 0)
@@ -1091,14 +1118,7 @@ class SessionStreamService:
             return int(assistant_message_id or 0)
 
         def write_turn_observability_once() -> None:
-            """写入turn_observability_once相关信息并返回结果。
-            
-            Args:
-                无。
-            
-            Returns:
-                None: 无返回值。
-            """
+            """确保本轮观测日志最多写入一次。"""
             nonlocal turn_observability_written
             if turn_observability_written:
                 return
@@ -1165,11 +1185,11 @@ class SessionStreamService:
                 )
 
         def schedule_memory_refresh(persisted_assistant_message_id: int) -> None:
-            """执行schedule_memory_refresh流程并返回结果。
-            
+            """在助手消息落库后调度后台记忆刷新任务。
+
             Args:
-                persisted_assistant_message_id: 对象标识。
-            
+                persisted_assistant_message_id: 已落库的助手消息 ID。
+
             Returns:
                 None: 无返回值。
             """
@@ -1187,14 +1207,7 @@ class SessionStreamService:
             )
 
             async def refresh_memory_task() -> None:
-                """执行refresh_memory_task流程并返回结果。
-                
-                Args:
-                    无。
-                
-                Returns:
-                    None: 无返回值。
-                """
+                """刷新会话记忆并写入记忆更新观测日志。"""
                 tokens = set_session_context(str(session_id or ""), str(user_id or ""))
                 request_ctx = set_request_context(str(request_id or ""))
                 try:
@@ -1224,11 +1237,11 @@ class SessionStreamService:
                     reset_session_context(tokens)
 
             def on_refresh_done(task: asyncio.Task) -> None:
-                """执行on_refresh_done流程并返回结果。
-                
+                """消费后台记忆刷新任务异常，避免未取异常告警。
+
                 Args:
                     task: 当前处理任务。
-                
+
                 Returns:
                     None: 无返回值。
                 """

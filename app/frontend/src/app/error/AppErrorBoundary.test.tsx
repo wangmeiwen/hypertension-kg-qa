@@ -10,6 +10,7 @@ vi.mock("../../shared/lib/observability", () => ({
   reportFrontendError: vi.fn(),
 }));
 
+// 主动抛出渲染异常，用于验证 ErrorBoundary 的捕获与恢复 UI。
 function BrokenComponent(): ReactElement {
   throw new Error("测试渲染异常");
 }

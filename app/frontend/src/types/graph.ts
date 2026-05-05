@@ -1,5 +1,6 @@
 import type { UnknownRecord } from "./shared";
 
+// 图谱域历史类型定义，覆盖公开图谱、节点详情和后台图谱任务。
 export interface GraphNode extends UnknownRecord {
   id: string | number;
   name?: string;

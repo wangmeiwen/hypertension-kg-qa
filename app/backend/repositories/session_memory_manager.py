@@ -1,6 +1,6 @@
 ﻿"""session_memory_manager 模块。
 
-提供 session_memory_manager 相关能力与对外接口。
+提供会话记忆摘要和检索摘要的异步数据访问能力。
 """
 
 

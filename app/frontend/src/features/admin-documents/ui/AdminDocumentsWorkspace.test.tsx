@@ -20,6 +20,7 @@ vi.mock("../../../shared/api/graphClient", () => ({
 }));
 
 describe("AdminDocumentsWorkspace", () => {
+  // 用可控 API mock 覆盖上传、任务轮询、详情和统计四条主要路径。
   beforeEach(() => {
     vi.clearAllMocks();
     graphClientMocks.getDocumentStats.mockResolvedValue({ row_count: 12 });

@@ -21,6 +21,7 @@ vi.mock("../../shared/api/sessionClient", () => ({
 }));
 
 describe("SessionListPanel", () => {
+  // 初始化会话列表 API、确认框和 Zustand store，覆盖侧栏主要交互路径。
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(window, "confirm").mockReturnValue(true);

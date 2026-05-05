@@ -1,4 +1,4 @@
-﻿"""
+"""
 文档嵌入模块。
 
 本模块负责将分块后的文档内容转换为向量存储所需结构并写入 Milvus，支持：
@@ -56,7 +56,7 @@ class DocumentEmbedder:
 
     负责将分块结果转换为 LangChain Document 并写入向量库。
     """
-    
+
     def __init__(self, vector_store: Optional[VectorStore] = None):
         """
         初始化文档嵌入器。
@@ -120,10 +120,13 @@ class DocumentEmbedder:
             "sub_chunks_count": len(sub_chunks),
             "message": f"Docling 子块嵌入完成，共 {len(sub_chunks)} 个子块"
         }
-    
+
     def _convert_docx_chunks_to_documents(self, sub_chunks: List[Dict]) -> List[Document]:
         """
         将 DOCX 子块转换为 LangChain Document 对象。
+
+        转换时会保留父块内容、页码、父子块索引和稳定 chunk_id，
+        供后续检索、重排、引用溯源和前端展示使用。
 
         Args:
             sub_chunks: 子块数据列表。
@@ -133,12 +136,12 @@ class DocumentEmbedder:
         """
         documents = []
         timestamp = datetime.now().isoformat()
-        
+
         for chunk in sub_chunks:
             # 生成唯一ID
             unique_str = f"{chunk['source_doc']}_{chunk['parent_index']}_{chunk['sub_index']}_{chunk['text']}"
             chunk_id = hashlib.md5(unique_str.encode('utf-8')).hexdigest()
-            
+
             # 构建元数据，包含页码信息
             metadata = {
                 "parent_id": f"{chunk['source_doc']}_parent_{chunk['parent_index']}",
@@ -149,7 +152,7 @@ class DocumentEmbedder:
                 "parent_index": chunk['parent_index'],
                 "sub_index": chunk['sub_index']
             }
-            
+
             # 添加页码信息（如果存在）
             if chunk.get('page_num') is not None:
                 metadata["page_num"] = chunk['page_num']
@@ -157,18 +160,21 @@ class DocumentEmbedder:
                 metadata["start_page"] = chunk['start_page']
             if chunk.get('end_page') is not None:
                 metadata["end_page"] = chunk['end_page']
-            
+
             doc = Document(
                 page_content=chunk['text'],
                 metadata=metadata
             )
             documents.append(doc)
-        
+
         return documents
 
     def _convert_docling_sub_chunks_to_documents(self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument) -> List[Document]:
         """
         将 Docling 子块转换为 LangChain Document 对象。
+
+        Docling 路径会额外写入解析格式、页数和分块策略，
+        便于检索结果区分传统 DOCX 分块与 Docling 解析来源。
 
         Args:
             sub_chunks: 子块数据列表。
@@ -207,7 +213,7 @@ class DocumentEmbedder:
             documents.append(Document(page_content=chunk["text"], metadata=metadata))
 
         return documents
-    
+
     def get_collection_stats(self) -> Dict:
         """
         获取向量集合统计信息。

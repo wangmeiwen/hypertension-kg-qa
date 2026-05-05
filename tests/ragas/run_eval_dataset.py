@@ -28,6 +28,7 @@ TEXT_KEYS = {
 
 
 def parse_args() -> argparse.Namespace:
+    """解析批量评测脚本命令行参数。"""
     parser = argparse.ArgumentParser(description="Run the local eval dataset against the QA service.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Backend base URL.")
     parser.add_argument("--endpoint", default="/process", choices=["/process", "/agent/run"], help="QA endpoint.")
@@ -58,6 +59,7 @@ def load_dataset(path: Path) -> list[dict[str, Any]]:
 
 
 def iter_json_lines(response: requests.Response) -> Iterable[dict[str, Any]]:
+    """迭代后端流式响应中的 JSON 行，非 JSON 行降级为 msg 事件。"""
     for line in response.iter_lines(decode_unicode=True):
         if not line:
             continue
@@ -136,6 +138,7 @@ def collect_query_record_texts(payload: dict[str, Any], results: list[str]) -> N
 
 
 def extract_retrieved_contexts(payload: dict[str, Any]) -> list[str]:
+    """从完成事件或 JSON 响应中提取 Ragas 可用的检索上下文。"""
     candidates: list[str] = []
     collect_supported_points(payload, candidates)
     collect_query_record_texts(payload, candidates)
@@ -218,6 +221,7 @@ def build_output_path(dataset_path: Path, output_arg: str) -> Path:
 
 
 def main() -> None:
+    """执行数据集请求、结果收集和输出文件保存。"""
     args = parse_args()
     dataset_path = Path(args.dataset)
     rows = load_dataset(dataset_path)

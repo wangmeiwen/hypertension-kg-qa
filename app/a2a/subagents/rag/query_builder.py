@@ -1,4 +1,4 @@
-﻿"""RAG 子代理查询语句生成器。"""
+"""RAG 子代理查询语句生成器。"""
 
 from __future__ import annotations
 
@@ -47,14 +47,15 @@ def build_rag_payload(
     arguments: dict[str, Any] | None = None,
     query_terms: list[str] | None = None,
 ) -> dict[str, Any]:
-    """构建 rag_payload。
-    
+    """构建 rag_search 工具调用载荷。
+
     Args:
-        question: 参数。
-        arguments: 参数。
-    
+        question: 主控下发的语义检索问题。
+        arguments: 主控指定的检索参数，可包含 query、source_filter、refine_terms。
+        query_terms: 主控抽取的查询词，用于问题为空时回退。
+
     Returns:
-        执行结果。
+        经过 top_k 保护和可选过滤字段透传后的 RAG 检索 payload。
     """
     conf = Config()
     q = str(question or "").strip()
@@ -74,13 +75,13 @@ def build_rag_payload(
 
 
 def validate_rag_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """校验 rag_payload。
-    
+    """校验 RAG 检索载荷是否包含可执行查询文本。
+
     Args:
-        payload: 参数。
-    
+        payload: 待校验的 rag_search 调用载荷。
+
     Returns:
-        执行结果。
+        校验通过的载荷字典。
     """
     data = payload if isinstance(payload, dict) else {}
     query = str(data.get("query") or "").strip()

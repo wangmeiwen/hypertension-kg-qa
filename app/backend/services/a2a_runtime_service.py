@@ -27,12 +27,12 @@ class A2ARuntimeService:
         runtime_container: BackendRuntimeContainer,
         log_api_error: Callable[..., None],
     ) -> None:
-        """初始化实例并注入运行依赖。
-        
+        """初始化 A2A 运行时服务并绑定共享运行时容器。
+
         Args:
-            runtime_container: 函数输入参数。
-            log_api_error: 函数输入参数。
-        
+            runtime_container: 保存 MCP、A2A 服务和子代理单例的运行时容器。
+            log_api_error: 统一记录 API 异常的函数。
+
         Returns:
             None: 无返回值。
         """
@@ -108,7 +108,19 @@ class A2ARuntimeService:
         cancel_check: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        """主编排代理执行入口。"""
+        """主编排代理执行入口。
+
+        Args:
+            input_text: 用户问题文本。
+            context_id: A2A contextId，通常对应会话 ID。
+            user_id: 用户 ID。
+            metadata: A2A message metadata，承载策略、轮次、图片和记忆上下文。
+            cancel_check: 取消检查回调。
+            progress_callback: 进度事件回调。
+
+        Returns:
+            主代理标准运行结果。
+        """
         meta = metadata if isinstance(metadata, dict) else {}
         session_id = str(context_id or meta.get("session_id") or "").strip()
         safe_user_id = str(user_id or meta.get("user_id") or "").strip()
@@ -141,7 +153,16 @@ class A2ARuntimeService:
         metadata: Dict[str, Any],
         default_tool_name: str,
     ) -> List[Dict[str, Any]]:
-        """从 metadata 组装子代理请求列表。"""
+        """从 metadata 组装子代理请求列表。
+
+        Args:
+            input_text: 当前输入问题，用作缺省子查询。
+            metadata: A2A message metadata。
+            default_tool_name: 当前子代理默认工具名。
+
+        Returns:
+            标准化后的子代理请求列表。
+        """
         requests_obj = metadata.get("requests")
         if isinstance(requests_obj, list):
             rows: List[Dict[str, Any]] = []
@@ -433,13 +454,13 @@ class A2ARuntimeService:
         sorted_lags = sorted(lags_ms)
 
         def pct(p: float) -> float:
-            """执行pct流程并返回结果。
-            
+            """计算事件循环延迟样本的分位数。
+
             Args:
-                p: 计算参数。
-            
+                p: 分位点，范围会被收敛到 0 到 1。
+
             Returns:
-                float: 数值结果。
+                插值后的延迟毫秒数。
             """
             if not sorted_lags:
                 return 0.0

@@ -49,6 +49,7 @@ METRIC_ALIASES = {
 
 
 def parse_args() -> argparse.Namespace:
+    """解析 Ragas 离线评分脚本命令行参数。"""
     parser = argparse.ArgumentParser(description="Run Ragas scoring on an existing eval result file.")
     parser.add_argument("--input", required=True, help="Path to an eval result JSON file under tests/ragas/eval_runs.")
     parser.add_argument("--output", default="", help="Optional output file path. Defaults to overwrite input.")
@@ -104,6 +105,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_ragas_modules() -> dict[str, Any]:
+    """延迟导入 Ragas 及评估依赖，缺失时给出可读错误。"""
     try:
         from langchain_openai import ChatOpenAI
         from ragas import EvaluationDataset, evaluate
@@ -141,6 +143,7 @@ def _load_ragas_modules() -> dict[str, Any]:
 
 
 def _resolve_env(args: argparse.Namespace) -> tuple[str, str, str]:
+    """解析评估 LLM 的 API key、base URL 和模型名称。"""
     env_path = PROJECT_ROOT / ".env"
     load_dotenv(env_path, override=False)
 
@@ -190,6 +193,7 @@ def _safe_number(value: Any) -> float | None:
 
 
 def _parse_metric_names(raw: str) -> list[str]:
+    """解析并校验用户选择的 Ragas 指标名称。"""
     names: list[str] = []
     for piece in str(raw or "").split(","):
         key = METRIC_ALIASES.get(piece.strip().lower())
@@ -304,6 +308,7 @@ def _save_payload(payload: dict[str, Any], output_path: Path, metric_names: list
 
 
 def main() -> None:
+    """执行离线结果筛选、Ragas 评分和评分摘要回写。"""
     args = parse_args()
 
     input_path = Path(args.input)

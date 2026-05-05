@@ -7,6 +7,8 @@ from app.backend.routers.admin_sessions import create_admin_sessions_router
 
 
 class AdminSessionsServiceStub:
+    """覆盖后台会话 router 所需方法的服务桩。"""
+
     async def admin_get_sessions(self, limit=100, offset=0):
         return {"ok": True, "data": [{"id": "s1"}], "total": 1}
 
@@ -30,6 +32,8 @@ class AdminSessionsServiceStub:
 
 
 class AdminObservabilityServiceStub:
+    """覆盖后台观测 router 所需方法的服务桩。"""
+
     async def admin_agent_observability_summary(self, limit=200):
         return {"ok": True, "data": {"total_runs": limit}}
 
@@ -38,6 +42,7 @@ class AdminObservabilityServiceStub:
 
 
 def create_client() -> TestClient:
+    """构建同时挂载后台会话与观测 router 的测试客户端。"""
     app = FastAPI()
     app.include_router(create_admin_sessions_router(AdminSessionsServiceStub()))
     app.include_router(create_admin_observability_router(AdminObservabilityServiceStub()))

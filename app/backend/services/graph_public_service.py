@@ -19,12 +19,12 @@ class GraphPublicService:
         log_api_error: Callable[..., None],
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            await_call: 函数输入参数。
-            neo4j_client: 函数输入参数。
-            log_api_error: 函数输入参数。
-        
+            await_call: 兼容同步/异步 Neo4j 调用的执行器。
+            neo4j_client: Neo4j 客户端实例。
+            log_api_error: 统一记录公开图谱接口错误的回调。
+
         Returns:
             None: 无返回值。
         """
@@ -34,7 +34,14 @@ class GraphPublicService:
 
     @staticmethod
     def _normalize_graph_row(row: dict[str, Any]) -> dict[str, Any]:
-        """标准化图谱关系行，便于后续做均衡筛选。"""
+        """标准化图谱关系行，便于后续做均衡筛选。
+
+        Args:
+            row: Neo4j 返回的原始关系行。
+
+        Returns:
+            dict[str, Any]: 补齐节点名称、标签、属性和关系类型后的关系行。
+        """
         sid = str(row.get("source_id"))
         tid = str(row.get("target_id"))
         return {
@@ -51,7 +58,15 @@ class GraphPublicService:
 
     @classmethod
     def _select_balanced_relationship_rows(cls, rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-        """按每节点关系上限逐轮扩容，均衡不同节点的展示关系数。"""
+        """按每节点关系上限逐轮扩容，均衡不同节点的展示关系数。
+
+        Args:
+            rows: 原始关系行列表。
+            limit: 最多保留的关系数量。
+
+        Returns:
+            list[dict[str, Any]]: 经过节点关系数均衡筛选后的关系行。
+        """
         safe_limit = max(0, int(limit or 0))
         normalized_rows = [cls._normalize_graph_row(row) for row in rows if isinstance(row, dict)]
         if safe_limit <= 0:
@@ -112,7 +127,15 @@ class GraphPublicService:
         return selected[:safe_limit]
 
     async def graph_visualization(self, keyword: str = "", limit: int = 200) -> dict[str, Any]:
-        """查询图谱可视化节点与边数据。"""
+        """查询图谱可视化节点与边数据。
+
+        Args:
+            keyword: 可选关键词，用于匹配节点名称、测试 run 和关系测试 run。
+            limit: 前端希望展示的关系数量上限。
+
+        Returns:
+            dict[str, Any]: 可视化节点、边和边数量，查询失败时返回空图。
+        """
         safe_limit = max(10, min(limit, 500))
         query_limit = min(
             max(safe_limit, safe_limit * self._RELATIONSHIP_FETCH_MULTIPLIER),
@@ -231,7 +254,14 @@ class GraphPublicService:
         return {"ok": True, "nodes": list(node_map.values()), "links": links, "count": len(links)}
 
     async def get_entity_detail(self, entity_id: str) -> dict[str, Any]:
-        """获取实体详细信息。"""
+        """获取实体详细信息和相邻关系。
+
+        Args:
+            entity_id: Neo4j 内部节点 ID 文本。
+
+        Returns:
+            dict[str, Any]: 实体属性、入边、出边或错误响应。
+        """
         try:
             if not str(entity_id or "").strip().isdigit():
                 raise ValueError(f"invalid literal for int() with base 10: {entity_id!r}")

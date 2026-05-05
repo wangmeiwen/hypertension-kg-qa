@@ -28,6 +28,7 @@ import { Badge, Button, Card, DataTable, InlineNotice, Input, Modal, Select, Tex
 const LIMIT_OPTIONS = [20, 50, 80, 100, 150];
 
 function parseProperties(text: string): Record<string, unknown> {
+  // 节点和关系属性只接受 JSON 对象，避免数组或标量写入图谱属性面板。
   const trimmed = text.trim();
   if (!trimmed) return {};
   const value = JSON.parse(trimmed) as unknown;
@@ -62,6 +63,7 @@ function renderPropertyRows(value: Record<string, unknown> | undefined): ReactNo
 }
 
 function renderRelationshipRows(relationships: AdminGraphRelationship[], onDelete: (relId: string | number) => void): ReactNode {
+  // 入边和出边共用同一渲染逻辑，删除动作由调用方注入。
   if (!relationships.length) return <div className="muted">-</div>;
   return (
     <div className={styles.relationshipList}>
@@ -134,6 +136,7 @@ export default function AdminGraphWorkspace() {
   const jobsQuery = useQuery({
     queryKey: queryKeys.graph.jobs,
     queryFn: () => getRecentGraphJobs(10),
+    // 图谱导入/向量化任务运行中时轮询，避免后台任务完成后页面停留旧状态。
     refetchInterval: (query) =>
       (query.state.data as GraphJob[] | undefined)?.some((job) => job.status === "queued" || job.status === "running") ? 2500 : false,
   });
@@ -145,6 +148,7 @@ export default function AdminGraphWorkspace() {
   const createNodeMutation = useMutation({
     mutationFn: () => createGraphNode(nodeLabel.trim(), parseProperties(nodePropertiesText)),
     onSuccess: async (node) => {
+      // 创建后选中新节点并刷新当前分页，便于继续编辑或检查关系。
       setFeedback(t("admin.graphWorkspace.createSuccess"));
       setNodeModal({ mode: "create", open: false });
       setSelectedNodeId(node.id);
@@ -257,6 +261,7 @@ export default function AdminGraphWorkspace() {
   });
 
   const nodeRows =
+    // DataTable 接收二维 ReactNode 数组，操作列内联绑定查看、编辑、删除。
     nodesQuery.data?.data.map((node) => [
       String(node.id),
       truncateText(getNodeName(node), 30),
@@ -290,6 +295,7 @@ export default function AdminGraphWorkspace() {
     ]) || [];
 
   const selectedNode = nodeDetailQuery.data?.node;
+  // 派生分页、向量状态和任务列表展示数据，避免 JSX 中重复格式化。
   const totalPages = Math.max(1, Math.ceil((nodesQuery.data?.total || 0) / limit));
   const embedStatusText = useMemo(() => JSON.stringify(embedStatusQuery.data || {}, null, 2), [embedStatusQuery.data]);
   const jobs = jobsQuery.data || [];

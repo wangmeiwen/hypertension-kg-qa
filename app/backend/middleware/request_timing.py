@@ -90,11 +90,11 @@ async def request_timing_middleware(request: Request, call_next):
     request_timer_closed = False
 
     def _finish_request_timer(exc: Optional[BaseException] = None) -> None:
-        """执行finish_request_timer流程并返回结果。
-        
+        """关闭当前请求的性能计时上下文。
+
         Args:
-            exc: 函数输入参数。
-        
+            exc: 请求处理中捕获到的异常；为空表示正常结束。
+
         Returns:
             None: 无返回值。
         """
@@ -108,11 +108,11 @@ async def request_timing_middleware(request: Request, call_next):
         request_timer_ctx.__exit__(type(exc), exc, exc.__traceback__)
 
     async def _log_stream_finished(stream_error_type: str) -> None:
-        """执行log_stream_finished流程并返回结果。
-        
+        """在流式响应结束时记录完整请求日志。
+
         Args:
-            stream_error_type: 函数输入参数。
-        
+            stream_error_type: 流式迭代阶段捕获到的异常类型；空字符串表示正常结束。
+
         Returns:
             None: 无返回值。
         """

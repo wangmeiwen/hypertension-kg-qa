@@ -20,7 +20,11 @@ from app.rag_core.vector_store import VectorStore, conf
 
 
 class EntityVectorStore(VectorStore):
-    """提供实体粒度向量写入与相似检索能力。"""
+    """提供实体粒度向量写入与相似检索能力。
+
+    该存储面向知识图谱实体名称，不保存完整文档片段；
+    集合 schema 仅包含实体文本、主键和 dense 向量字段。
+    """
 
     def __init__(self, collection_name="entity_collection", host=conf.MILVUS_HOST, port=conf.MILVUS_PORT, database=conf.MILVUS_DATABASE_NAME):
         """
@@ -76,6 +80,9 @@ class EntityVectorStore(VectorStore):
         """
         批量嵌入实体并写入向量库。
 
+        函数按固定批次调用 embedding_function，并以实体文本的 MD5
+        作为主键，适合在构建图谱索引时批量导入实体名称。
+
         Args:
             entities: 实体名称列表。
 
@@ -107,6 +114,9 @@ class EntityVectorStore(VectorStore):
     def search_entities(self, query, top_k=None):
         """
         执行实体向量检索。
+
+        查询时仅使用 dense_vector 做相似度搜索，返回实体文本、
+        Milvus 主键和向量距离分数。
 
         Args:
             query: 查询文本。

@@ -1,6 +1,6 @@
-﻿"""agent 模块。
+"""agent 模块。
 
-提供 agent 相关能力与对外接口。
+提供 A2A 主代理和子代理的统一导出、单例管理与查询入口。
 """
 
 
@@ -19,10 +19,10 @@ _iterative_agent_lock = threading.Lock()
 
 
 def get_iterative_agent() -> "IterativeAgent":
-    """获取 iterative_agent。
-    
+    """获取进程内复用的迭代式主代理单例。
+
     Returns:
-        执行结果。
+        已初始化的 IterativeAgent 实例。
     """
     global _iterative_agent_singleton
     with _iterative_agent_lock:
@@ -64,6 +64,9 @@ async def process_query(
         user_id: 用户 ID。
         strategy: 代理策略标识，目前统一走 iterative 入口。
         max_turns: 最大迭代轮数限制，None 表示使用系统默认策略。
+        image_data: 可选图片数据，透传给支持视觉输入的执行链路。
+        original_input_text: 前置改写前的原始输入文本。
+        memory_context: 会话记忆上下文。
         cancel_check: 可选取消检查回调，返回 True 时提前终止执行。
         progress_callback: 可选进度回调，用于向外部推送中间状态。
 

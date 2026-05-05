@@ -1,4 +1,4 @@
-﻿"""MCP 工具管理模块。
+"""MCP 工具管理模块。
 
 本模块提供基于 YAML 配置的工具注册与管理能力，支持：
 - 从配置文件加载工具定义
@@ -30,6 +30,9 @@ class ToolManager:
 
         Args:
             config_path: YAML 配置文件路径。
+
+        Returns:
+            None: 无返回值。
         """
         self.config_path = config_path
         self.config = self._load_config(config_path)

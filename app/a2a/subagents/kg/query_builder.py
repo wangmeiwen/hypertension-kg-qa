@@ -1,4 +1,4 @@
-﻿"""KG 子代理查询语句生成器。"""
+"""KG 子代理查询语句生成器。"""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ from app.common.config import Config
 
 
 def _clean_question(text: str) -> str:
-    """执行 _clean_question 内部逻辑。
-    
+    """清理主控传入的图谱检索问题文本。
+
     Args:
-        text: 参数。
-    
+        text: 原始问题文本。
+
     Returns:
-        执行结果。
+        去除首尾空白后的问题文本。
     """
     return str(text or "").strip()
 
@@ -66,14 +66,15 @@ def build_kg_query_payload(
     arguments: dict[str, Any] | None = None,
     query_terms: list[str] | None = None,
 ) -> dict[str, Any]:
-    """构建 kg_query_payload。
-    
+    """构建 kg_query 工具调用载荷。
+
     Args:
-        question: 参数。
-        arguments: 参数。
-    
+        question: 主控下发的图谱检索问题。
+        arguments: 主控指定的工具参数，可包含 keyword、cypher、refine_terms 等字段。
+        query_terms: 主控抽取的查询词，用于问题为空时回退。
+
     Returns:
-        执行结果。
+        经过 top_k/limit 保护和字段归一化后的 kg_query payload。
     """
     conf = Config()
     q = _clean_question(question)
@@ -102,14 +103,15 @@ def build_kg_entity_relation_payload(
     arguments: dict[str, Any] | None = None,
     query_terms: list[str] | None = None,
 ) -> dict[str, Any]:
-    """构建 kg_entity_relation_payload。
-    
+    """构建 kg_entity_relation_search 工具调用载荷。
+
     Args:
-        question: 参数。
-        arguments: 参数。
-    
+        question: 主控下发的图谱检索问题。
+        arguments: 主控指定的工具参数，可覆盖 query 并补充检索调参字段。
+        query_terms: 主控抽取的查询词，用于问题为空时回退。
+
     Returns:
-        执行结果。
+        经过 top_k 保护和可选字段透传后的实体关系检索 payload。
     """
     conf = Config()
     q = _clean_question(question)
@@ -139,14 +141,14 @@ def build_kg_entity_relation_payload(
 
 
 def validate_generated_payload(tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """校验 generated_payload。
-    
+    """校验生成的 KG 工具载荷是否满足目标工具的最低要求。
+
     Args:
-        tool_name: 参数。
-        payload: 参数。
-    
+        tool_name: 目标 KG 工具名。
+        payload: 待校验的工具调用载荷。
+
     Returns:
-        执行结果。
+        校验通过的载荷字典。
     """
     safe_tool = str(tool_name or "").strip()
     if safe_tool not in {"kg_query", "kg_entity_relation_search"}:

@@ -1,6 +1,6 @@
-﻿"""neo4j_manager 模块。
+"""neo4j_manager 模块。
 
-提供 neo4j_manager 相关能力与对外接口。
+提供 Neo4j 异步连接管理、Cypher 执行和全局客户端入口。
 """
 
 
@@ -50,7 +50,11 @@ class Neo4jClient:
         self._driver_loop_id: int | None = None
 
     async def _ensure_driver(self):
-        """在独占锁内按需初始化或切换 Neo4j driver。"""
+        """在独占锁内按需初始化或切换 Neo4j driver。
+
+        Returns:
+            Any: 当前事件循环可用的 Neo4j 异步 driver。
+        """
         loop_id = id(asyncio.get_running_loop())
         if self._driver is not None and self._driver_loop_id == loop_id:
             return self._driver
@@ -66,7 +70,11 @@ class Neo4jClient:
 
     @asynccontextmanager
     async def _driver_session(self) -> AsyncIterator[Any]:
-        """获取受读锁保护的 Neo4j session。"""
+        """获取受读锁保护的 Neo4j session。
+
+        Yields:
+            Any: Neo4j 异步 session。
+        """
         while True:
             await self._ensure_driver()
             async with concurrency_guard.reader_lock("neo4j:driver"):

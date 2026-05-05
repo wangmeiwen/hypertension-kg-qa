@@ -18,6 +18,7 @@ import {
 } from "./contracts";
 import { fetchJson } from "./http";
 
+// 公开图谱可视化查询，返回前端力导向图需要的节点与边。
 export async function fetchGraph(keyword = "", limit = 120): Promise<GraphVisualization> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (keyword.trim()) params.set("keyword", keyword.trim());
@@ -53,6 +54,7 @@ export async function getGraphRelationshipTypes(): Promise<string[]> {
 }
 
 export async function getGraphNodes(params: { label?: string; keyword?: string; limit?: number; offset?: number }) {
+  // 后台节点列表支持标签、关键词和分页参数组合过滤。
   const search = new URLSearchParams();
   if (params.label) search.set("label", params.label);
   if (params.keyword) search.set("keyword", params.keyword);
@@ -156,6 +158,7 @@ export async function getRecentGraphJobs(limit = 10): Promise<GraphJob[]> {
 }
 
 export async function submitGraphEmbedMilvus(labels: string[] | null = null, batchSize = 100): Promise<GraphJob> {
+  // labels 为 null 时表示重建全部标签的图谱向量集合。
   const payload: Record<string, unknown> = { batch_size: batchSize };
   if (labels && labels.length > 0) payload.labels = labels;
   return fetchJson(

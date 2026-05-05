@@ -30,12 +30,28 @@ def create_query_chat_router(
     endpoint_limits: dict[str, dict[str, int]],
     window_seconds: float,
 ) -> APIRouter:
-    """创建查询与会话主链路路由。"""
+    """创建查询、Agent 运行和会话流式问答路由。
+
+    Args:
+        agent_run_service: 非流式 Agent 运行服务。
+        session_turn_service: 会话轮次准备服务。
+        session_stream_service: 会话流式输出服务。
+        event_stream_service: 兼容旧 /process 的事件流服务。
+        readiness_service: 核心依赖就绪检查服务。
+        get_trace_id: 从请求中提取 trace_id 的函数。
+        enforce_rate_limit: 重接口限流检查函数。
+        rate_limiter: 限流器实例。
+        endpoint_limits: 各接口限流配置。
+        window_seconds: 限流统计窗口长度。
+
+    Returns:
+        已注册问答主链路路由的 APIRouter。
+    """
     router = APIRouter()
 
     @router.post("/process")
     async def process(data: dict, request: Request):
-        """处理流式问答请求入口。"""
+        """处理不落库的兼容流式问答请求入口。"""
         readiness_error = await readiness_service.ensure_core_ready("/process")
         if readiness_error is not None:
             return readiness_error
@@ -56,7 +72,7 @@ def create_query_chat_router(
 
     @router.post("/agent/run")
     async def agent_run(data: dict, request: Request):
-        """运行 Agent（仅保留 A2A 架构）。"""
+        """运行一次非流式 Agent 问答并返回结构化结果。"""
         trace_id = get_trace_id(request)
         readiness_error = await readiness_service.ensure_core_ready("/agent/run")
         if readiness_error is not None:
@@ -115,7 +131,7 @@ def create_query_chat_router(
 
     @router.post("/process_with_session")
     async def process_with_session(data: dict, request: Request):
-        """处理问答并保存到会话历史。"""
+        """处理流式问答请求，并将用户问题和助手回答写入会话历史。"""
         trace_id = get_trace_id(request)
         readiness_error = await readiness_service.ensure_core_ready("/process_with_session")
         if readiness_error is not None:

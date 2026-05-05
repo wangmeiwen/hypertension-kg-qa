@@ -9,6 +9,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_create_app_mounts_real_routes_and_deterministic_overrides(admin_app_client) -> None:
+    """验证应用工厂挂载真实路由，并使用确定性依赖返回稳定响应。"""
     readiness = admin_app_client.get("/health/readiness")
     assert readiness.status_code == 200
     assert readiness.json()["ok"] is True
@@ -40,6 +41,7 @@ def test_create_app_mounts_real_routes_and_deterministic_overrides(admin_app_cli
 
 
 def test_create_app_process_stream_uses_single_backend_entry(admin_app_client) -> None:
+    """验证 /process 流式入口统一输出 job/reply/done 事件序列。"""
     response = admin_app_client.post("/process", json={"input": "如何控制血压？", "user_id": "user-stream"})
     assert response.status_code == 200
     rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
@@ -49,6 +51,7 @@ def test_create_app_process_stream_uses_single_backend_entry(admin_app_client) -
 
 
 def test_create_app_admin_login_route_uses_real_auth_service(monkeypatch, app_client_factory) -> None:
+    """验证应用工厂中的管理员登录路由接入真实认证服务。"""
     import app.common.auth_simple as auth_module
 
     monkeypatch.setenv("ADMIN_USERNAME", "admin")

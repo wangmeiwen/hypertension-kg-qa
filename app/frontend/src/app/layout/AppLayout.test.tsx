@@ -10,6 +10,7 @@ describe("AppLayout", () => {
   it("renders workspace navigation and outlet content", () => {
     const queryClient = new QueryClient();
 
+    // 使用真实路由嵌套渲染，确保布局中的 Outlet 能承载子页面。
     render(
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={queryClient}>

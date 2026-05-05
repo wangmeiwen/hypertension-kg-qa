@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+// 后端后台任务状态枚举，兼容图谱构建、文档嵌入等异步任务。
 export const taskStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled", "paused"]);
 
+// 标准 API envelope，同时 passthrough 保留后端扩展字段。
 export const apiEnvelopeSchema = z
   .object({
     ok: z.boolean().optional(),
@@ -70,6 +72,7 @@ export const rollbackResultSchema = z
   .passthrough();
 
 export const streamEventSchema = z.discriminatedUnion("type", [
+  // SSE/流式问答事件按 type 字段区分任务、会话、消息和完成状态。
   z.object({ type: z.literal("job"), job_id: z.string().optional() }).passthrough(),
   z
     .object({
@@ -265,6 +268,7 @@ export const adminGraphNodeDetailSchema = z.object({
 
 export const graphJobSchema = z
   .object({
+    // 图谱任务 schema 覆盖构建、重建、嵌入等后台任务的通用观测字段。
     job_id: z.string(),
     job_type: z.string().optional(),
     status: taskStatusSchema.or(z.string()),

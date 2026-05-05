@@ -1,4 +1,4 @@
-﻿"""
+"""
 智谱 GLM-4V OCR 客户端模块。
 
 本模块提供基于智谱 GLM-4.6V 视觉模型的 OCR 文字识别功能，支持：
@@ -47,6 +47,9 @@ class GlmOcrClient:
         Args:
             api_key: 智谱 AI API 密钥
             model_name: 模型名称，默认为 "glm-4.6v"
+
+        Returns:
+            None: 无返回值。
         """
         self.model_name = model_name
         self.client = ZhipuAI(api_key=api_key)
@@ -116,7 +119,14 @@ class GlmOcrClient:
 
     def _prepare_image_for_ocr(self, image_bytes: bytes) -> tuple[bytes, Dict[str, Any]]:
         # 统一在 OCR 客户端内做图片压缩/缩放，避免各入口各自实现一套。
-        """将图片压缩到 OCR 可处理范围内，并返回调试元数据。"""
+        """将图片压缩到 OCR 可处理范围内，并返回调试元数据。
+
+        Args:
+            image_bytes: 原始图片字节流。
+
+        Returns:
+            tuple[bytes, Dict[str, Any]]: 处理后的图片字节流和预处理元数据。
+        """
         original_bytes = len(image_bytes or b"")
         metadata: Dict[str, Any] = {
             "original_bytes": original_bytes,
@@ -376,7 +386,7 @@ def get_glm_ocr_client() -> GlmOcrClient:
     获取全局单例 OCR 客户端。
 
     Returns:
-        GlmOcrClient 单例实例
+        GlmOcrClient: 全局单例 OCR 客户端。
     """
     global _glm_ocr_client
     if _glm_ocr_client is None:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 会话日志模块。
 
 本模块提供请求、会话、LLM 与工具调用的结构化日志记录能力，支持：
@@ -44,10 +44,12 @@ _IDCARD_PATTERN = re.compile(r"(?<!\d)(\d{17}[\dXx]|\d{15})(?!\d)")
 
 
 def _session_artifact_lock_key(session_id: str) -> str:
+    """基于会话 ID 构造会话日志工件锁 key。"""
     return f"session-artifacts:{_safe_id(session_id)}"
 
 
 def _session_artifact_lock_key_for_path(file_path: Path) -> str | None:
+    """从会话日志路径中提取会话工件锁 key。"""
     parts = file_path.parts
     for idx, part in enumerate(parts):
         if part == "sessions" and idx + 1 < len(parts):
@@ -309,7 +311,15 @@ def _append_jsonl(file_path: Path, payload: dict[str, Any]) -> None:
 
 
 def append_jsonl_atomic(file_path: Path, payload: dict[str, Any]) -> None:
-    """以公共入口追加 JSONL，复用统一写锁和脱敏逻辑。"""
+    """以公共入口追加 JSONL，复用统一写锁和脱敏逻辑。
+
+    Args:
+        file_path: 目标 JSONL 文件路径。
+        payload: 待写入的日志对象。
+
+    Returns:
+        None: 无返回值。
+    """
     _append_jsonl(file_path, payload)
 
 

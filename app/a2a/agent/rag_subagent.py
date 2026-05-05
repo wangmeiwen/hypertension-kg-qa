@@ -1,4 +1,4 @@
-﻿"""RAG 子代理（兼容层）。"""
+"""RAG 子代理（兼容层）。"""
 
 from __future__ import annotations
 
@@ -17,23 +17,23 @@ class RagSubAgent:
     """
 
     def __init__(self, mcp_server: Any):
-        """初始化 RagSubAgent 实例。
-        
+        """初始化 RAG 子代理依赖的 MCP 工具网关和执行器。
+
         Args:
-            mcp_server: 参数。
+            mcp_server: 提供 rag_search 等检索工具调用能力的 MCP 服务实例。
         """
         self.tool_gateway = MCPToolGateway(mcp_server=mcp_server, agent_type="rag")
         self.executor = RagSubAgentExecutor(self.tool_gateway)
 
     async def _run_single_request(self, idx: int, row: dict[str, Any]) -> dict[str, Any]:
-        """执行 _run_single_request 内部逻辑。
-        
+        """执行单个语义检索请求并标准化返回结构。
+
         Args:
-            idx: 参数。
-            row: 参数。
-        
+            idx: 当前请求在批量任务中的序号，用作缺省子查询 ID。
+            row: 主代理下发的检索问题、检索参数和执行约束。
+
         Returns:
-            执行结果。
+            包含执行状态、检索记录、文本证据、覆盖情况和错误信息的结果字典。
         """
         req = row if isinstance(row, dict) else {}
         subquery_id = int(req.get("subquery_id") or idx)
@@ -107,17 +107,17 @@ class RagSubAgent:
         user_id: str = "",
         reason: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """调用 batch。
-        
+        """并发执行一批 RAG 检索子任务并返回聚合结果。
+
         Args:
-            requests: 参数。
-            user_query: 参数。
-            session_id: 参数。
-            user_id: 参数。
-            reason: 参数。
-        
+            requests: 主代理拆分出的语义检索请求列表。
+            user_query: 原始用户问题，当前保留用于后续审计和上下文扩展。
+            session_id: 会话 ID，当前保留用于后续追踪。
+            user_id: 用户 ID，当前保留用于后续追踪。
+            reason: 本轮调度 RAG 子代理的原因，当前保留用于后续审计。
+
         Returns:
-            执行结果。
+            二元组：第一个元素是符合工具响应格式的结果，第二个元素是耗时和数量统计。
         """
         _ = user_query
         _ = session_id

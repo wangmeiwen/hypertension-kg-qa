@@ -23,6 +23,7 @@ from app.backend.testing.deterministic_support import build_deterministic_test_o
 
 
 async def await_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """调用同步或异步函数，并统一返回最终结果。"""
     result = func(*args, **kwargs)
     if hasattr(result, "__await__"):
         return await result
@@ -34,6 +35,8 @@ def log_api_error(*_: Any, **__: Any) -> None:
 
 
 class MemoryServiceStub:
+    """测试用会话记忆服务桩，记录清理和重建调用。"""
+
     def __init__(self) -> None:
         self.cleared: list[str] = []
         self.rebuilt: list[str] = []
@@ -53,6 +56,8 @@ class MemoryServiceStub:
 
 
 class A2AServiceStub:
+    """测试用 A2A 服务桩，提供任务查询、更新和取消的最小行为。"""
+
     def __init__(self) -> None:
         self.cancelled: list[tuple[str, str]] = []
         self.tasks: dict[str, dict[str, Any]] = {
@@ -153,6 +158,7 @@ def deterministic_test_overrides() -> BackendAppTestOverrides:
 
 @pytest.fixture()
 def app_client_factory() -> Callable[..., TestClient]:
+    """构建带确定性依赖的 FastAPI TestClient 工厂。"""
     def _factory(*, overrides: BackendAppTestOverrides | None = None, require_admin: bool = False) -> TestClient:
         resolved_overrides = overrides or build_deterministic_test_overrides()
         if overrides is None:
@@ -179,6 +185,7 @@ def admin_app_client(app_client_factory: Callable[..., TestClient]) -> TestClien
 
 @pytest.fixture()
 def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
+    """返回按测试前缀清理 MySQL 会话数据的异步函数。"""
     async def _cleanup(prefix: str) -> None:
         import asyncmy
 
@@ -205,6 +212,7 @@ def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
 
 @pytest.fixture()
 def cleanup_session_artifacts() -> Callable[[str], None]:
+    """返回清理指定会话本地日志产物的函数。"""
     def _cleanup(session_id: str) -> None:
         safe_id = "".join(ch if (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in str(session_id or "")).strip("_")
         if not safe_id:

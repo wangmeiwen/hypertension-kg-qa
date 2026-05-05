@@ -24,14 +24,14 @@ class SessionTurnService:
         session_manager: Any = SessionManager,
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            await_call: 函数输入参数。
-            get_session_memory_service: 函数输入参数。
-            log_api_error: 函数输入参数。
-            message_manager: 函数输入参数。
-            session_manager: 函数输入参数。
-        
+            await_call: 兼容同步/异步仓储调用的执行器。
+            get_session_memory_service: 延迟获取会话记忆服务的回调。
+            log_api_error: 统一记录 API 错误的回调。
+            message_manager: 消息仓储实现，默认使用数据库 MessageManager。
+            session_manager: 会话仓储实现，默认使用数据库 SessionManager。
+
         Returns:
             None: 无返回值。
         """
@@ -75,7 +75,18 @@ class SessionTurnService:
         image_data: Any = None,
         file_name: str = "",
     ) -> Dict[str, Any]:
-        """准备会话轮次上下文，含会话校验与首条用户消息落库。"""
+        """准备会话轮次上下文，含会话校验、消息落库和记忆上下文构建。
+
+        Args:
+            input_text: 用户本轮输入文本。
+            session_id: 传入的会话标识，为空时会创建新会话。
+            user_id: 用户标识，参与会话归属校验。
+            image_data: 可选图片数据，用于标记消息内容来源。
+            file_name: 可选上传文件名，用于标记消息内容来源。
+
+        Returns:
+            Dict[str, Any]: 会话准备结果，失败时返回错误码，成功时返回会话、消息和记忆上下文。
+        """
         safe_user_id = str(user_id or "").strip() or str(uuid.uuid4())
         safe_session_id = str(session_id or "").strip()
         first_question_title = self._build_session_title(input_text)

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearTestStorage } from "../../../test/testUtils";
 
 describe("useAuthStore", () => {
+  // store 在模块初始化时读取 token，因此测试需要 resetModules 后重新导入。
   beforeEach(() => {
     clearTestStorage();
     vi.resetModules();

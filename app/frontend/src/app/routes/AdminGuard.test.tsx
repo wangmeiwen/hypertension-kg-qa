@@ -11,6 +11,7 @@ const authClientMocks = vi.hoisted(() => ({
   loginAsAdmin: vi.fn(),
 }));
 
+// 提前 hoist API mock，确保 AdminGuard 导入时拿到可控的认证接口。
 vi.mock("../../shared/api/authClient", async () => {
   const actual = await vi.importActual<typeof import("../../shared/api/authClient")>("../../shared/api/authClient");
   return {
@@ -24,6 +25,7 @@ vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
   return {
     ...actual,
+    // 用固定内容替换 Outlet，测试只关注守卫是否放行。
     Outlet: () => <div>受保护后台内容</div>,
   };
 });

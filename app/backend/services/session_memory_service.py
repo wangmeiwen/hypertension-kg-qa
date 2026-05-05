@@ -369,7 +369,14 @@ class SessionMemoryService:
         }
 
     async def load_memory(self, session_id: str) -> SessionMemorySnapshot:
-        """加载并返回会话记忆快照。"""
+        """加载并返回会话记忆快照。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            SessionMemorySnapshot: 问答记忆、检索记忆和更新时间组成的快照。
+        """
         row = await self._load_memory_row(session_id)
         if not row:
             return self._empty_snapshot()
@@ -382,7 +389,15 @@ class SessionMemoryService:
         }
 
     async def save_memory(self, session_id: str, snapshot: SessionMemorySnapshot) -> None:
-        """将会话记忆快照写回数据库。"""
+        """将会话记忆快照写回数据库。
+
+        Args:
+            session_id: 会话标识。
+            snapshot: 待持久化的会话记忆快照。
+
+        Returns:
+            None: 无返回值。
+        """
         qa_memory = self._sanitize_qa_memory(snapshot.get("qa_memory"))
         retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
         await SessionMemoryManager.upsert_summary(
@@ -395,11 +410,26 @@ class SessionMemoryService:
         )
 
     async def clear_memory(self, session_id: str) -> None:
-        """清空指定会话的记忆数据。"""
+        """清空指定会话的记忆数据。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            None: 无返回值。
+        """
         await SessionMemoryManager.clear_summary(str(session_id or ""))
 
     async def ensure_memory_current(self, session_id: str, current_message_id: int) -> SessionMemorySnapshot:
-        """基于最新消息重建问答记忆并合并已有检索记忆。"""
+        """基于最新消息重建问答记忆并合并已有检索记忆。
+
+        Args:
+            session_id: 会话标识。
+            current_message_id: 当前用户消息 ID，用于推进记忆游标。
+
+        Returns:
+            SessionMemorySnapshot: 与消息表同步后的记忆快照。
+        """
         snapshot = await self.load_memory(session_id)
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
@@ -416,7 +446,16 @@ class SessionMemoryService:
         input_text: str,
         current_message_id: int,
     ) -> RuntimeMemoryPayload:
-        """构建主控运行时所需的显式记忆上下文。"""
+        """构建主控运行时所需的显式记忆上下文。
+
+        Args:
+            session_id: 会话标识。
+            input_text: 当前用户输入文本。
+            current_message_id: 当前用户消息 ID。
+
+        Returns:
+            RuntimeMemoryPayload: 原始输入文本和可直接放入主控提示词的记忆上下文。
+        """
         snapshot = await self.ensure_memory_current(session_id, current_message_id)
         qa_memory = self._sanitize_qa_memory(snapshot.get("qa_memory"))
         retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
@@ -438,7 +477,16 @@ class SessionMemoryService:
         assistant_message_id: int,
         turn_artifacts: dict[str, Any],
     ) -> SessionMemorySnapshot:
-        """在单轮结束后刷新记忆并持久化。"""
+        """在单轮结束后刷新问答记忆和检索历史，并持久化快照。
+
+        Args:
+            session_id: 会话标识。
+            assistant_message_id: 本轮助手消息 ID。
+            turn_artifacts: 本轮问题、检索记录和时间等产物。
+
+        Returns:
+            SessionMemorySnapshot: 写回数据库后的最新记忆快照。
+        """
         snapshot = await self.load_memory(session_id)
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
@@ -473,7 +521,14 @@ class SessionMemoryService:
         return updated_snapshot
 
     async def rebuild_from_messages(self, session_id: str) -> SessionMemorySnapshot:
-        """仅基于消息表重建会话记忆。"""
+        """仅基于消息表重建会话记忆。
+
+        Args:
+            session_id: 会话标识。
+
+        Returns:
+            SessionMemorySnapshot: 由消息表重建出的记忆快照，检索历史会被置空。
+        """
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
         snapshot: SessionMemorySnapshot = {
@@ -491,7 +546,16 @@ class SessionMemoryService:
         history_id: str = "",
         user_question: str = "",
     ) -> dict[str, Any]:
-        """按 history_id 或相似问题读取历史检索记录。"""
+        """按 history_id 或相似问题读取历史检索记录。
+
+        Args:
+            session_id: 会话标识。
+            history_id: 可选历史检索记录 ID，优先精确匹配。
+            user_question: 可选用户问题，在没有 history_id 时按文本相似度匹配。
+
+        Returns:
+            dict[str, Any]: 匹配到的检索记录，未匹配时返回空记录列表。
+        """
         snapshot = await self.load_memory(session_id)
         retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
         rows = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []

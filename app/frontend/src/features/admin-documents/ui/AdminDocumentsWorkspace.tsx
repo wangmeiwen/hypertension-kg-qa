@@ -11,6 +11,7 @@ import { queryKeys } from "../../../shared/queries/queryKeys";
 import { Badge, Button, Card, InlineNotice, Input, VirtualList } from "../../../shared/ui/primitives";
 
 function getStatusTone(status: string): "default" | "danger" | "success" {
+  // 将后台任务状态映射到 Badge 颜色语义。
   if (status === "failed" || status === "cancelled") return "danger";
   if (status === "succeeded") return "success";
   return "default";
@@ -30,6 +31,7 @@ export default function AdminDocumentsWorkspace() {
   const jobsQuery = useQuery({
     queryKey: queryKeys.admin.documentJobs,
     queryFn: () => getRecentTextEmbeddingJobs(12),
+    // 仅在存在排队或运行中的任务时轮询，完成后停止刷新。
     refetchInterval: (query) =>
       Array.isArray(query.state.data) && (query.state.data as GraphJob[]).some((job) => job.status === "queued" || job.status === "running") ? 2500 : false,
   });
@@ -46,6 +48,7 @@ export default function AdminDocumentsWorkspace() {
   const submitMutation = useMutation({
     mutationFn: () => submitTextEmbeddingJob(selectedFile as File),
     onSuccess: async (job) => {
+      // 提交后选中新任务并刷新任务列表与向量库统计。
       setFeedback(t("admin.documentsWorkspace.submitSuccess"));
       setSelectedJobId(job.job_id);
       setSelectedFile(null);
@@ -61,6 +64,7 @@ export default function AdminDocumentsWorkspace() {
   const detailJson = useMemo(() => JSON.stringify(detailQuery.data?.result || detailQuery.data || {}, null, 2), [detailQuery.data]);
   const statsJson = useMemo(() => JSON.stringify(statsQuery.data || {}, null, 2), [statsQuery.data]);
   const jobs = jobsQuery.data || [];
+  // 任务卡片在虚拟列表和普通列表路径下复用。
   const renderJob = (job: GraphJob) => (
     <button
       type="button"

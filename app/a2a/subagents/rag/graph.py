@@ -1,6 +1,6 @@
-﻿"""graph 模块。
+"""graph 模块。
 
-提供 graph 相关能力与对外接口。
+提供 RAG 子代理 LangGraph 拓扑构建、编译和降级运行能力。
 """
 
 
@@ -41,21 +41,21 @@ class _FallbackGraphRunner:
     """在 LangGraph 不可用时串行执行 RAG 子图节点。"""
 
     def __init__(self, tool_gateway: MCPToolGateway):
-        """初始化 _FallbackGraphRunner 实例。
-        
+        """初始化串行降级执行器。
+
         Args:
-            tool_gateway: 参数。
+            tool_gateway: 执行 RAG 检索节点时使用的 MCP 网关。
         """
         self.tool_gateway = tool_gateway
 
     async def ainvoke(self, state: RagSubAgentState) -> RagSubAgentState:
-        """执行 ainvoke。
-        
+        """按 LangGraph 节点顺序串行执行 RAG 子代理状态机。
+
         Args:
-            state: 参数。
-        
+            state: RAG 子代理当前状态。
+
         Returns:
-            执行结果。
+            完成校验、查询生成、检索调用、结果归一化后的状态。
         """
         state = await node_validate_constraints(state)
         state = await node_generate_query_statement(state)
@@ -66,25 +66,25 @@ class _FallbackGraphRunner:
 
 
 def build_rag_graph(tool_gateway: MCPToolGateway) -> Any:
-    """构建 rag_graph。
-    
+    """构建 RAG 子代理 LangGraph 拓扑。
+
     Args:
-        tool_gateway: 参数。
-    
+        tool_gateway: 检索调用节点使用的 MCP 网关。
+
     Returns:
-        执行结果。
+        未编译的 StateGraph；LangGraph 不可用时返回 None。
     """
     if not _LANGGRAPH_AVAILABLE:
         return None
 
     async def _execute_rag_search(state: RagSubAgentState) -> RagSubAgentState:
-        """执行 _execute_rag_search 内部逻辑。
-        
+        """闭包绑定 MCP 网关后执行 RAG 检索节点。
+
         Args:
-            state: 参数。
-        
+            state: RAG 子代理当前状态。
+
         Returns:
-            执行结果。
+            写入检索结果后的状态。
         """
         return await node_execute_rag_search(state, tool_gateway)
 
@@ -105,13 +105,13 @@ def build_rag_graph(tool_gateway: MCPToolGateway) -> Any:
 
 
 def compile_rag_graph(tool_gateway: MCPToolGateway) -> Any:
-    """执行 compile_rag_graph。
-    
+    """编译 RAG 子代理执行图，必要时返回降级执行器。
+
     Args:
-        tool_gateway: 参数。
-    
+        tool_gateway: 检索调用节点使用的 MCP 网关。
+
     Returns:
-        执行结果。
+        可通过 ainvoke 运行的图执行对象。
     """
     graph = build_rag_graph(tool_gateway)
     if graph is None:
@@ -120,14 +120,14 @@ def compile_rag_graph(tool_gateway: MCPToolGateway) -> Any:
 
 
 async def run_rag_graph(compiled_graph: Any, state: RagSubAgentState) -> RagSubAgentState:
-    """执行 rag_graph。
-    
+    """运行已编译的 RAG 子代理执行图。
+
     Args:
-        compiled_graph: 参数。
-        state: 参数。
-    
+        compiled_graph: compile_rag_graph 返回的图执行对象。
+        state: RAG 子代理初始状态。
+
     Returns:
-        执行结果。
+        图执行后的最终状态；异常兼容分支下至少返回原始状态。
     """
     ainvoke: Callable[[RagSubAgentState], Awaitable[RagSubAgentState]] = getattr(compiled_graph, "ainvoke")
     output_keys = list(

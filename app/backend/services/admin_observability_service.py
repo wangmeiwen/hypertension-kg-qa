@@ -15,10 +15,10 @@ class AdminObservabilityService:
 
     def __init__(self, log_api_error: Any) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            log_api_error: 函数输入参数。
-        
+            log_api_error: 统一记录管理员可观测性接口错误的回调。
+
         Returns:
             None: 无返回值。
         """
@@ -26,18 +26,26 @@ class AdminObservabilityService:
 
     @staticmethod
     def _project_root() -> Path:
-        """执行project_root流程并返回结果。
-        
+        """定位项目根目录。
+
         Args:
             无。
-        
+
         Returns:
-            Path: 执行结果。
+            Path: 当前仓库根目录路径。
         """
         return Path(__file__).resolve().parents[3]
 
     def _read_perf_event_logs(self, event_name: str, limit: int = 200) -> list[dict[str, Any]]:
-        """从 logs/perf.log 读取性能事件。"""
+        """从性能日志文件中读取指定事件的最近记录。
+
+        Args:
+            event_name: 需要匹配的性能事件名称。
+            limit: 最多返回的事件数量。
+
+        Returns:
+            list[dict[str, Any]]: 反向时间顺序读取到的事件 payload 列表。
+        """
         log_dir = self._project_root() / "logs"
         candidate_paths = [
             log_dir / "perf.log",
@@ -84,7 +92,14 @@ class AdminObservabilityService:
         return events
 
     def _read_turn_logs(self, limit: int = 200) -> list[dict[str, Any]]:
-        """读取 turn 级观测日志。"""
+        """读取会话 turn 级观测日志并合并记忆更新记录。
+
+        Args:
+            limit: 最多返回的 turn 记录数量。
+
+        Returns:
+            list[dict[str, Any]]: 按完成时间倒序排列的 turn 观测记录。
+        """
         turns_root = self._project_root() / "logs" / "sessions"
         if not turns_root.exists():
             return []
@@ -133,11 +148,11 @@ class AdminObservabilityService:
 
     @staticmethod
     def _to_float_metric(value: Any) -> float:
-        """执行to_float_metric流程并返回结果。
-        
+        """将日志中的宽松指标值转换为浮点数。
+
         Args:
             value: 待处理输入值。
-        
+
         Returns:
             float: 数值结果。
         """
@@ -160,11 +175,11 @@ class AdminObservabilityService:
 
     @staticmethod
     def _to_int_metric(value: Any) -> int:
-        """执行to_int_metric流程并返回结果。
-        
+        """将日志中的宽松指标值转换为整数。
+
         Args:
             value: 待处理输入值。
-        
+
         Returns:
             int: 数值结果。
         """
@@ -189,14 +204,14 @@ class AdminObservabilityService:
 
     @staticmethod
     def _split_error_types(event: dict[str, Any], strategy_error_keys: set[str]) -> tuple[dict[str, int], dict[str, int]]:
-        """拆分error_types相关信息并返回结果。
-        
+        """拆分策略层错误和执行层错误计数。
+
         Args:
-            event: 函数输入参数。
-            strategy_error_keys: 函数输入参数。
-        
+            event: 单条观测事件。
+            strategy_error_keys: 归类为策略层错误的错误键集合。
+
         Returns:
-            tuple[dict[str, int], dict[str, int]]: 执行结果。
+            tuple[dict[str, int], dict[str, int]]: 策略层错误计数和执行层错误计数。
         """
         strategy_errors = event.get("strategy_error_types") or {}
         execution_errors = event.get("execution_error_types") or {}
@@ -220,14 +235,14 @@ class AdminObservabilityService:
         return strategy_fallback, execution_fallback
 
     def _normalize_run_row(self, event: dict[str, Any], rank: int) -> dict[str, Any]:
-        """规范化输入并返回标准化结果。
-        
+        """将原始观测事件规范化为管理员运行明细行。
+
         Args:
-            event: 函数输入参数。
-            rank: 函数输入参数。
-        
+            event: 原始 turn 或性能事件。
+            rank: 当前结果行排序序号。
+
         Returns:
-            dict[str, Any]: 结构化结果数据。
+            dict[str, Any]: 前端可直接展示的结构化运行明细。
         """
         strategy_error_keys = {
             "planner_error",
@@ -269,7 +284,14 @@ class AdminObservabilityService:
         }
 
     async def admin_agent_observability_summary(self, limit: int = 200) -> dict[str, Any]:
-        """获取 Agent 可观测性汇总。"""
+        """获取 Agent 可观测性汇总指标。
+
+        Args:
+            limit: 参与汇总的最近记录数量。
+
+        Returns:
+            dict[str, Any]: 总运行数、平均耗时、工具成功率、token 和错误类型汇总。
+        """
         safe_limit = max(10, min(limit, 2000))
         primary_events = self._read_turn_logs(limit=safe_limit)
         events = primary_events or self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
@@ -363,7 +385,14 @@ class AdminObservabilityService:
         }
 
     async def admin_agent_observability_runs(self, limit: int = 50) -> dict[str, Any]:
-        """获取 Agent 近期运行明细。"""
+        """获取 Agent 近期运行明细。
+
+        Args:
+            limit: 返回的最近运行记录数量。
+
+        Returns:
+            dict[str, Any]: 运行明细列表和实际返回数量。
+        """
         safe_limit = max(1, min(limit, 200))
         primary_events = self._read_turn_logs(limit=safe_limit)
         events = primary_events or self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)

@@ -5,6 +5,7 @@ import styles from "./primitives.module.css";
 
 type ButtonTone = "primary" | "secondary" | "danger" | "ghost";
 
+// 基础按钮组件统一 tone 样式，并透传原生 button 属性。
 export function Button({
   tone = "primary",
   children,
@@ -43,6 +44,7 @@ export function Card({
   children: ReactNode;
   className?: string;
 }) {
+  // Card 支持可选标题区和右侧 action，正文始终包在 cardBody 中。
   return (
     <section className={`${styles.card} ${className}`.trim()}>
       {title || action ? (
@@ -117,6 +119,7 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  // 点击遮罩关闭弹窗，点击面板内部阻止冒泡以保留表单交互。
   if (!open) return null;
   return (
     <div className={styles.modalOverlay} onClick={onClose} role="presentation">
@@ -180,6 +183,7 @@ export function SkeletonTable({ rows = 6, columns = 4 }: { rows?: number; column
 }
 
 export function PageSkeleton({ title = true }: { title?: boolean }) {
+  // 页面级骨架屏提供 status 语义，供路由加载状态和测试定位。
   return (
     <div className={styles.pageSkeleton} role="status" aria-label="页面加载中">
       <SkeletonBlock lines={2} title={title} />
@@ -268,11 +272,12 @@ export function VirtualList<T>({
   getKey: (item: T, index: number) => string | number;
   estimateSize?: number;
   threshold?: number;
-  maxHeight?: number;
+  maxHeight?: number | string;
   overscan?: number;
   className?: string;
   itemClassName?: string;
 }) {
+  // 小列表直接渲染，超过阈值后启用虚拟滚动降低 DOM 节点数量。
   const parentRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -283,7 +288,7 @@ export function VirtualList<T>({
 
   if (items.length <= threshold) {
     return (
-      <div className={className}>
+      <div className={`${styles.scrollViewport} ${className}`.trim()} style={{ maxHeight }}>
         {items.map((item, index) => (
           <div key={getKey(item, index)} className={itemClassName}>
             {renderItem(item, index)}
@@ -327,6 +332,7 @@ export function DataTable({
   columns: ReactNode[];
   rows: ReactNode[][];
 }) {
+  // 大表格使用 VirtualList 渲染行，小表格保持原生 table 语义。
   if (rows.length > 100) {
     return (
       <div className={styles.tableWrap} role="table">

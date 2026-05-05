@@ -25,14 +25,14 @@ class ReadinessService:
         log_api_error: Callable[..., None],
         await_call: Callable[..., Awaitable[Any]],
     ) -> None:
-        """初始化实例并注入运行依赖。
-        
+        """初始化 readiness 服务并注入运行依赖。
+
         Args:
-            get_mcp: 函数输入参数。
-            mysql_initialized_resolver: 函数输入参数。
-            log_api_error: 函数输入参数。
-            await_call: 函数输入参数。
-        
+            get_mcp: 获取当前 MCP 服务实例的函数。
+            mysql_initialized_resolver: 读取 MySQL 初始化状态的函数。
+            log_api_error: 记录 readiness 检查异常的日志函数。
+            await_call: 兼容同步/异步函数的统一 await 调用器。
+
         Returns:
             None: 无返回值。
         """
@@ -42,7 +42,11 @@ class ReadinessService:
         self._await_call = await_call
 
     async def build_readiness_report(self) -> Dict[str, Any]:
-        """构建服务就绪性报告。"""
+        """构建服务就绪性报告。
+
+        Returns:
+            包含整体级别、关键依赖状态、可选依赖问题和运行时开关快照的报告。
+        """
         from app.mcp.tools import get_mcp_runtime_status
 
         db_status = await self._await_call(check_databases)
@@ -139,7 +143,14 @@ class ReadinessService:
         }
 
     async def ensure_core_ready(self, endpoint: str) -> Optional[JSONResponse]:
-        """在接口执行前校验核心依赖就绪状态。"""
+        """在接口执行前校验核心依赖就绪状态。
+
+        Args:
+            endpoint: 当前准备执行的接口路径，用于日志定位。
+
+        Returns:
+            依赖可用时返回 None；核心依赖不可用时返回 503 响应。
+        """
         report = await self.build_readiness_report()
         if report["level"] != "unavailable":
             return None

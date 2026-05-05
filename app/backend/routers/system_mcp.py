@@ -22,7 +22,22 @@ def create_system_mcp_router(
     endpoint_limits: dict[str, dict[str, int]],
     window_seconds: float,
 ) -> APIRouter:
-    """创建 system 与 mcp 路由。"""
+    """创建系统健康检查、MCP 工具发现和 MCP 调用路由。
+
+    Args:
+        await_call: 兼容同步/异步函数的统一 await 调用器。
+        build_readiness_report: 构建服务 readiness 分级报告的函数。
+        get_mcp: 获取 MCP 服务实例的函数。
+        log_api_error: 记录 API 错误日志的函数。
+        get_trace_id: 从请求中提取 trace_id 的函数。
+        enforce_rate_limit: 重接口限流检查函数。
+        rate_limiter: 限流器实例。
+        endpoint_limits: 各接口限流配置。
+        window_seconds: 限流统计窗口长度。
+
+    Returns:
+        已注册系统与 MCP 路由的 APIRouter。
+    """
     router = APIRouter()
 
     @router.get("/db/status")

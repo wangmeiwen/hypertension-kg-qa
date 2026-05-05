@@ -54,15 +54,15 @@ class GraphAdminService:
         log_api_error: Callable[..., None],
     ) -> None:
         """初始化实例并注入运行依赖。
-        
+
         Args:
-            await_call: 函数输入参数。
-            neo4j_client: 函数输入参数。
-            get_shared_kg_milvus_store: 函数输入参数。
-            validate_cypher_identifier: 函数输入参数。
-            sanitize_graph_properties: 函数输入参数。
-            log_api_error: 函数输入参数。
-        
+            await_call: 兼容同步/异步函数的调用适配器。
+            neo4j_client: Neo4j 客户端实例，用于执行图数据库查询和写入。
+            get_shared_kg_milvus_store: 获取图谱向量库实例的回调。
+            validate_cypher_identifier: 校验 Cypher label/type/property 标识符的回调。
+            sanitize_graph_properties: 清洗图谱节点和关系属性的回调。
+            log_api_error: 统一记录管理员图谱接口错误的回调。
+
         Returns:
             None: 无返回值。
         """
@@ -399,7 +399,24 @@ class GraphAdminService:
         processed_chars: int,
         completed_chunks: int,
     ) -> dict[str, Any]:
-        """生成暂停态任务结果。"""
+        """生成暂停态任务结果。
+
+        Args:
+            message: 对外展示的暂停提示。
+            pause_reason: 暂停原因。
+            file_name: 导入文件名。
+            file_hash: 文件内容哈希。
+            run_id: 持久化导入 run 标识。
+            resumed_from_chunk: 本次续跑起始块序号。
+            prepared: 文件解析和分块元数据。
+            entity_count: 已抽取实体数量。
+            relation_count: 已抽取关系数量。
+            processed_chars: 已处理字符数。
+            completed_chunks: 已完成块数。
+
+        Returns:
+            dict[str, Any]: 可写入 job.result 的暂停态结果。
+        """
         return {
             "_job_status": "paused",
             "message": message,
@@ -917,7 +934,16 @@ class GraphAdminService:
         seed: Optional[dict[str, Any]] = None,
         dedupe_active: bool = False,
     ) -> dict[str, Any]:
-        """注册后台任务。"""
+        """注册进程内后台任务，并按文件哈希去重活跃任务。
+
+        Args:
+            job_type: 后台任务类型。
+            seed: 可选初始任务字段。
+            dedupe_active: 是否复用同文件、同策略的活跃任务。
+
+        Returns:
+            dict[str, Any]: 新建任务快照，或去重命中的已有任务快照。
+        """
         async with self._job_lock:
             if dedupe_active and seed:
                 file_hash = str(seed.get("file_hash") or "")
@@ -1007,7 +1033,7 @@ class GraphAdminService:
                 self._jobs.pop(candidate["job_id"], None)
 
     def _make_stage_event_callback(self, loop: asyncio.AbstractEventLoop, job_id: str) -> Callable[..., None]:  # pragma: no cover - background thread callback
-        """生成线程安全的任务阶段事件回调。"""
+        """生成线程安全的任务阶段事件回调，供阻塞线程回传进度。"""
         def _progress(
             action: str,
             stage: Optional[str] = None,
@@ -1042,7 +1068,19 @@ class GraphAdminService:
         progress_text: Optional[str] = None,
         metrics: Optional[dict[str, Any]] = None,
     ) -> None:
-        """接收线程回传的阶段事件。"""
+        """接收阻塞线程回传的阶段事件并更新进程内任务状态。
+
+        Args:
+            job_id: 任务标识。
+            action: 阶段事件动作，支持 enter、heartbeat、complete、warning。
+            stage: 可选阶段名称。
+            detail: 可选阶段明细。
+            progress_text: 可选对外进度文案。
+            metrics: 可选进度指标。
+
+        Returns:
+            None: 无返回值。
+        """
         if action == "enter" and stage:
             await self._enter_job_stage(job_id, stage, detail or progress_text or "", metrics=metrics)
             return
@@ -1059,7 +1097,7 @@ class GraphAdminService:
 
     @staticmethod
     def _apply_job_metrics(job: dict[str, Any], metrics: Optional[dict[str, Any]] = None) -> None:
-        """合并任务进度指标。"""
+        """将线程回传的进度指标合并到任务对象。"""
         if not metrics:
             return
         for key in (
@@ -1084,7 +1122,20 @@ class GraphAdminService:
         started: bool = False,
         finished: bool = False,
     ) -> None:
-        """更新任务状态。"""
+        """更新进程内任务状态、结果、错误和生命周期时间。
+
+        Args:
+            job_id: 任务标识。
+            status: 可选任务状态。
+            progress_text: 可选对外进度文案。
+            result: 可选任务结果。
+            error: 可选错误文本。
+            started: 是否写入开始时间。
+            finished: 是否写入结束时间。
+
+        Returns:
+            None: 无返回值。
+        """
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -1104,7 +1155,7 @@ class GraphAdminService:
                 job["finished_at"] = self._utc_now_iso()
 
     def _mark_current_trace_finished(self, job: dict[str, Any], status: str, error: Optional[str] = None) -> None:
-        """收口当前 trace 阶段。"""
+        """把任务当前运行中的 trace 阶段标记为结束。"""
         trace = job.get("trace") or []
         for item in reversed(trace):
             if not item.get("finished_at"):
@@ -1126,7 +1177,17 @@ class GraphAdminService:
         *,
         metrics: Optional[dict[str, Any]] = None,
     ) -> None:
-        """进入新阶段。"""
+        """进入任务新阶段并追加 trace 记录。
+
+        Args:
+            job_id: 任务标识。
+            stage: 阶段名称。
+            detail: 阶段说明文本。
+            metrics: 可选进度指标。
+
+        Returns:
+            None: 无返回值。
+        """
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
@@ -1162,7 +1223,17 @@ class GraphAdminService:
         progress_text: Optional[str] = None,
         metrics: Optional[dict[str, Any]] = None,
     ) -> None:
-        """更新当前阶段心跳。"""
+        """刷新当前阶段心跳、进度文案和进度指标。
+
+        Args:
+            job_id: 任务标识。
+            detail: 可选阶段明细。
+            progress_text: 可选对外进度文案。
+            metrics: 可选进度指标。
+
+        Returns:
+            None: 无返回值。
+        """
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
@@ -1190,7 +1261,16 @@ class GraphAdminService:
         *,
         metrics: Optional[dict[str, Any]] = None,
     ) -> None:
-        """完成当前阶段。"""
+        """完成任务当前阶段并收口 trace。
+
+        Args:
+            job_id: 任务标识。
+            detail: 可选完成明细。
+            metrics: 可选进度指标。
+
+        Returns:
+            None: 无返回值。
+        """
         now_iso = self._utc_now_iso()
         async with self._job_lock:
             job = self._jobs.get(job_id)
@@ -1215,7 +1295,16 @@ class GraphAdminService:
         *,
         elapsed_seconds: Optional[int] = None,
     ) -> None:
-        """为任务追加 warning。"""
+        """为任务追加可展示 warning。
+
+        Args:
+            job_id: 任务标识。
+            message: warning 文本。
+            elapsed_seconds: 可选阶段已耗时秒数。
+
+        Returns:
+            None: 无返回值。
+        """
         warning = {
             "message": message,
             "stage": None,
@@ -1264,7 +1353,14 @@ class GraphAdminService:
             raise
 
     async def get_graph_job(self, job_id: str) -> dict[str, Any]:
-        """获取后台任务状态。"""
+        """获取图谱后台任务状态，支持进程内任务和持久化 run。
+
+        Args:
+            job_id: 后台任务标识或 graph-run 前缀的持久化 run 标识。
+
+        Returns:
+            dict[str, Any]: 任务状态快照或任务不存在错误。
+        """
         async with self._job_lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -1282,7 +1378,14 @@ class GraphAdminService:
         return {"ok": False, "error": "任务不存在或已过期"}
 
     async def list_graph_jobs(self, limit: int = 10) -> dict[str, Any]:
-        """返回最近图谱后台任务列表。"""
+        """返回最近图谱后台任务列表，合并进程内任务和持久化 run。
+
+        Args:
+            limit: 返回数量上限。
+
+        Returns:
+            dict[str, Any]: 最近任务快照列表。
+        """
         safe_limit = max(1, min(int(limit or 10), 50))
         async with self._job_lock:
             jobs = [self._build_job_response(job) for job in self._jobs.values()]
@@ -1316,7 +1419,17 @@ class GraphAdminService:
         seed: Optional[dict[str, Any]] = None,
         dedupe_active: bool = False,
     ) -> dict[str, Any]:
-        """创建后台任务并立即返回任务信息。"""
+        """创建图谱后台任务、启动 watchdog，并立即返回任务信息。
+
+        Args:
+            job_type: 后台任务类型。
+            runner: 接收 job_id 并执行实际后台工作的异步函数。
+            seed: 可选初始任务字段。
+            dedupe_active: 是否复用同文件、同策略的活跃任务。
+
+        Returns:
+            dict[str, Any]: 任务提交响应。
+        """
         job = await self._register_job(job_type, seed=seed, dedupe_active=dedupe_active)
         if job.get("_deduplicated"):
             response_data = self._build_job_response(job)
@@ -1402,7 +1515,14 @@ class GraphAdminService:
         }
 
     async def submit_graph_extract_import_job(self, file: UploadFile) -> dict[str, Any]:  # pragma: no cover - background task orchestration
-        """提交文件抽取导入后台任务。"""
+        """读取上传文件并提交图谱抽取导入后台任务。
+
+        Args:
+            file: FastAPI 上传文件对象。
+
+        Returns:
+            dict[str, Any]: 任务提交结果、去重命中结果或校验错误。
+        """
         filename = file.filename or "uploaded_file"
         try:
             file_bytes = await file.read()
@@ -1451,7 +1571,14 @@ class GraphAdminService:
             return {"ok": False, "error": f"提交抽取导入任务失败: {exc}"}
 
     async def submit_graph_embed_milvus_job(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:  # pragma: no cover - background task orchestration
-        """提交图谱嵌入后台任务。"""
+        """提交图谱嵌入 Milvus 后台任务。
+
+        Args:
+            data: 可选标签列表和批大小配置。
+
+        Returns:
+            dict[str, Any]: 任务提交结果或错误响应。
+        """
         try:
             payload = data or {}
             labels_obj = payload.get("labels")
@@ -1474,7 +1601,16 @@ class GraphAdminService:
             return {"ok": False, "error": f"提交嵌入任务失败: {exc}"}
 
     async def _extract_and_import_graph_sync(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:  # pragma: no cover - external LLM/Neo4j background runtime
-        """执行图谱抽取导入主体。"""
+        """执行图谱抽取导入主体，包含解析、续跑、抽取和写入。
+
+        Args:
+            file_bytes: 上传文件二进制内容。
+            filename: 上传文件名。
+            job_id: 进程内后台任务标识。
+
+        Returns:
+            dict[str, Any]: 图谱导入结果，可能返回暂停态结果。
+        """
         loop = asyncio.get_running_loop()
         stage_callback = self._make_stage_event_callback(loop, job_id)
         file_hash = self._compute_file_hash(file_bytes)
@@ -1734,6 +1870,7 @@ class GraphAdminService:
                 last_error: Optional[str] = None,
                 backoff_until: Optional[str] = None,
             ) -> None:
+                """同步单个 LLM lane 的当前运行状态到任务快照。"""
                 for item in lane_statuses:
                     if int(item.get("lane_id") or 0) != lane_id:
                         continue
@@ -1756,6 +1893,7 @@ class GraphAdminService:
                 )
 
             async def fail_chunk_and_task(chunk_index: int, error_message: str) -> None:
+                """标记当前块和整个导入任务失败，并通知并发协程停止。"""
                 nonlocal terminal_error
                 if terminal_error:
                     return
@@ -1767,6 +1905,7 @@ class GraphAdminService:
                 stop_event.set()
 
             async def lane_worker(lane_config: dict[str, Any]) -> None:
+                """从队列领取待抽取文本块，并在对应 LLM lane 上执行抽取。"""
                 nonlocal active_extractions, terminal_error, write_cursor
                 lane_id = int(lane_config["lane_id"])
                 llm_bundle = lane_bundles[lane_id]
@@ -1937,6 +2076,7 @@ class GraphAdminService:
                     work_queue.task_done()
 
             async def writer_loop() -> None:
+                """按块序等待抽取结果并串行写入 Neo4j，保证续跑进度有序推进。"""
                 nonlocal next_schedule_cursor, write_cursor, processed_chars, completed_chunks
                 nonlocal total_entities, total_relations, total_node_batches, total_relation_batches, terminal_error
                 while write_cursor < len(pending_chunks):
@@ -2088,7 +2228,16 @@ class GraphAdminService:
         filename: str,
         stage_callback: Callable[..., None],
     ) -> dict[str, Any]:
-        """在线程中执行文档解析与分块。"""
+        """在线程中执行文档解析、缓存恢复和文本分块。
+
+        Args:
+            file_bytes: 上传文件二进制内容。
+            filename: 上传文件名。
+            stage_callback: 线程安全阶段回调，用于回传解析和分块进度。
+
+        Returns:
+            dict[str, Any]: 解析元数据和内部使用的 `_chunks` 文本块列表。
+        """
         suffix = Path(filename).suffix.lower()
         supported_suffixes = {".txt", ".md", ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm", ".jpg", ".jpeg", ".png"}
         if suffix not in supported_suffixes:
@@ -2096,7 +2245,7 @@ class GraphAdminService:
         chunk_limit = self.GRAPH_IMPORT_CHUNK_LIMIT
 
         def split_text_by_sentence(text: str, limit: int = self.GRAPH_IMPORT_CHUNK_LIMIT) -> list[str]:
-            """按句切分长文本。"""
+            """按句号类标点尽量切分长文本，超过限制时按长度硬切。"""
             chunks: list[str] = []
             remaining = (text or "").strip()
             sentence_ends = ["。", ".", "!", "！", "?", "？"]
@@ -2119,7 +2268,7 @@ class GraphAdminService:
             return chunks
 
         def extract_text_fallback(raw_bytes: bytes, raw_filename: str, raw_suffix: str) -> str:
-            """Docling 不可用时的兜底解析。"""
+            """Docling 不可用时按文件类型执行内置文本解析。"""
             _ = raw_filename
             if raw_suffix == ".pdf":
                 import fitz
@@ -2287,7 +2436,20 @@ class GraphAdminService:
         stage_callback: Callable[..., None],
         llm_bundle: dict[str, Any],
     ) -> dict[str, Any]:
-        """在线程中执行单块图谱抽取（单次尝试）。"""
+        """在线程中执行单块图谱抽取（单次尝试）。
+
+        Args:
+            chunk: 当前文本块。
+            chunk_index: 当前块序号。
+            total_chunks: 总块数。
+            total_chars: 文档总字符数。
+            processed_chars: 已处理字符数。
+            stage_callback: 阶段进度回调。
+            llm_bundle: 当前 lane 使用的 LLM 配置和客户端上下文。
+
+        Returns:
+            dict[str, Any]: 当前块抽取出的节点查询、关系查询和统计数据。
+        """
         from app.knowledge_graph.extract_graph_data_utils import extract_text_to_graph_queries
 
         chunk_chars = len(chunk)
@@ -2328,7 +2490,19 @@ class GraphAdminService:
         attempt: int,
         max_attempts: int,
     ) -> Callable[..., None]:
-        """为并发 lane 包装带上下文的阶段回调。"""
+        """为并发 lane 包装带上下文的阶段回调。
+
+        Args:
+            base_callback: 原始阶段回调。
+            lane_id: 当前 lane 标识。
+            chunk_index: 当前块序号。
+            total_chunks: 总块数。
+            attempt: 当前尝试次数。
+            max_attempts: 最大尝试次数。
+
+        Returns:
+            Callable[..., None]: 会自动补充 lane、块和尝试次数前缀的回调。
+        """
 
         prefix = f"[lane{lane_id} 第 {chunk_index}/{total_chunks} 块 第 {attempt}/{max_attempts} 次]"
 
@@ -2352,7 +2526,15 @@ class GraphAdminService:
         return _callback
 
     async def _embed_graph_to_milvus_sync(self, data: Optional[dict[str, Any]], job_id: str) -> dict[str, Any]:  # pragma: no cover - external Milvus runtime
-        """执行图谱嵌入主体。"""
+        """执行图谱嵌入主体，从 Neo4j 读取数据并重建 Milvus 索引。
+
+        Args:
+            data: 可选标签过滤和批大小配置。
+            job_id: 进程内后台任务标识。
+
+        Returns:
+            dict[str, Any]: Milvus 重建统计和完成时间。
+        """
         await self._enter_job_stage(job_id, "read_graph", "准备读取图谱数据")
         data = data or {}
         labels = data.get("labels")
@@ -2361,6 +2543,7 @@ class GraphAdminService:
         loop = asyncio.get_running_loop()
 
         def progress_callback(text: str) -> None:
+            """将 Milvus 重建进度回传到后台任务心跳。"""
             try:
                 asyncio.run_coroutine_threadsafe(
                     self._heartbeat_job_stage(job_id, detail=str(text or ""), progress_text=str(text or "")),
@@ -2385,7 +2568,11 @@ class GraphAdminService:
         }
 
     async def get_graph_labels(self) -> dict[str, Any]:
-        """获取所有节点标签。"""
+        """获取 Neo4j 中所有节点标签。
+
+        Returns:
+            dict[str, Any]: 标签列表或查询错误响应。
+        """
         try:
             query = """
             MATCH (n)
@@ -2401,7 +2588,11 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def get_graph_relationship_types(self) -> dict[str, Any]:
-        """获取所有关系类型。"""
+        """获取 Neo4j 中所有关系类型。
+
+        Returns:
+            dict[str, Any]: 关系类型列表或查询错误响应。
+        """
         try:
             query = """
             MATCH ()-[r]->()
@@ -2416,7 +2607,17 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def get_graph_nodes(self, label: str = "", keyword: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
-        """获取节点列表。"""
+        """按标签、关键词和分页参数获取图谱节点列表。
+
+        Args:
+            label: 可选节点标签过滤条件。
+            keyword: 可选名称/标题关键词。
+            limit: 返回数量上限。
+            offset: 分页偏移量。
+
+        Returns:
+            dict[str, Any]: 节点列表、总数或查询错误响应。
+        """
         try:
             if label:
                 if keyword:
@@ -2479,7 +2680,14 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def get_graph_node(self, node_id: int) -> dict[str, Any]:
-        """获取单个节点详情。"""
+        """获取单个节点详情及其入边、出边。
+
+        Args:
+            node_id: Neo4j 内部节点 ID。
+
+        Returns:
+            dict[str, Any]: 节点详情、关系详情或节点不存在错误。
+        """
         try:
             node_query = """
             MATCH (n)
@@ -2521,7 +2729,14 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def create_graph_node(self, data: dict[str, Any]) -> dict[str, Any]:
-        """创建新节点。"""
+        """创建新的图谱节点。
+
+        Args:
+            data: 包含 label 和 properties 的节点创建 payload。
+
+        Returns:
+            dict[str, Any]: 创建后的节点 ID 或校验/写入错误。
+        """
         try:
             raw_label = str(data.get("label", "")).strip()
             label = self._validate_cypher_identifier(raw_label)
@@ -2547,7 +2762,15 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def update_graph_node(self, node_id: int, data: dict[str, Any]) -> dict[str, Any]:
-        """更新节点。"""
+        """更新指定图谱节点属性。
+
+        Args:
+            node_id: Neo4j 内部节点 ID。
+            data: 包含 properties 的节点更新 payload。
+
+        Returns:
+            dict[str, Any]: 更新结果或节点不存在错误。
+        """
         try:
             properties = self._sanitize_graph_properties(data.get("properties", {}))
             if not properties:
@@ -2571,7 +2794,14 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def delete_graph_node(self, node_id: int) -> dict[str, Any]:
-        """删除节点及关系。"""
+        """删除指定图谱节点及其关联关系。
+
+        Args:
+            node_id: Neo4j 内部节点 ID。
+
+        Returns:
+            dict[str, Any]: 删除结果或节点不存在错误。
+        """
         try:
             query = """
             MATCH (n)
@@ -2588,7 +2818,14 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def create_graph_relationship(self, data: dict[str, Any]) -> dict[str, Any]:
-        """创建关系。"""
+        """创建两个节点之间的图谱关系。
+
+        Args:
+            data: 包含 source_id、target_id、rel_type 和 properties 的关系创建 payload。
+
+        Returns:
+            dict[str, Any]: 创建后的关系 ID 或校验/写入错误。
+        """
         try:
             source_id = data.get("source_id")
             target_id = data.get("target_id")
@@ -2641,7 +2878,14 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def delete_graph_relationship(self, rel_id: int) -> dict[str, Any]:
-        """删除关系。"""
+        """删除指定图谱关系。
+
+        Args:
+            rel_id: Neo4j 内部关系 ID。
+
+        Returns:
+            dict[str, Any]: 删除结果或关系不存在错误。
+        """
         try:
             query = """
             MATCH ()-[r]->()
@@ -2658,7 +2902,14 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def execute_cypher(self, data: dict[str, Any]) -> dict[str, Any]:
-        """执行只读 Cypher。"""
+        """执行管理员输入的只读 Cypher 查询。
+
+        Args:
+            data: 包含 query 字段的查询 payload。
+
+        Returns:
+            dict[str, Any]: 查询结果或安全校验错误。
+        """
         try:
             query = str(data.get("query") or "").strip()
             if not query:
@@ -2677,15 +2928,33 @@ class GraphAdminService:
             return {"ok": False, "error": str(exc)}
 
     async def extract_and_import_graph(self, file: UploadFile) -> dict[str, Any]:
-        """提交文件抽取导入后台任务。"""
+        """兼容旧接口，提交文件抽取导入后台任务。
+
+        Args:
+            file: FastAPI 上传文件对象。
+
+        Returns:
+            dict[str, Any]: 图谱抽取导入任务提交结果。
+        """
         return await self.submit_graph_extract_import_job(file=file)
 
     async def embed_graph_to_milvus(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        """提交图谱嵌入后台任务。"""
+        """兼容旧接口，提交图谱嵌入 Milvus 后台任务。
+
+        Args:
+            data: 可选标签和批大小等嵌入参数。
+
+        Returns:
+            dict[str, Any]: 图谱嵌入任务提交结果。
+        """
         return await self.submit_graph_embed_milvus_job(data=data)
 
     async def get_graph_embed_status(self) -> dict[str, Any]:
-        """获取知识图谱嵌入状态。"""
+        """获取知识图谱向量库嵌入状态。
+
+        Returns:
+            dict[str, Any]: 图谱向量库统计信息或错误响应。
+        """
         try:
             kg_store = await self._await_call(self._get_shared_kg_milvus_store)
             stats = await self._await_call(kg_store.get_stats)

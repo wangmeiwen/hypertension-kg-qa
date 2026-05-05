@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 
 import styles from "./AdminSubnav.module.css";
 
+// 管理后台二级导航，和路由配置保持同一组后台功能入口。
 export default function AdminSubnav() {
   const { t } = useTranslation();
 

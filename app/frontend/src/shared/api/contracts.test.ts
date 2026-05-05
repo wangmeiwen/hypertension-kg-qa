@@ -12,6 +12,7 @@ import {
 } from "./contracts";
 
 describe("API contracts", () => {
+  // 这些测试锁定前端对后端响应的最小解析契约，避免 schema 收紧导致页面运行时失败。
   it("parses supported stream event variants", () => {
     expect(streamEventSchema.parse({ type: "job", job_id: "job-1" })).toEqual({ type: "job", job_id: "job-1" });
     expect(streamEventSchema.parse({ type: "reply", msg: "回答片段" })).toEqual({ type: "reply", msg: "回答片段" });

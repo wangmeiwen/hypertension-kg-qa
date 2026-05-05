@@ -1,36 +1,83 @@
 .layout {
   display: grid;
-  gap: 24px;
+  gap: 14px;
+  height: calc(100vh - 56px);
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.title {
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.12;
+  font-weight: 800;
 }
 
 .body {
   display: grid;
   gap: 20px;
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  min-height: 0;
 }
 
-.status {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
+.chatColumn {
+  display: grid;
+  min-height: 0;
+  height: 100%;
 }
 
-.messageCard {
-  min-height: 420px;
+.chatBox {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
-.disclaimer {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-left: 4px solid var(--color-danger-500);
-  border-radius: 14px;
-  background: var(--color-danger-50);
-  color: var(--color-danger-700);
+.chatBox > div:last-child {
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+
+.chatScroll {
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  scroll-padding-bottom: 260px;
+}
+
+.messageArea {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+}
+
+.composerDock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 24px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -18px 42px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
 }
 
 @media (max-width: 1100px) {
+  .layout {
+    height: auto;
+  }
+
   .body {
     grid-template-columns: 1fr;
+  }
+
+  .chatColumn {
+    min-height: min(760px, calc(100vh - 96px));
+  }
+
+  .chatBox {
+    min-height: min(760px, calc(100vh - 96px));
   }
 }

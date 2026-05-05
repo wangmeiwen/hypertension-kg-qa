@@ -14,6 +14,7 @@ const AdminGraphPage = lazy(() => import("../pages/admin/AdminGraphPage"));
 const AdminDocumentsPage = lazy(() => import("../pages/admin/AdminDocumentsPage"));
 const AdminSettingsPage = lazy(() => import("../pages/admin/AdminSettingsPage"));
 
+// 统一声明应用路由树，并通过懒加载拆分前台、图谱和管理员页面代码。
 export default function AppRouter() {
   return (
     <AppErrorBoundary>

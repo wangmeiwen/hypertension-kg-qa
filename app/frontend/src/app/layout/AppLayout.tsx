@@ -1,21 +1,26 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import styles from "./AppLayout.module.css";
 import { Button } from "../../shared/ui/primitives";
 
 const NAV_COLLAPSE_KEY = "workspace_nav_collapsed";
 
+// 从 localStorage 恢复左侧导航折叠状态，保持用户跨刷新偏好。
 function getInitialCollapsed(): boolean {
   return window.localStorage.getItem(NAV_COLLAPSE_KEY) === "true";
 }
 
+// 工作台主布局承载侧边导航、语言切换和当前路由页面出口。
 export default function AppLayout() {
   const { t, i18n } = useTranslation();
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState(getInitialCollapsed);
+  const isChatRoute = location.pathname === "/chat";
 
   function toggleCollapsed() {
+    // 折叠状态同时写入本地存储，避免刷新后导航宽度跳变。
     const next = !collapsed;
     setCollapsed(next);
     window.localStorage.setItem(NAV_COLLAPSE_KEY, String(next));
@@ -54,8 +59,8 @@ export default function AppLayout() {
         </nav>
       </aside>
 
-      <main className={styles.content}>
-        <div className={styles.topbar}>
+      <main className={`${styles.content} ${isChatRoute ? styles.chatContent : ""}`.trim()}>
+        {!isChatRoute ? <div className={styles.topbar}>
           <div className={styles.languageSwitch}>
             <Button tone={i18n.language === "zh-CN" ? "primary" : "secondary"} onClick={() => void i18n.changeLanguage("zh-CN")}>
               {t("shell.chinese")}
@@ -64,7 +69,7 @@ export default function AppLayout() {
               {t("shell.english")}
             </Button>
           </div>
-        </div>
+        </div> : null}
         <Outlet />
       </main>
     </div>

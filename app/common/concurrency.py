@@ -19,13 +19,16 @@ class AsyncReaderWriterLock:
     """单进程异步读写锁：多读共享，写独占。"""
 
     def __init__(self) -> None:
+        """初始化读写锁状态。"""
         self._condition = asyncio.Condition()
         self._readers = 0
         self._writer = False
         self._waiting_writers = 0
 
     async def acquire_read(self, timeout: float | None = None) -> None:
+        """获取读锁，存在等待写者时会等待以避免写饥饿。"""
         async def _wait() -> None:
+            """等待当前写锁释放并登记读者。"""
             async with self._condition:
                 while self._writer or self._waiting_writers > 0:
                     await self._condition.wait()
@@ -34,13 +37,16 @@ class AsyncReaderWriterLock:
         await _wait_with_timeout(_wait(), timeout)
 
     async def release_read(self) -> None:
+        """释放读锁，并在最后一个读者退出时唤醒等待者。"""
         async with self._condition:
             self._readers = max(0, self._readers - 1)
             if self._readers == 0:
                 self._condition.notify_all()
 
     async def acquire_write(self, timeout: float | None = None) -> None:
+        """获取写锁，等待所有读者和写者退出。"""
         async def _wait() -> None:
+            """登记等待写者并等待独占进入条件。"""
             async with self._condition:
                 self._waiting_writers += 1
                 try:
@@ -53,12 +59,14 @@ class AsyncReaderWriterLock:
         await _wait_with_timeout(_wait(), timeout)
 
     async def release_write(self) -> None:
+        """释放写锁并唤醒所有等待者。"""
         async with self._condition:
             self._writer = False
             self._condition.notify_all()
 
 
 async def _wait_with_timeout(awaitable: Any, timeout: float | None) -> None:
+    """等待异步操作完成，并把超时统一转换为 LockAcquireTimeout。"""
     if timeout is None:
         await awaitable
         return
@@ -72,12 +80,14 @@ class ConcurrencyGuard:
     """统一管理 keyed lock、读写锁和可选持久锁。"""
 
     def __init__(self) -> None:
+        """初始化按 key 复用的异步锁、读写锁和同步锁容器。"""
         self._async_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._rw_locks: defaultdict[str, AsyncReaderWriterLock] = defaultdict(AsyncReaderWriterLock)
         self._sync_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
     @contextlib.asynccontextmanager
     async def keyed_lock(self, key: str, timeout: float | None = None) -> AsyncIterator[None]:
+        """获取指定 key 的进程内异步互斥锁。"""
         lock = self._async_locks[str(key)]
         await _wait_with_timeout(lock.acquire(), timeout)
         try:
@@ -87,6 +97,7 @@ class ConcurrencyGuard:
 
     @contextlib.asynccontextmanager
     async def reader_lock(self, key: str, timeout: float | None = None) -> AsyncIterator[None]:
+        """获取指定 key 的进程内读锁。"""
         lock = self._rw_locks[str(key)]
         await lock.acquire_read(timeout=timeout)
         try:
@@ -96,6 +107,7 @@ class ConcurrencyGuard:
 
     @contextlib.asynccontextmanager
     async def writer_lock(self, key: str, timeout: float | None = None) -> AsyncIterator[None]:
+        """获取指定 key 的进程内写锁。"""
         lock = self._rw_locks[str(key)]
         await lock.acquire_write(timeout=timeout)
         try:
@@ -105,6 +117,7 @@ class ConcurrencyGuard:
 
     @contextlib.contextmanager
     def sync_keyed_lock(self, key: str) -> Iterator[None]:
+        """获取指定 key 的进程内同步互斥锁。"""
         lock = self._sync_locks[str(key)]
         with lock:
             yield
@@ -158,6 +171,7 @@ class ConcurrencyGuard:
             )
 
     async def heartbeat_mysql_lock(self, key: str, owner: str, ttl_seconds: int = 900) -> None:
+        """刷新 MySQL 持久锁的心跳和过期时间。"""
         from app.backend.repositories.database import execute
 
         await execute(

@@ -1,6 +1,6 @@
 ﻿"""feature_flags 模块。
 
-提供 feature_flags 相关能力与对外接口。
+从环境变量读取布尔型 feature flag，并提供诊断接口使用的开关快照。
 """
 
 
