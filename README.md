@@ -32,24 +32,31 @@ flowchart LR
 
 - Python 3.11.14
 - FastAPI
-- SQLAlchemy + asyncmy
+- SQLAlchemy 2.x + asyncmy
 - LangChain / LangGraph
+- A2A SDK
 - Neo4j Python Driver
 - PyMilvus
 - Docling
 - OpenAI / ZhipuAI 接口
+- LangSmith（可选）
 
 ### 前端
 
-- React 18
-- Vite
+- React 18.3
+- Vite 5
+- React Router 7
+- TanStack Query
+- Zustand
 - react-force-graph-2d
+- Vitest / Playwright
 
 ### 基础设施
 
 - MySQL 8.x
 - Neo4j 5.x
 - Milvus 2.x
+- MinIO（Milvus 依赖）
 
 ## 目录结构
 
@@ -122,9 +129,10 @@ cd ../..
 
 ```env
 # LLM
-MODEL_API_KEY=your-api-key
+MODEL_API_KEY=your-model-api-key
 MODEL_BASE_URL=https://your-llm-endpoint
 MODEL_NAME=your-model-name
+SESSION_MEMORY_MODEL_NAME=your-session-memory-model-name
 
 # MySQL
 MYSQL_HOST=127.0.0.1
@@ -142,12 +150,15 @@ MILVUS_HOST=127.0.0.1
 MILVUS_PORT=19531
 MILVUS_DATABASE_NAME=hypertension_kg
 
+# OCR / multimodal（可选）
+ZHIPU_API_KEY=your-zhipu-api-key
+
 # Admin
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change-me
 ```
 
-完整变量请参考 `.env.example` 与以下配置聚合位置：
+完整变量请参考 `.env.example`（含 LLM 超时/重试、RAG/KG 召回、A2A 限制、限流/熔断等）与以下配置聚合位置：
 
 - [app/common/config.py](./app/common/config.py)
 - [app/backend/config.py](./app/backend/config.py)
@@ -293,6 +304,8 @@ npm run dev
 VITE_BACKEND_URL=http://127.0.0.1:8000
 ```
 
+如需放开跨域来源，可在根目录 `.env` 中调整 `ALLOWED_ORIGINS`。
+
 ## 数据与模型
 
 - [data](./data)：样例 PDF、DOCX 与图谱元数据
@@ -313,6 +326,15 @@ mypy app
 
 # 运行 pytest
 pytest
+```
+
+### 前端命令（app/frontend）
+
+```powershell
+npm run lint
+npm run test
+npm run test:e2e
+npm run build
 ```
 
 ### 当前测试现状
