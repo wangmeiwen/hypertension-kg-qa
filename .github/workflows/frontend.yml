@@ -4,10 +4,16 @@ on:
   push:
     paths:
       - "app/frontend/**"
+      - "app/backend/testing/**"
+      - "app/backend/app_factory.py"
+      - "requirements.txt"
       - ".github/workflows/frontend.yml"
   pull_request:
     paths:
       - "app/frontend/**"
+      - "app/backend/testing/**"
+      - "app/backend/app_factory.py"
+      - "requirements.txt"
       - ".github/workflows/frontend.yml"
 
 jobs:
