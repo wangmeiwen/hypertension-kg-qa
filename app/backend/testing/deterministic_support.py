@@ -11,6 +11,9 @@ from app.backend.app_factory import BackendAppTestOverrides
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
 
 
+MEDICAL_DISCLAIMER = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
+
+
 class DeterministicMcpServer:
     """轻量 MCP 测试桩。"""
 
@@ -226,7 +229,7 @@ class DeterministicA2AEventStreamService:
         """按固定顺序生成 job、msg、reply 和 done 事件。"""
         _ = user_id, session_id, request_id, image_data, memory_context
         question = str(original_input_text or input_text or "").strip()
-        reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}"
+        reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}\n\n{MEDICAL_DISCLAIMER}"
         yield {"type": "job", "job_id": f"job-{session_id or 'deterministic'}"}
         yield {"type": "msg", "stage": "orchestrator", "msg": "主控编排完成"}
         yield {"type": "reply", "msg": reply}
@@ -326,7 +329,7 @@ class DeterministicSessionStreamService:
         """生成固定聊天流并在内存态会话中写入助手消息。"""
         _ = user_id, image_data, request_id, memory_context
         question = str(original_input_text or input_text or "").strip()
-        reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}"
+        reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}\n\n{MEDICAL_DISCLAIMER}"
         yield _json_line({"type": "session", "session_id": session_id, "user_message_id": int(user_message_id or 0)})
         yield _json_line({"type": "job", "job_id": f"job-{session_id or 'deterministic'}"})
         yield _json_line({"type": "msg", "stage": "orchestrator", "msg": "主控编排完成"})
