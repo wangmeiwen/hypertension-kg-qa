@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import styles from "./AdminGraphWorkspace.module.css";
+import KnowledgeGraphCanvas from "../../../entities/graph/ui/KnowledgeGraphCanvas";
 import type { AdminGraphRelationship, GraphJob, GraphNode } from "../../../shared/api/contracts";
 import {
   createGraphNode,
@@ -10,6 +11,7 @@ import {
   deleteGraphNode,
   deleteGraphRelationship,
   executeCypherQuery,
+  fetchGraph,
   getGraphEmbedStatus,
   getGraphLabels,
   getGraphNode,
@@ -106,6 +108,7 @@ export default function AdminGraphWorkspace() {
   const [limit, setLimit] = useState(50);
   const [page, setPage] = useState(1);
   const [selectedNodeId, setSelectedNodeId] = useState<string | number | null>(null);
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("");
   const [nodeModal, setNodeModal] = useState<{ mode: "create" | "edit"; open: boolean }>({ mode: "create", open: false });
   const [nodeLabel, setNodeLabel] = useState("");
   const [nodePropertiesText, setNodePropertiesText] = useState('{\n  "name": ""\n}');
@@ -127,6 +130,10 @@ export default function AdminGraphWorkspace() {
   const nodesQuery = useQuery({
     queryKey: queryKeys.graph.nodes(label, keyword, page, limit),
     queryFn: () => getGraphNodes({ label, keyword, limit, offset: (page - 1) * limit }),
+  });
+  const graphPreviewQuery = useQuery({
+    queryKey: queryKeys.graph.visualization(keyword, limit),
+    queryFn: () => fetchGraph(keyword, limit),
   });
   const nodeDetailQuery = useQuery({
     queryKey: queryKeys.graph.node(selectedNodeId),
@@ -153,6 +160,7 @@ export default function AdminGraphWorkspace() {
       setNodeModal({ mode: "create", open: false });
       setSelectedNodeId(node.id);
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.nodes(label, keyword, page, limit) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_create_node");
@@ -167,6 +175,7 @@ export default function AdminGraphWorkspace() {
       setNodeModal({ mode: "edit", open: false });
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.nodes(label, keyword, page, limit) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.node(selectedNodeId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_update_node");
@@ -179,7 +188,9 @@ export default function AdminGraphWorkspace() {
     onSuccess: async () => {
       setFeedback(t("admin.graphWorkspace.deleteSuccess"));
       setSelectedNodeId(null);
+      setSelectedGraphNodeId("");
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.nodes(label, keyword, page, limit) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_delete_node");
@@ -199,6 +210,7 @@ export default function AdminGraphWorkspace() {
       setFeedback(t("admin.graphWorkspace.relationshipSuccess"));
       setRelationshipOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.node(selectedNodeId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_create_relationship");
@@ -211,6 +223,7 @@ export default function AdminGraphWorkspace() {
     onSuccess: async () => {
       setFeedback(t("admin.graphWorkspace.deleteRelationshipSuccess"));
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.node(selectedNodeId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_delete_relationship");
@@ -296,6 +309,7 @@ export default function AdminGraphWorkspace() {
 
   const selectedNode = nodeDetailQuery.data?.node;
   // 派生分页、向量状态和任务列表展示数据，避免 JSX 中重复格式化。
+  const graphPreview = graphPreviewQuery.data ?? { nodes: [], links: [] };
   const totalPages = Math.max(1, Math.ceil((nodesQuery.data?.total || 0) / limit));
   const embedStatusText = useMemo(() => JSON.stringify(embedStatusQuery.data || {}, null, 2), [embedStatusQuery.data]);
   const jobs = jobsQuery.data || [];
@@ -319,6 +333,35 @@ export default function AdminGraphWorkspace() {
 
       <div className={styles.grid}>
         <div className={styles.primaryColumn}>
+          <Card
+            title={t("admin.graphWorkspace.graphPreview")}
+            action={
+              <div className={`${styles.inlineActions} ${styles.graphPreviewActions}`}>
+                <Badge>{t("graph.nodesLoaded", { nodes: graphPreview.nodes.length, links: graphPreview.links.length })}</Badge>
+                <Button tone="secondary" onClick={() => void graphPreviewQuery.refetch()}>
+                  {t("common.refresh")}
+                </Button>
+              </div>
+            }
+          >
+            {graphPreviewQuery.error ? (
+              <InlineNotice tone="error">
+                {graphPreviewQuery.error instanceof Error ? graphPreviewQuery.error.message : String(graphPreviewQuery.error)}
+              </InlineNotice>
+            ) : null}
+            <KnowledgeGraphCanvas
+              graph={graphPreview}
+              className={styles.graphPreviewCanvas}
+              selectedNodeId={selectedGraphNodeId}
+              onNodeSelect={(node) => {
+                setSelectedGraphNodeId(node ? String(node.id) : "");
+                setSelectedNodeId(node ? node.id : null);
+              }}
+              onOpenDetail={(entityId) => setSelectedNodeId(entityId)}
+              emptyText={t("graph.noGraph")}
+            />
+          </Card>
+
           <Card
             title={t("admin.graphWorkspace.nodeList")}
             action={

@@ -18,6 +18,7 @@ class RagSubAgentState(TypedDict, total=False):
     tool_name: str
     arguments: dict[str, Any]
     query_terms: list[str]
+    attempt_count: int
     query_statements: list[dict[str, Any]]
     tool_calls: list[dict[str, Any]]
     tool_results: list[dict[str, Any]]

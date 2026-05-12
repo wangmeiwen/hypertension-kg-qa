@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.common.config import Config
+from app.core.config import Config
 
 
 def _normalize_query_terms(query_terms: list[str] | None) -> list[str]:

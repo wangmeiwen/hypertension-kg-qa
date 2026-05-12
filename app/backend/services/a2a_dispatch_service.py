@@ -11,7 +11,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.a2a import A2AService
-from app.common.langsmith_tracing import set_trace_metadata
+from app.core.langsmith_tracing import set_trace_metadata
 
 
 class A2ADispatchService:

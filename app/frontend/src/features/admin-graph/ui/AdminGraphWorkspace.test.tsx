@@ -12,6 +12,7 @@ const graphClientMocks = vi.hoisted(() => ({
   deleteGraphNode: vi.fn(),
   deleteGraphRelationship: vi.fn(),
   executeCypherQuery: vi.fn(),
+  fetchGraph: vi.fn(),
   getGraphEmbedStatus: vi.fn(),
   getGraphLabels: vi.fn(),
   getGraphNode: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("../../../shared/api/graphClient", () => ({
   deleteGraphNode: graphClientMocks.deleteGraphNode,
   deleteGraphRelationship: graphClientMocks.deleteGraphRelationship,
   executeCypherQuery: graphClientMocks.executeCypherQuery,
+  fetchGraph: graphClientMocks.fetchGraph,
   getGraphEmbedStatus: graphClientMocks.getGraphEmbedStatus,
   getGraphLabels: graphClientMocks.getGraphLabels,
   getGraphNode: graphClientMocks.getGraphNode,
@@ -38,6 +40,14 @@ vi.mock("../../../shared/api/graphClient", () => ({
   submitGraphEmbedMilvus: graphClientMocks.submitGraphEmbedMilvus,
   submitGraphExtractImport: graphClientMocks.submitGraphExtractImport,
   updateGraphNode: graphClientMocks.updateGraphNode,
+}));
+
+vi.mock("../../../entities/graph/ui/KnowledgeGraphCanvas", () => ({
+  default: ({ graph }: { graph: { nodes: unknown[]; links: unknown[] } }) => (
+    <div data-testid="graph-preview">
+      {graph.nodes.length} nodes / {graph.links.length} links
+    </div>
+  ),
 }));
 
 describe("AdminGraphWorkspace", () => {
@@ -62,6 +72,10 @@ describe("AdminGraphWorkspace", () => {
     graphClientMocks.deleteGraphNode.mockResolvedValue(undefined);
     graphClientMocks.deleteGraphRelationship.mockResolvedValue(undefined);
     graphClientMocks.executeCypherQuery.mockResolvedValue([]);
+    graphClientMocks.fetchGraph.mockResolvedValue({
+      nodes: [{ id: 1, name: "高血压", label: "Disease" }],
+      links: [],
+    });
     graphClientMocks.submitGraphEmbedMilvus.mockResolvedValue({ job_id: "job-2", status: "queued" });
     graphClientMocks.submitGraphExtractImport.mockResolvedValue({ job_id: "job-3", status: "queued" });
     graphClientMocks.updateGraphNode.mockResolvedValue(undefined);

@@ -7,8 +7,8 @@ from typing import Any, Awaitable, Callable, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app.common.db_manager import check_databases
-from app.common.langsmith_tracing import set_trace_metadata
+from app.backend.infrastructure.database_health import check_databases
+from app.core.langsmith_tracing import set_trace_metadata
 
 
 def create_system_mcp_router(

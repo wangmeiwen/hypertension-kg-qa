@@ -64,7 +64,7 @@ export const resources = {
         assistant: "助手",
         user: "用户",
         noMessages: "还没有消息，先提出第一个问题。",
-        fileTooLarge: "文件大小不能超过 20MB。",
+        fileTooLarge: "文件大小不能超过 150MB。",
         unsupportedFile: "暂不支持该文件类型。",
         deleteConfirm: "确认永久删除这个会话吗？",
         disclaimer:
@@ -181,6 +181,7 @@ export const resources = {
           embedGraph: "图谱向量化",
         },
         graphWorkspace: {
+          graphPreview: "图谱预览",
           nodeList: "节点列表",
           nodeDetail: "节点详情",
           labelFilter: "标签筛选",
@@ -297,7 +298,7 @@ export const resources = {
         assistant: "Assistant",
         user: "User",
         noMessages: "No messages yet. Ask the first question to begin.",
-        fileTooLarge: "File size must be less than 20MB.",
+        fileTooLarge: "File size must be less than 150MB.",
         unsupportedFile: "This file type is not supported.",
         deleteConfirm: "Delete this session permanently?",
         disclaimer:
@@ -414,6 +415,7 @@ export const resources = {
           embedGraph: "Embed graph",
         },
         graphWorkspace: {
+          graphPreview: "Graph preview",
           nodeList: "Node list",
           nodeDetail: "Node detail",
           labelFilter: "Label filter",

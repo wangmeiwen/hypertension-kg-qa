@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 
 def test_concurrency_guard_reader_times_out_while_writer_holds_lock() -> None:
     """验证写锁持有期间读锁会按 timeout 快速失败。"""
-    from app.common.concurrency import ConcurrencyGuard, LockAcquireTimeout
+    from app.core.concurrency import ConcurrencyGuard, LockAcquireTimeout
 
     async def run_case() -> None:
         guard = ConcurrencyGuard()
@@ -27,7 +27,7 @@ def test_concurrency_guard_reader_times_out_while_writer_holds_lock() -> None:
 
 
 def test_concurrency_guard_keyed_lock_serializes_same_key() -> None:
-    from app.common.concurrency import ConcurrencyGuard
+    from app.core.concurrency import ConcurrencyGuard
 
     async def run_case() -> None:
         guard = ConcurrencyGuard()
@@ -50,7 +50,7 @@ def test_concurrency_guard_keyed_lock_serializes_same_key() -> None:
 
 def test_append_jsonl_atomic_concurrent_writes_are_complete(tmp_path: Path) -> None:
     """验证多线程追加 JSONL 时不会出现行丢失或半行写入。"""
-    from app.common.session_logger import append_jsonl_atomic
+    from app.backend.observability.session_logger import append_jsonl_atomic
 
     target = tmp_path / "logs" / "sessions" / "session-1" / "turns.jsonl"
 
@@ -66,6 +66,12 @@ def test_append_jsonl_atomic_concurrent_writes_are_complete(tmp_path: Path) -> N
     rows = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 25
     assert sorted(row["index"] for row in rows) == list(range(25))
+
+
+def test_session_logger_project_root_points_to_repo_root() -> None:
+    import app.backend.observability.session_logger as module
+
+    assert module._project_root() == Path(__file__).resolve().parents[3]
 
 
 def test_document_embedding_jobs_serialize_same_collection_writes() -> None:

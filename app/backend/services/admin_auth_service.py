@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.common.auth_simple import get_current_admin_user, is_logged_in, logout, verify_login
+from app.backend.security.admin_auth import get_current_admin_user, is_logged_in, logout, verify_login
 
 
 class AdminAuthService:

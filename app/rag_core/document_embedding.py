@@ -40,7 +40,7 @@ from app.document_parser.document_segmentation import DocumentSegmentation
 from app.document_parser.docling_parser import ParsedDocument
 
 # 导入配置
-from app.common.config import Config
+from app.core.config import Config
 
 # 导入向量存储
 from app.rag_core.vector_store import VectorStore

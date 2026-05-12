@@ -251,6 +251,7 @@ class A2AEventStreamService:
         strategy: str = "iterative",
         max_turns: Optional[int] = None,
         image_data: Any = None,
+        file_id: str = "",
         original_input_text: str = "",
         memory_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -264,6 +265,7 @@ class A2AEventStreamService:
             strategy: Agent 运行策略。
             max_turns: 最大编排轮次。
             image_data: 可选图片数据。
+            file_id: 可选阿里 File API 文件 ID。
             original_input_text: 未改写前的原始输入。
             memory_context: 会话记忆上下文。
 
@@ -288,6 +290,8 @@ class A2AEventStreamService:
             metadata["max_turns"] = max_turns
         if image_data:
             metadata["image_data"] = str(image_data)
+        if str(file_id or "").strip():
+            metadata["file_id"] = str(file_id or "").strip()
 
         message = {
             "role": "user",

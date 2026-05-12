@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
+const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
 const MEDICAL_DISCLAIMER_TEXTS = [
   "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。",
   "回答仅供信息参考，不能替代临床诊断或紧急医疗处置。",
@@ -36,7 +36,7 @@ const parseMarkdownTableRow = (line: string): string[] => {
 };
 
 const renderInlineMarkdown = (text: string, keyPrefix: string): ReactNode[] | string => {
-  // 仅支持项目回答中常见的粗体、行内代码和 http/mailto 链接。
+  // 仅支持项目回答中常见的粗体、斜体、行内代码和 http/mailto 链接。
   const safeText = String(text || "");
   if (!safeText) return "";
 
@@ -45,6 +45,14 @@ const renderInlineMarkdown = (text: string, keyPrefix: string): ReactNode[] | st
 
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return <strong key={`${keyPrefix}-strong-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <em key={`${keyPrefix}-em-${index}`}>{part.slice(1, -1).trim()}</em>;
+    }
+
+    if (part.startsWith("_") && part.endsWith("_") && part.length > 2) {
+      return <em key={`${keyPrefix}-em-${index}`}>{part.slice(1, -1).trim()}</em>;
     }
 
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {

@@ -34,6 +34,31 @@ describe("MessageComposer", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
+  it("limits draft input to 500 characters", () => {
+    const onDraftChange = vi.fn();
+
+    renderWithProviders(
+      <MessageComposer
+        draft=""
+        loading={false}
+        stopping={false}
+        selectedFile={null}
+        filePreview={null}
+        onDraftChange={onDraftChange}
+        onFileChange={vi.fn()}
+        onClearFile={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: "问题输入" }), {
+      target: { value: "高".repeat(520) },
+    });
+
+    expect(onDraftChange).toHaveBeenLastCalledWith("高".repeat(500));
+  });
+
   it("shows attachment preview and supports removal", async () => {
     const user = userEvent.setup();
     const file = new File(["hello"], "guide.pdf", { type: "application/pdf" });

@@ -142,6 +142,7 @@ def create_query_chat_router(
         user_id = str(data.get("user_id") or "")
         image_data = data.get("image", None)
         file_name = str(data.get("file_name") or "").strip()
+        file_id = str(data.get("file_id") or "").strip()
 
         session_turn_service.bind_process_session_trace_metadata(
             trace_id=trace_id,
@@ -167,6 +168,7 @@ def create_query_chat_router(
             user_id=user_id,
             image_data=image_data,
             file_name=file_name,
+            file_id=file_id,
         )
         if not bool(prepared.get("ok")):
             return {"ok": False, "error": str(prepared.get("error") or "unknown"), "trace_id": trace_id}
@@ -180,6 +182,7 @@ def create_query_chat_router(
                 user_id=str(prepared.get("user_id") or ""),
                 session_id=str(prepared.get("session_id") or ""),
                 image_data=image_data,
+                file_id=file_id,
                 user_message_id=int(prepared.get("user_message_id") or 0),
                 request_id=str(getattr(request.state, "request_id", "") or ""),
                 original_input_text=str(prepared.get("original_input_text") or input_text or ""),

@@ -1,4 +1,4 @@
-﻿"""数据库健康检查工具（异步）。
+"""数据库健康检查工具（异步）。
 
 该模块提供对 Neo4j 与 Milvus 的基础可达性检查能力，
 用于系统启动前自检、健康接口输出与故障快速定位。
@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from app.common.config import Config
+from app.core.config import Config
 
 conf = Config()
 logger = logging.getLogger(__name__)

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from app.backend.config import BackendConfig
-from app.common.request_rate_limiter import InMemorySlidingWindowRateLimiter
+from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 
 if TYPE_CHECKING:
     from app.a2a import A2AService

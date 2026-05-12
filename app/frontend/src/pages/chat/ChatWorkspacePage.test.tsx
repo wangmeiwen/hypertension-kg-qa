@@ -47,6 +47,14 @@ async function* failedStream() {
   throw new Error("问答流式请求失败");
 }
 
+async function* cumulativeReplyStream() {
+  yield { type: "session" as const, session_id: "s1" };
+  yield { type: "reply" as const, msg: "第一段" };
+  yield { type: "reply" as const, msg: "第一段第二段" };
+  yield { type: "reply" as const, msg: "第一段第二段" };
+  yield { type: "done" as const, status: "succeeded" };
+}
+
 describe("ChatWorkspacePage", () => {
   // 每个用例重置 store 和 session API mock，避免流式状态串扰。
   beforeEach(() => {
@@ -112,7 +120,35 @@ describe("ChatWorkspacePage", () => {
       "s1",
       null,
       "",
+      "",
     );
+  });
+
+  it("passes uploaded aliyun file id to the streaming request", async () => {
+    const user = userEvent.setup();
+    sessionClientMocks.uploadChatFile.mockResolvedValue({
+      base64: "",
+      file_id: "file-abc",
+      original_name: "guide.pdf",
+    });
+    sessionClientMocks.streamProcessWithSession.mockImplementation(successfulStream);
+
+    renderWithProviders(<ChatWorkspacePage />);
+
+    await user.upload(screen.getByLabelText("上传文件"), new File(["pdf"], "guide.pdf", { type: "application/pdf" }));
+    await user.type(screen.getByRole("textbox", { name: "问题输入" }), "总结这个文件");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(sessionClientMocks.streamProcessWithSession).toHaveBeenCalledWith(
+        "总结这个文件",
+        expect.any(String),
+        "s1",
+        null,
+        "guide.pdf",
+        "file-abc",
+      );
+    });
   });
 
   it("shows failure feedback when streaming fails", async () => {
@@ -125,6 +161,31 @@ describe("ChatWorkspacePage", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     expect(await screen.findAllByText("问答流式请求失败")).not.toHaveLength(0);
+  });
+
+  it("does not duplicate cumulative streaming reply chunks", async () => {
+    const user = userEvent.setup();
+    sessionClientMocks.streamProcessWithSession.mockImplementation(cumulativeReplyStream);
+    sessionClientMocks.getSession.mockResolvedValue({
+      id: "s1",
+      user_id: "u1",
+      title: "新建会话",
+      message_count: 2,
+      created_at: "2026-01-01",
+      updated_at: "2026-01-01",
+      messages: [
+        { id: 11, role: "user", content: "测试累计片段" },
+        { id: 12, role: "assistant", content: "第一段第二段" },
+      ],
+    });
+
+    renderWithProviders(<ChatWorkspacePage />);
+
+    await user.type(screen.getByRole("textbox", { name: "问题输入" }), "测试累计片段");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findByText("第一段第二段")).toBeVisible();
+    expect(screen.queryByText("第一段第一段第二段")).not.toBeInTheDocument();
   });
 
   it("restores a user message for resend", async () => {

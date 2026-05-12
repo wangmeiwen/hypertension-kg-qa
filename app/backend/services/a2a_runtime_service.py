@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
 from app.backend.services.session_memory_service import SessionMemoryService
-from app.common.feature_flags import get_runtime_flag_snapshot
+from app.core.feature_flags import get_runtime_flag_snapshot
 
 if TYPE_CHECKING:
     from app.a2a import A2AService
@@ -128,6 +128,7 @@ class A2ARuntimeService:
         raw_max_turns = meta.get("max_turns")
         max_turns: Optional[int] = raw_max_turns if isinstance(raw_max_turns, int) and raw_max_turns > 0 else None
         image_data = str(meta.get("image_data") or "").strip()
+        file_id = str(meta.get("file_id") or "").strip()
         original_input_text = str(meta.get("original_input_text") or input_text or "").strip()
         memory_context_obj = meta.get("memory_context")
         memory_context = memory_context_obj if isinstance(memory_context_obj, dict) else {}
@@ -141,6 +142,7 @@ class A2ARuntimeService:
             strategy=strategy,
             max_turns=max_turns,
             image_data=image_data,
+            file_id=file_id,
             original_input_text=original_input_text,
             memory_context=memory_context,
             cancel_check=cancel_check,

@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.a2a.mcp.tool_gateway import MCPToolGateway
+from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.models import SubAgentResult
 from app.a2a.subagents.kg.query_builder import (
     build_kg_entity_relation_payload,
     build_kg_query_payload,
     validate_generated_payload,
+)
+from app.a2a.subagents.retry_utils import (
+    MAX_SUBAGENT_TOOL_CALLS,
+    build_query_variants,
+    query_variant_for_attempt,
 )
 from app.a2a.subagents.kg.state import KgSubAgentState
 
@@ -88,8 +93,8 @@ async def node_validate_constraints(state: KgSubAgentState) -> KgSubAgentState:
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
     if bool(constraints.get("allow_extra_retrieval")):
         raise PermissionError("kg_subagent_extra_retrieval_not_allowed")
-    max_tool_calls = int(constraints.get("max_tool_calls") or 1)
-    constraints["max_tool_calls"] = max(1, min(max_tool_calls, 8))
+    max_tool_calls = int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS)
+    constraints["max_tool_calls"] = max(1, min(max_tool_calls, MAX_SUBAGENT_TOOL_CALLS))
     state["constraints"] = constraints
     return state
 
@@ -123,6 +128,47 @@ def _resolve_tool_plan(state: KgSubAgentState) -> list[dict[str, Any]]:
     return [{"tool_name": "kg_entity_relation_search", "arguments": arguments, "question": question, "query_terms": query_terms}]
 
 
+def _extract_retry_terms_from_evidence(state: KgSubAgentState) -> list[str]:
+    """从已有 KG 证据中抽取下一轮检索可用的实体/关系词。"""
+    evidence_obj = state.get("evidence")
+    evidence = evidence_obj if isinstance(evidence_obj, list) else []
+    terms: list[str] = []
+    for row in evidence:
+        item = row if isinstance(row, dict) else {}
+        for key in ("entity", "relationship", "record"):
+            payload_obj = item.get(key)
+            payload = payload_obj if isinstance(payload_obj, dict) else {}
+            properties_obj = payload.get("properties")
+            properties = properties_obj if isinstance(properties_obj, dict) else payload
+            for field in ("name", "canonical_name", "alias", "relation", "type"):
+                value = str(properties.get(field) or "").strip()
+                if value:
+                    terms.append(value)
+    return terms
+
+
+def _arguments_for_attempt(state: KgSubAgentState, tool_name: str, attempt_index: int) -> dict[str, Any]:
+    """根据当前轮次生成 KG 工具参数。"""
+    arguments_obj = state.get("arguments")
+    arguments = dict(arguments_obj) if isinstance(arguments_obj, dict) else {}
+    question = str(state.get("input_question") or "").strip()
+    query_terms_obj = state.get("query_terms")
+    query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
+    variants = build_query_variants(
+        question=question,
+        arguments=arguments,
+        query_terms=query_terms,
+        evidence_terms=_extract_retry_terms_from_evidence(state),
+    )
+    selected_query = query_variant_for_attempt(variants, attempt_index)
+    if attempt_index <= 1:
+        return arguments
+    retry_arguments = dict(arguments)
+    retry_arguments.pop("cypher", None)
+    retry_arguments["keyword" if tool_name == "kg_query" else "query"] = selected_query
+    return retry_arguments
+
+
 async def node_generate_query_statements(state: KgSubAgentState) -> KgSubAgentState:
     """根据工具计划生成 KG 查询语句和工具调用载荷。
 
@@ -132,19 +178,27 @@ async def node_generate_query_statements(state: KgSubAgentState) -> KgSubAgentSt
     Returns:
         写入 query_statements 与 tool_calls 后的状态。
     """
-    plans = _resolve_tool_plan(state)
     constraints = state.get("constraints") if isinstance(state.get("constraints"), dict) else {}
-    max_tool_calls = max(1, int(constraints.get("max_tool_calls") or 1))
-    plans = plans[:max_tool_calls]
+    max_tool_calls = max(1, min(int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS), MAX_SUBAGENT_TOOL_CALLS))
+    tool_results_obj = state.get("tool_results")
+    tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
+    remaining_calls = max_tool_calls - len(tool_results)
+    if remaining_calls <= 0:
+        state["tool_calls"] = []
+        return state
 
-    query_statements: list[dict[str, Any]] = []
+    attempt_index = int(state.get("attempt_count") or 0) + 1
+    state["attempt_count"] = attempt_index
+    plans = _resolve_tool_plan(state)[:remaining_calls]
+
+    existing_statements_obj = state.get("query_statements")
+    query_statements = existing_statements_obj if isinstance(existing_statements_obj, list) else []
     tool_calls: list[dict[str, Any]] = []
 
     for plan in plans:
         tool_name = str(plan.get("tool_name") or "").strip()
         question = str(plan.get("question") or "").strip()
-        arguments_obj = plan.get("arguments")
-        arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+        arguments = _arguments_for_attempt(state, tool_name, attempt_index)
         query_terms_obj = plan.get("query_terms")
         query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
         query_terms = [item for item in query_terms if item]
@@ -176,7 +230,9 @@ async def node_execute_tools(state: KgSubAgentState, tool_gateway: MCPToolGatewa
     calls_obj = state.get("tool_calls")
     calls = calls_obj if isinstance(calls_obj, list) else []
     tool_results = await tool_gateway.invoke_batch(calls, allow_parallel=True)
-    state["tool_results"] = tool_results
+    previous_obj = state.get("tool_results")
+    previous = previous_obj if isinstance(previous_obj, list) else []
+    state["tool_results"] = [*previous, *tool_results]
     return state
 
 
@@ -237,6 +293,8 @@ async def node_normalize_results(state: KgSubAgentState) -> KgSubAgentState:
     state["reason"] = "no_signal" if len(evidence) == 0 else "ok"
     state["telemetry"] = {
         "tool_calls": len(rows),
+        "query_rounds": int(state.get("attempt_count") or 0),
+        "max_tool_calls": int((state.get("constraints") if isinstance(state.get("constraints"), dict) else {}).get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS),
         "signal_count": len(evidence),
         "ok_count": sum(1 for row in rows if isinstance(row, dict) and bool(row.get("ok"))),
     }

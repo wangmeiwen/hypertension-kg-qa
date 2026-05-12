@@ -1,4 +1,4 @@
-﻿"""
+"""
 RAG 运行时共享资源。
 
 集中复用 Milvus 向量存储对象，避免在热路径重复初始化模型与客户端。
@@ -10,7 +10,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import Dict, Optional
 
-from app.common.config import Config
+from app.core.config import Config
 from app.rag_core.kg_milvus_store import KgMilvusStore
 from app.rag_core.vector_store import VectorStore
 

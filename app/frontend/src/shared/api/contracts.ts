@@ -62,6 +62,12 @@ export const uploadFileResultSchema = z
   .object({
     is_image: z.boolean().optional(),
     base64: z.string().optional(),
+    file_id: z.string().optional(),
+    aliyun_file_id: z.string().optional(),
+    provider: z.string().optional(),
+    original_name: z.string().optional(),
+    filename: z.string().optional(),
+    url: z.string().optional(),
   })
   .passthrough();
 

@@ -2,13 +2,36 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 import uuid
 
 from fastapi import UploadFile
+import httpx
 
 from app.backend.repositories.database import MessageManager, SessionManager
+from app.core.config import Config
+
+
+CHAT_FILE_API_EXTENSIONS = {
+    ".txt",
+    ".docx",
+    ".pdf",
+    ".xlsx",
+    ".epub",
+    ".mobi",
+    ".md",
+    ".csv",
+    ".json",
+    ".bmp",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+}
+CHAT_IMAGE_EXTENSIONS = {".bmp", ".png", ".jpg", ".jpeg", ".gif"}
+ALIYUN_FILE_API_MAX_BYTES = 150 * 1024 * 1024
 
 
 class SessionsHistoryService:
@@ -42,6 +65,18 @@ class SessionsHistoryService:
         self._get_session_memory_service = get_session_memory_service
         self._upload_dir = upload_dir
         self._log_api_error = log_api_error
+
+    @staticmethod
+    def _strip_runtime_message_fields(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """移除普通聊天历史不需要返回给浏览器的大字段。
+
+        Args:
+            messages: 仓储返回的消息列表。
+
+        Returns:
+            list[dict[str, Any]]: 去掉运行时思考内容后的消息列表。
+        """
+        return [{key: value for key, value in message.items() if key != "think_content"} for message in messages]
 
     async def _refresh_memory_after_rollback(self, session_id: str, user_id: str, operation: str) -> dict[str, Any]:
         """回撤消息后按剩余历史重建会话记忆。
@@ -121,7 +156,7 @@ class SessionsHistoryService:
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found"}
 
-        messages = await self._await_call(MessageManager.get_messages, session_id)
+        messages = self._strip_runtime_message_fields(await self._await_call(MessageManager.get_messages, session_id))
         return {"ok": True, "data": {**session, "messages": messages}}
 
     async def update_session(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -214,7 +249,7 @@ class SessionsHistoryService:
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found"}
 
-        messages = await self._await_call(MessageManager.get_messages, session_id)
+        messages = self._strip_runtime_message_fields(await self._await_call(MessageManager.get_messages, session_id))
         return {"ok": True, "data": messages}
 
     async def rollback_to_question(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -254,37 +289,40 @@ class SessionsHistoryService:
         }
 
     async def upload_file(self, file: UploadFile) -> dict[str, Any]:
-        """上传聊天文件并返回前端可用的文件信息。
+        """上传聊天文件到阿里 File API，并返回前端和模型可用的文件信息。
 
         Args:
             file: FastAPI 上传文件对象。
 
         Returns:
-            dict[str, Any]: 保存后的文件名、URL、原始名和可选图片 base64。
+            dict[str, Any]: 本地备份信息、阿里 file_id、原始名和可选图片 base64。
         """
         if not file.filename:
             return {"ok": False, "error": "文件名不能为空"}
 
-        image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-        doc_extensions = {".md", ".doc", ".docx", ".pdf", ".ppt", ".txt"}
-        allowed_extensions = image_extensions | doc_extensions
         file_ext = Path(file.filename).suffix.lower()
 
-        if file_ext not in allowed_extensions:
-            return {"ok": False, "error": f"不支持的图片格式: {file_ext}"}
+        if file_ext not in CHAT_FILE_API_EXTENSIONS:
+            return {"ok": False, "error": f"不支持的文件格式: {file_ext}"}
 
         try:
-            import base64
-
             content = await file.read()
-            file_id = str(uuid.uuid4())
-            filename = f"{file_id}{file_ext}"
+            if len(content) > ALIYUN_FILE_API_MAX_BYTES:
+                return {"ok": False, "error": "文件大小不能超过 150MB"}
+
+            aliyun_file = await self._upload_to_aliyun_file_api(str(file.filename), content)
+            aliyun_file_id = str(aliyun_file.get("id") or aliyun_file.get("file_id") or "").strip()
+            if not aliyun_file_id:
+                return {"ok": False, "error": "阿里 File API 未返回 file_id"}
+
+            local_file_id = str(uuid.uuid4())
+            filename = f"{local_file_id}{file_ext}"
             file_path = self._upload_dir / filename
             await self._await_call(file_path.write_bytes, content)
 
             base64_data = ""
             mime_type = "application/octet-stream"
-            if file_ext in image_extensions:
+            if file_ext in CHAT_IMAGE_EXTENSIONS:
                 base64_data = base64.b64encode(content).decode("utf-8")
                 mime_type = f"image/{file_ext[1:]}"
                 if file_ext == ".jpg":
@@ -297,12 +335,40 @@ class SessionsHistoryService:
                     "original_name": str(file.filename),
                     "url": f"/uploads/{filename}",
                     "base64": f"data:{mime_type};base64,{base64_data}" if base64_data else "",
-                    "is_image": file_ext in image_extensions,
+                    "is_image": file_ext in CHAT_IMAGE_EXTENSIONS,
+                    "file_id": aliyun_file_id,
+                    "aliyun_file_id": aliyun_file_id,
+                    "provider": "dashscope",
+                    "purpose": str(aliyun_file.get("purpose") or "file-extract"),
                 },
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            self._log_api_error("/upload_file", "write_file", exc, filename=file.filename)
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError, httpx.HTTPError) as exc:
+            self._log_api_error("/upload_file", "aliyun_file_upload", exc, filename=file.filename)
             return {"ok": False, "error": f"上传失败: {str(exc)}"}
+
+    async def _upload_to_aliyun_file_api(self, filename: str, content: bytes) -> dict[str, Any]:
+        """调用阿里 OpenAI 兼容 File API 上传聊天附件。"""
+        config = Config()
+        api_key = str(config.MODEL_API_KEY or "").strip()
+        base_url = str(config.MODEL_BASE_URL or "").strip().rstrip("/")
+        if not api_key:
+            raise RuntimeError("MODEL_API_KEY 未配置")
+        if not base_url:
+            raise RuntimeError("MODEL_BASE_URL 未配置")
+
+        url = f"{base_url}/files"
+        timeout = httpx.Timeout(float(config.LLM_REQUEST_TIMEOUT_SECONDS), connect=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                data={"purpose": "file-extract"},
+                files={"file": (filename, content)},
+            )
+        if response.status_code >= 400:
+            raise RuntimeError(f"阿里 File API 上传失败: status={response.status_code} body={response.text[:300]}")
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
 
     async def cancel_qa_job(self, job_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """兼容旧接口，校验归属后取消 A2A 任务。

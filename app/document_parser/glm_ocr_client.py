@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional
 
 from zhipuai import ZhipuAI
 
-from app.common.config import Config
+from app.core.config import Config
 
 logger = logging.getLogger(__name__)
 

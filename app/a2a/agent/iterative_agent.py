@@ -8,7 +8,7 @@ from app.a2a.agent.graph_subagent import GraphSubAgent
 from app.a2a.agent.rag_subagent import RagSubAgent
 from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.orchestrator.executor import OrchestratorExecutor
-from app.common.config import Config
+from app.core.config import Config
 from app.mcp.tools import get_mcp_server
 
 
@@ -48,6 +48,7 @@ class IterativeAgent:
         strategy: str = "iterative",
         max_turns: Optional[int] = None,
         image_data: str = "",
+        file_id: str = "",
         original_input_text: str = "",
         memory_context: dict[str, Any] | None = None,
         cancel_check: Optional[Callable[[], bool]] = None,
@@ -62,6 +63,7 @@ class IterativeAgent:
             strategy: 编排策略名称，默认使用 iterative 迭代策略。
             max_turns: 最大编排轮次；为空时读取配置并受上限约束。
             image_data: 可选图片数据，透传给编排执行器。
+            file_id: 可选阿里 File API 文件 ID，透传给编排执行器。
             original_input_text: 未经过前置改写的原始问题文本。
             memory_context: 会话记忆上下文。
             cancel_check: 外部取消检查回调，返回 True 时提前终止。
@@ -108,6 +110,7 @@ class IterativeAgent:
             strategy=str(strategy or "iterative").strip() or "iterative",
             max_turns=turns,
             image_data=str(image_data or "").strip(),
+            file_id=str(file_id or "").strip(),
             original_input_text=str(original_input_text or "").strip(),
             memory_context=memory_context if isinstance(memory_context, dict) else {},
             progress_callback=progress_callback,

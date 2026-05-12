@@ -51,7 +51,7 @@ from app.backend.services.session_stream_service import SessionStreamService
 from app.backend.services.session_turn_service import SessionTurnService
 from app.backend.services.sessions_history_service import SessionsHistoryService
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior, StartupRuntimeService
-from app.common.request_rate_limiter import InMemorySlidingWindowRateLimiter
+from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 
 
 @dataclass(slots=True)

@@ -51,6 +51,7 @@ async def process_query(
     strategy: str = "iterative",
     max_turns: int | None = None,
     image_data: str = "",
+    file_id: str = "",
     original_input_text: str = "",
     memory_context: dict[str, Any] | None = None,
     cancel_check=None,
@@ -65,6 +66,7 @@ async def process_query(
         strategy: 代理策略标识，目前统一走 iterative 入口。
         max_turns: 最大迭代轮数限制，None 表示使用系统默认策略。
         image_data: 可选图片数据，透传给支持视觉输入的执行链路。
+        file_id: 可选阿里 File API 文件 ID，透传给支持文件输入的执行链路。
         original_input_text: 前置改写前的原始输入文本。
         memory_context: 会话记忆上下文。
         cancel_check: 可选取消检查回调，返回 True 时提前终止执行。
@@ -87,6 +89,7 @@ async def process_query(
         strategy=safe_strategy,
         max_turns=max_turns,
         image_data=str(image_data or "").strip(),
+        file_id=str(file_id or "").strip(),
         original_input_text=str(original_input_text or "").strip(),
         memory_context=memory_context if isinstance(memory_context, dict) else {},
         cancel_check=cancel_check,

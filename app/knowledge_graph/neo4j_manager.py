@@ -15,8 +15,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from neo4j import AsyncGraphDatabase
 
-from app.common.concurrency import concurrency_guard
-from app.common.perf_logger import log_duration
+from app.core.concurrency import concurrency_guard
+from app.core.perf_logger import log_duration
 
 logger = logging.getLogger(__name__)
 

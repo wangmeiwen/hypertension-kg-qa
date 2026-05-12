@@ -9,8 +9,8 @@ import shutil
 from typing import Any, Awaitable, Callable
 
 from app.backend.repositories.database import MessageManager, SessionManager
-from app.common.concurrency import concurrency_guard
-from app.common.config import Config
+from app.core.concurrency import concurrency_guard
+from app.core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +175,42 @@ class AdminSessionsService:
         turn_rows.sort(key=lambda item: str(item.get("started_at") or ""))
         return turn_rows, memory_updates
 
+    @classmethod
+    def _derive_llm_metrics_from_agent_lanes(cls, turn: dict[str, Any]) -> dict[str, int]:
+        """从内嵌 agent_lanes telemetry 中兜底提取 LLM 指标。"""
+        agent_lanes = turn.get("agent_lanes") if isinstance(turn.get("agent_lanes"), dict) else {}
+        total_tokens = 0
+        llm_calls = 0
+        for cards in agent_lanes.values():
+            if not isinstance(cards, list):
+                continue
+            for card in cards:
+                row = card if isinstance(card, dict) else {}
+                parsed = cls._extract_json_object(row.get("full_decision"))
+                total_tokens = max(total_tokens, cls._to_int_metric(parsed.get("total_tokens")))
+                llm_calls = max(llm_calls, cls._to_int_metric(parsed.get("llm_calls")))
+        if llm_calls <= 0 and total_tokens > 0:
+            llm_calls = 1
+        return {"llm_calls": llm_calls, "total_tokens": total_tokens}
+
     @staticmethod
-    def _merge_turn_memory_update(turn: dict[str, Any], memory_update: dict[str, Any]) -> dict[str, Any]:
+    def _to_int_metric(value: Any) -> int:
+        """将日志指标转换为非负整数。"""
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, float):
+            return max(0, int(value))
+        if isinstance(value, str):
+            try:
+                return max(0, int(float(value)))
+            except ValueError:
+                return 0
+        return 0
+
+    @classmethod
+    def _merge_turn_memory_update(cls, turn: dict[str, Any], memory_update: dict[str, Any]) -> dict[str, Any]:
         """将 turn 观测记录与同轮记忆更新记录合并。
 
         Args:
@@ -186,14 +220,23 @@ class AdminSessionsService:
         Returns:
             dict[str, Any]: 合并 token、错误类型和记忆快照后的 turn 记录。
         """
+        merged_turn = dict(turn)
+        fallback_metrics = cls._derive_llm_metrics_from_agent_lanes(merged_turn)
+        merged_turn["llm_calls"] = max(
+            cls._to_int_metric(merged_turn.get("llm_calls")),
+            cls._to_int_metric(fallback_metrics.get("llm_calls")),
+        )
+        merged_turn["total_tokens"] = max(
+            cls._to_int_metric(merged_turn.get("total_tokens")),
+            cls._to_int_metric(fallback_metrics.get("total_tokens")),
+        )
         if not memory_update:
-            return turn
+            return merged_turn
         memory_compression = turn.get("memory_compression") if isinstance(turn.get("memory_compression"), list) else []
         snapshot = memory_update.get("snapshot") if isinstance(memory_update.get("snapshot"), dict) else {}
         updated_at = str(memory_update.get("updated_at") or "")
-        merged_turn = dict(turn)
-        merged_turn["llm_calls"] = max(int(turn.get("llm_calls") or 0), int(memory_update.get("llm_calls") or 0))
-        merged_turn["total_tokens"] = max(int(turn.get("total_tokens") or 0), int(memory_update.get("total_tokens") or 0))
+        merged_turn["llm_calls"] = max(cls._to_int_metric(merged_turn.get("llm_calls")), cls._to_int_metric(memory_update.get("llm_calls")))
+        merged_turn["total_tokens"] = max(cls._to_int_metric(merged_turn.get("total_tokens")), cls._to_int_metric(memory_update.get("total_tokens")))
         update_errors = memory_update.get("error_types") if isinstance(memory_update.get("error_types"), dict) else {}
         if update_errors:
             base_errors = merged_turn.get("error_types") if isinstance(merged_turn.get("error_types"), dict) else {}
@@ -679,6 +722,110 @@ class AdminSessionsService:
         return "\n".join(lines)
 
     @classmethod
+    def _build_agent_lane_card_event(
+        cls,
+        *,
+        turn_id: str,
+        turn: dict[str, Any],
+        lane_name: str,
+        card: dict[str, Any],
+        sequence_index: int,
+    ) -> dict[str, Any]:
+        """从 turn.agent_lanes 的卡片兜底生成泳道事件。"""
+        title = cls._sanitize_text(card.get("title"), 80) or f"{lane_name}行动"
+        event_time = str(card.get("occurred_at") or card.get("started_at") or card.get("finished_at") or turn.get("finished_at") or turn.get("started_at") or "")
+        full_prompt = str(card.get("full_prompt") or card.get("prompt_preview") or "无")
+        full_decision = str(card.get("full_decision") or card.get("decision_preview") or "无")
+        is_tool_card = "工具" in title or lane_name in {"图谱代理", "检索代理"}
+        return {
+            "event_id": cls._safe_event_id(turn_id, "agent_lane", sequence_index),
+            "event_time": event_time,
+            "lane": lane_name,
+            "stage": "代理行动" if is_tool_card else "模型行动",
+            "title": title,
+            "summary": cls._sanitize_text(card.get("decision_preview") or card.get("prompt_preview") or "该代理暂无摘要", 180),
+            "actor": lane_name,
+            "kind": "agent_lane_card",
+            "status": cls._sanitize_text(card.get("status"), 40) or "完成",
+            "detail": {
+                "model_input_prompt": full_prompt if not is_tool_card else "该代理本次未记录独立模型输入",
+                "model_output_text": full_decision if not is_tool_card else "该代理本次未记录独立模型输出",
+                "tool_call_inputs": full_prompt if is_tool_card else "本次未调用工具",
+                "tool_call_results": full_decision if is_tool_card else "本次未调用工具",
+                "tool_call_count": 1 if is_tool_card else 0,
+                "merge_strategy": "agent_lanes_fallback",
+            },
+            "sequence_order": sequence_index * 10,
+        }
+
+    @classmethod
+    def _build_tool_observation_fallback_events(cls, *, turn_id: str, turn: dict[str, Any], start_index: int) -> list[dict[str, Any]]:
+        """没有 agent_lanes 卡片时，从 tool_observations 兜底生成事件。"""
+        tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
+        events: list[dict[str, Any]] = []
+        for offset, observation in enumerate(tool_observations, start=start_index):
+            row = observation if isinstance(observation, dict) else {}
+            lane_name = cls._allowed_flow_lane(cls._infer_tool_lane(row))
+            result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
+            events.append(
+                {
+                    "event_id": cls._safe_event_id(turn_id, "tool_fallback", offset),
+                    "event_time": str(turn.get("finished_at") or turn.get("started_at") or ""),
+                    "lane": lane_name,
+                    "stage": "工具行动",
+                    "title": f"{lane_name}工具行动",
+                    "summary": cls._sanitize_text(cls._summarize_tool_observation(row), 180) or "该次工具调用暂无输出",
+                    "actor": lane_name,
+                    "kind": "tool_fallback",
+                    "status": "失败" if cls._sanitize_text(result_obj.get("error"), 120) else "完成",
+                    "detail": {
+                        "model_input_prompt": "该代理本次未记录独立模型输入",
+                        "model_output_text": "该代理本次未记录独立模型输出",
+                        "tool_call_inputs": cls._format_tool_input({}, row, 1),
+                        "tool_call_results": cls._format_tool_result(row, 1),
+                        "tool_call_count": 1,
+                        "merge_strategy": "tool_observations_fallback",
+                    },
+                    "sequence_order": offset * 10,
+                }
+            )
+        return events
+
+    @classmethod
+    def _build_agent_lanes_fallback_events(cls, turn: dict[str, Any]) -> list[dict[str, Any]]:
+        """当独立 LLM 日志缺失时，从 turn 内嵌 agent_lanes 构建泳道事件。"""
+        turn_id = str(turn.get("turn_id") or "")
+        agent_lanes = turn.get("agent_lanes") if isinstance(turn.get("agent_lanes"), dict) else {}
+        events: list[dict[str, Any]] = []
+        sequence_index = 0
+        for lane_key in ("主控编排", "图谱代理", "检索代理"):
+            cards = agent_lanes.get(lane_key) if isinstance(agent_lanes.get(lane_key), list) else []
+            for card in cards:
+                if not isinstance(card, dict):
+                    continue
+                sequence_index += 1
+                events.append(
+                    cls._build_agent_lane_card_event(
+                        turn_id=turn_id,
+                        turn=turn,
+                        lane_name=cls._allowed_flow_lane(card.get("lane_name") or lane_key),
+                        card=card,
+                        sequence_index=sequence_index,
+                    )
+                )
+        if not events:
+            events.extend(cls._build_tool_observation_fallback_events(turn_id=turn_id, turn=turn, start_index=1))
+        events.sort(
+            key=lambda item: (
+                int(item.get("sequence_order") or 0),
+                str(item.get("event_time") or ""),
+                cls._lane_order(str(item.get("lane") or "")),
+                str(item.get("event_id") or ""),
+            )
+        )
+        return events
+
+    @classmethod
     def _build_flow_events(
         cls,
         *,
@@ -699,7 +846,7 @@ class AdminSessionsService:
         turn_id = str(turn.get("turn_id") or "")
         llm_rows = cls._read_session_llm_records(session_id, request_id)
         if not llm_rows:
-            return []
+            return cls._build_agent_lanes_fallback_events(turn)
         tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
         tool_rows = cls._read_session_tool_records(session_id, request_id)
         bound_tool_rows = cls._bind_tool_logs(tool_observations, tool_rows)

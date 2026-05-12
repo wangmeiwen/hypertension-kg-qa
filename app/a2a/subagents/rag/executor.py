@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.a2a.mcp.tool_gateway import MCPToolGateway
+from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.subagents.rag.graph import compile_rag_graph, run_rag_graph
 from app.a2a.subagents.rag.state import RagSubAgentState
 
@@ -38,10 +38,11 @@ class RagSubAgentExecutor:
         state: RagSubAgentState = {
             "input_question": str(req.get("subquery") or req.get("question") or "").strip(),
             "subtask_id": int(req.get("subquery_id") or 1),
-            "constraints": req.get("constraints") if isinstance(req.get("constraints"), dict) else {"allow_extra_retrieval": False, "max_tool_calls": 1},
+            "constraints": req.get("constraints") if isinstance(req.get("constraints"), dict) else {"allow_extra_retrieval": False, "max_tool_calls": 3},
             "tool_name": "rag_search",
             "arguments": req.get("arguments") if isinstance(req.get("arguments"), dict) else {},
             "query_terms": [str(item or "").strip() for item in req.get("query_terms")] if isinstance(req.get("query_terms"), list) else [],
+            "attempt_count": 0,
         }
         output = await run_rag_graph(self.graph, state)
         final_obj = output.get("final_result")

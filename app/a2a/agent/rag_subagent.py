@@ -6,14 +6,14 @@ import asyncio
 import time
 from typing import Any
 
-from app.a2a.mcp.tool_gateway import MCPToolGateway
+from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.subagents.rag.executor import RagSubAgentExecutor
 
 
 class RagSubAgent:
     """检索子代理。
 
-    职责：仅处理收到的问题，生成并执行 rag_search，不做额外补检索。
+    职责：处理收到的问题并执行 rag_search，证据不足时最多补查 3 次。
     """
 
     def __init__(self, mcp_server: Any):
@@ -41,7 +41,7 @@ class RagSubAgent:
         arguments_obj = req.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
         constraints_obj = req.get("constraints")
-        constraints = constraints_obj if isinstance(constraints_obj, dict) else {"allow_extra_retrieval": False, "max_tool_calls": 1}
+        constraints = constraints_obj if isinstance(constraints_obj, dict) else {"allow_extra_retrieval": False, "max_tool_calls": 3}
 
         item = {
             "subquery_id": subquery_id,

@@ -160,7 +160,7 @@ ADMIN_PASSWORD=change-me
 
 完整变量请参考 `.env.example`（含 LLM 超时/重试、RAG/KG 召回、A2A 限制、限流/熔断等）与以下配置聚合位置：
 
-- [app/common/config.py](./app/common/config.py)
+- [app/core/config.py](./app/core/config.py)
 - [app/backend/config.py](./app/backend/config.py)
 
 ### 3. 启动 Milvus

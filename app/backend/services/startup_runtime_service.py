@@ -8,9 +8,9 @@ from typing import Any, Callable
 
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
 from app.backend.repositories.database import initialize_database
-from app.common.db_manager import check_databases
-from app.common.feature_flags import get_runtime_flag_snapshot
-from app.common.perf_logger import log_duration
+from app.backend.infrastructure.database_health import check_databases
+from app.core.feature_flags import get_runtime_flag_snapshot
+from app.core.perf_logger import log_duration
 
 from app.backend.services.a2a_runtime_service import A2ARuntimeService
 

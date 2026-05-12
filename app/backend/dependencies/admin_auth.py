@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.backend.infrastructure.errors import UnauthorizedError
-from app.common.auth_simple import is_logged_in
+from app.backend.security.admin_auth import is_logged_in
 
 
 def require_admin_login() -> None:

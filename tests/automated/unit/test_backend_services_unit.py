@@ -169,7 +169,7 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
     class FakeMessageManager:
         @staticmethod
         async def add_message(session_id: str, role: str, content: str, think_content: str = "") -> dict[str, Any]:
-            row = {"id": len(messages.setdefault(session_id, [])) + 1, "role": role, "content": content}
+            row = {"id": len(messages.setdefault(session_id, [])) + 1, "role": role, "content": content, "think_content": think_content}
             messages[session_id].append(row)
             return row
 
@@ -199,6 +199,11 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
         log_api_error=log_api_error,
     )
 
+    async def fake_upload_to_aliyun_file_api(filename: str, content: bytes) -> dict[str, Any]:
+        return {"id": f"file-{Path(filename).suffix.lower().lstrip('.')}", "purpose": "file-extract", "bytes": len(content)}
+
+    monkeypatch.setattr(service, "_upload_to_aliyun_file_api", fake_upload_to_aliyun_file_api)
+
     created = await service.create_session({"user_id": "user-1", "title": "Title"})
     assert created["data"]["id"] == "session-1"
     assert (await service.list_sessions(user_id=""))["error"] == "user_id_required"
@@ -206,17 +211,23 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
     assert sessions["session-1"]["title"] == "Renamed"
     assert (await service.add_message("session-1", {"user_id": "user-1", "role": "user", "content": "q"}))["ok"] is True
     assert (await service.rollback_to_question("session-1", {"user_id": "user-1", "message_id": 1}))["data"]["memory_rebuilt"] is True
+    assert (await service.add_message("session-1", {"user_id": "user-1", "role": "assistant", "content": "a", "think_content": "debug trace"}))["ok"] is True
 
     uploaded = await service.upload_file(upload_file("note.txt", b"hello"))
     assert uploaded["ok"] is True
     assert Path(temp_upload_dir / uploaded["data"]["filename"]).exists()
+    assert uploaded["data"]["file_id"] == "file-txt"
+    assert (await service.upload_file(upload_file("sheet.xlsx", b"fake-xlsx")))["ok"] is True
     assert (await service.upload_file(upload_file("bad.exe", b"x")))["ok"] is False
 
     session_detail = await service.get_session("session-1", user_id="user-1")
     assert session_detail["ok"] is True
     assert session_detail["data"]["messages"][0]["content"] == "q"
+    assert "think_content" not in session_detail["data"]["messages"][1]
     assert (await service.get_session("session-1", user_id="other"))["error"] == "session_not_found"
-    assert (await service.get_messages("session-1", user_id="user-1"))["ok"] is True
+    public_messages = await service.get_messages("session-1", user_id="user-1")
+    assert public_messages["ok"] is True
+    assert "think_content" not in public_messages["data"][1]
     assert (await service.get_messages("session-1", user_id=""))["error"] == "user_id_required"
     assert (await service.delete_session("session-1", user_id=""))["error"] == "user_id_required"
     assert (await service.delete_session("session-1", user_id="other"))["error"] == "session_not_found"
@@ -540,6 +551,25 @@ async def test_observability_service_reads_perf_and_turn_logs(monkeypatch, tmp_p
                     },
                     ensure_ascii=False,
                 ),
+                json.dumps(
+                    {
+                        "record_type": "turn_observability",
+                        "turn_id": "t2",
+                        "session_id": "s2",
+                        "finished_at": "2026-01-01T00:01:00",
+                        "llm_calls": 0,
+                        "total_tokens": 0,
+                        "agent_lanes": {
+                            "主控编排": [
+                                {
+                                    "title": "主控统一决策",
+                                    "full_decision": json.dumps({"total_tokens": 128}, ensure_ascii=False),
+                                }
+                            ]
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
             ]
         ),
         encoding="utf-8",
@@ -549,8 +579,11 @@ async def test_observability_service_reads_perf_and_turn_logs(monkeypatch, tmp_p
     perf_rows = service._read_perf_event_logs("iterative_agent_run", limit=5)
     assert perf_rows[0]["session_id"] == "s1"
     turn_rows = service._read_turn_logs(limit=5)
-    assert turn_rows[0]["turn_id"] == "t1"
-    assert turn_rows[0]["llm_calls"] == 3
+    assert turn_rows[0]["turn_id"] == "t2"
+    assert turn_rows[0]["llm_calls"] == 1
+    assert turn_rows[0]["total_tokens"] == 128
+    assert turn_rows[1]["turn_id"] == "t1"
+    assert turn_rows[1]["llm_calls"] == 3
 
 
 async def test_admin_runtime_service_cancel_and_stats(monkeypatch, a2a_service_stub) -> None:
@@ -632,6 +665,41 @@ async def test_readiness_service_reports_ready_degraded_and_unavailable(monkeypa
     blocked = await unavailable_service.ensure_core_ready("/process")
     assert blocked is not None
     assert blocked.status_code == 503
+
+
+async def test_mcp_server_degrades_when_milvus_tools_fail(monkeypatch) -> None:
+    import app.mcp.tools as module
+
+    class MilvusLikeError(Exception):
+        """模拟 pymilvus 抛出的外部依赖异常。"""
+
+    class BrokenRagSearchTool:
+        def __init__(self, conf: Any) -> None:
+            raise MilvusLikeError("milvus unavailable")
+
+    class BrokenKgEntityRelationSearchTool:
+        def __init__(self, conf: Any) -> None:
+            raise MilvusLikeError("kg milvus unavailable")
+
+    await module.close_mcp_server()
+    monkeypatch.setattr(module, "RagSearchTool", BrokenRagSearchTool)
+    monkeypatch.setattr(module, "KgEntityRelationSearchTool", BrokenKgEntityRelationSearchTool)
+
+    server = module.build_mcp_server()
+    try:
+        tool_names = {row["name"] for row in server.list_tools()}
+        assert {"kg_query", "rag_search", "kg_entity_relation_search", "history_read"} <= tool_names
+
+        rag_result = await server.ainvoke("rag_search", {"query": "高血压", "top_k": 1})
+        assert rag_result["ok"] is True
+        assert rag_result["result"]["unavailable"] is True
+
+        status = await module.get_mcp_runtime_status(server)
+        assert status["core_ready"] is False
+        assert "rag_search" in status["runtime_unavailable_required"]
+        assert "kg_entity_relation_search" in status["runtime_unavailable_optional"]
+    finally:
+        await server.aclose()
 
 
 async def test_session_turn_service_creates_titles_and_recovers_from_memory_errors() -> None:
@@ -1431,6 +1499,61 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
     assert AdminSessionsService._read_session_llm_records(session_id, "") == []
     assert AdminSessionsService._read_session_tool_records(session_id, "missing") == []
 
+    fallback_events = AdminSessionsService._build_flow_events(
+        session_id=session_id,
+        request_id="missing-llm-log",
+        turn={
+            "turn_id": "turn-fallback",
+            "started_at": "2026-04-24T11:00:00",
+            "finished_at": "2026-04-24T11:00:03",
+            "agent_lanes": {
+                "主控编排": [
+                    {
+                        "title": "主控统一决策",
+                        "started_at": "2026-04-24T11:00:00",
+                        "prompt_preview": "question",
+                        "decision_preview": "call_rag",
+                        "full_prompt": "question",
+                        "full_decision": "{\"action\":\"call_rag\"}",
+                        "status": "完成",
+                    }
+                ],
+                "图谱代理": [],
+                "检索代理": [
+                    {
+                        "lane_name": "检索代理",
+                        "title": "执行工具调用",
+                        "occurred_at": "2026-04-24T11:00:03",
+                        "prompt_preview": "retrieval query",
+                        "decision_preview": "命中指南",
+                        "full_prompt": "retrieval query",
+                        "full_decision": "{\"ok\":true}",
+                        "status": "成功",
+                    }
+                ],
+            },
+        },
+    )
+    assert {event["lane"] for event in fallback_events} == {"主控编排", "检索代理"}
+    assert any(event["detail"]["merge_strategy"] == "agent_lanes_fallback" for event in fallback_events)
+    merged_metrics = AdminSessionsService._merge_turn_memory_update(
+        {
+            "turn_id": "turn-fallback",
+            "llm_calls": 0,
+            "total_tokens": 0,
+            "agent_lanes": {
+                "主控编排": [
+                    {
+                        "full_decision": json.dumps({"total_tokens": 128}, ensure_ascii=False),
+                    }
+                ]
+            },
+        },
+        {},
+    )
+    assert merged_metrics["llm_calls"] == 1
+    assert merged_metrics["total_tokens"] == 128
+
 
 async def test_session_stream_service_persists_reply_and_disclaimer(tmp_path, monkeypatch) -> None:
     import app.backend.services.session_stream_service as module
@@ -1441,6 +1564,8 @@ async def test_session_stream_service_persists_reply_and_disclaimer(tmp_path, mo
     )
 
     assert append_medical_disclaimer_if_needed("建议规律监测血压", "medical_qa").endswith(MEDICAL_DISCLAIMER_TEXT)
+    markdown_disclaimer_reply = f"建议规律监测血压\n\n*{MEDICAL_DISCLAIMER_TEXT} *"
+    assert append_medical_disclaimer_if_needed(markdown_disclaimer_reply, "medical_qa") == markdown_disclaimer_reply
 
     persisted: list[dict[str, Any]] = []
     refreshed: list[int] = []
@@ -1602,6 +1727,8 @@ async def test_session_stream_helper_payload_builders(tmp_path, monkeypatch) -> 
         turn_artifacts=turn_projection,
     )
     assert payload["record_type"] == "turn_observability"
+    assert payload["llm_calls"] == 1
+    assert payload["total_tokens"] == 10
 
     update_payload = module._build_turn_memory_update_payload(
         session_id=session_id,

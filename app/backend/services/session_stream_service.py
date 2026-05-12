@@ -14,8 +14,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from app.backend.repositories.database import MessageManager
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.session_memory_service import SessionMemoryService
-from app.common.perf_logger import log_perf_event
-from app.common.session_logger import (
+from app.core.perf_logger import log_perf_event
+from app.backend.observability.session_logger import (
     append_jsonl_atomic,
     ensure_session_meta,
     log_session_op,
@@ -29,6 +29,8 @@ from app.common.session_logger import (
 logger = logging.getLogger(__name__)
 
 MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
+MEDICAL_DISCLAIMER_REQUIRED_MARKERS = ("仅供参考", "不构成诊断")
+MEDICAL_DISCLAIMER_SUPPORT_MARKERS = ("不能替代专业医生意见", "不能替代", "及时就医", "紧急情况")
 
 
 def _sanitize_text(value: Any, max_len: int) -> str:
@@ -63,6 +65,28 @@ def _json_text_len(value: Any) -> int:
             exc,
         )
         return len(str(value or ""))
+
+
+def _to_int_metric(value: Any) -> int:
+    """将宽松指标值转换为非负整数。"""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    if isinstance(value, str):
+        try:
+            return max(0, int(float(value)))
+        except ValueError as exc:
+            logger.debug(
+                "session_stream_int_metric_parse_failed: raw=%s error_type=%s error=%s",
+                value,
+                type(exc).__name__,
+                exc,
+            )
+            return 0
+    return 0
 
 
 def _build_reply_digest(reply: str, max_len: int = 180) -> str:
@@ -102,6 +126,23 @@ def _strip_medical_disclaimer(reply: Any) -> str:
     return text
 
 
+def _normalize_disclaimer_text(reply: Any) -> str:
+    """去掉 Markdown 包裹和空白，便于识别模型自带的免责文本。"""
+    text = str(reply or "")
+    text = re.sub(r"[*_`>#\-\s]+", "", text)
+    return text.replace("，", ",").replace("；", ";").replace("。", ".")
+
+
+def _contains_medical_disclaimer(reply: Any) -> bool:
+    """判断回答末尾是否已经包含医学免责语义，避免兜底文本重复出现。"""
+    normalized_tail = _normalize_disclaimer_text(str(reply or "")[-700:])
+    if not normalized_tail:
+        return False
+    has_required = all(marker in normalized_tail for marker in MEDICAL_DISCLAIMER_REQUIRED_MARKERS)
+    has_support = any(marker in normalized_tail for marker in MEDICAL_DISCLAIMER_SUPPORT_MARKERS)
+    return has_required and has_support
+
+
 def append_medical_disclaimer_if_needed(reply: Any, question_scope: Any) -> str:
     """仅对医疗回答统一追加固定免责文本，并避免重复追加。"""
     text = str(reply or "").rstrip()
@@ -109,7 +150,7 @@ def append_medical_disclaimer_if_needed(reply: Any, question_scope: Any) -> str:
         return ""
     if _normalize_question_scope(question_scope) != "medical_qa":
         return text
-    if text.endswith(MEDICAL_DISCLAIMER_TEXT):
+    if _contains_medical_disclaimer(text):
         return text
     base_text = _strip_medical_disclaimer(text).rstrip()
     if not base_text:
@@ -768,6 +809,21 @@ def _collect_request_llm_metrics(session_id: str, request_id: str) -> Dict[str, 
     }
 
 
+def _merge_llm_metrics_with_telemetry(llm_metrics: Dict[str, Any], telemetry: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM 明细日志缺失时，用 A2A telemetry 兜底 token 指标。"""
+    metrics = dict(llm_metrics)
+    telemetry_tokens = _to_int_metric(telemetry.get("total_tokens"))
+    telemetry_calls = _to_int_metric(telemetry.get("llm_calls"))
+    if _to_int_metric(metrics.get("total_tokens")) <= 0 and telemetry_tokens > 0:
+        metrics["total_tokens"] = telemetry_tokens
+    if _to_int_metric(metrics.get("llm_calls")) <= 0:
+        if telemetry_calls > 0:
+            metrics["llm_calls"] = telemetry_calls
+        elif _to_int_metric(metrics.get("total_tokens")) > 0:
+            metrics["llm_calls"] = 1
+    return metrics
+
+
 def _derive_tool_metrics(tool_observations: List[Dict[str, Any]]) -> Dict[str, Any]:
     """从工具观测中派生工具调用成功率和错误分类。
 
@@ -860,7 +916,7 @@ def _build_turn_observability_payload(
     Returns:
         Dict[str, Any]: 可写入 turn JSONL 的观测日志 payload。
     """
-    llm_metrics = _collect_request_llm_metrics(session_id, request_id)
+    llm_metrics = _merge_llm_metrics_with_telemetry(_collect_request_llm_metrics(session_id, request_id), telemetry)
     tool_metrics = _derive_tool_metrics(tool_observations)
     llm_rows = llm_metrics.get("llm_rows") if isinstance(llm_metrics.get("llm_rows"), list) else []
 
@@ -1026,6 +1082,7 @@ class SessionStreamService:
         user_id: str,
         session_id: str,
         image_data: Any = None,
+        file_id: str = "",
         user_message_id: int = 0,
         request_id: str = "",
         original_input_text: str = "",
@@ -1038,6 +1095,7 @@ class SessionStreamService:
             user_id: 用户标识。
             session_id: 会话标识。
             image_data: 可选图片数据，透传给 A2A 事件流。
+            file_id: 可选阿里 File API 文件 ID，透传给 A2A 事件流。
             user_message_id: 本轮用户消息 ID。
             request_id: 请求追踪标识。
             original_input_text: 原始用户输入文本。
@@ -1046,7 +1104,6 @@ class SessionStreamService:
         Yields:
             str: JSON Lines 格式的流式事件。
         """
-        _ = image_data
         full_reply = ""
         full_think = ""
         done_status = "done"
@@ -1293,6 +1350,7 @@ class SessionStreamService:
                 session_id=session_id,
                 request_id=request_id,
                 image_data=image_data,
+                file_id=file_id,
                 original_input_text=original_input_text,
                 memory_context=memory_context,
             ):

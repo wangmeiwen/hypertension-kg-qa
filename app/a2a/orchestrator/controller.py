@@ -14,9 +14,9 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
-from app.a2a.mcp.tool_gateway import MCPToolGateway
+from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.models import SubAgentConstraints, SubTask
-from app.common.config import Config
+from app.core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -611,6 +611,7 @@ class UnifiedOrchestratorController:
         max_turns: int,
         force_final: bool = False,
         image_data: str = "",
+        file_id: str = "",
         compression_state: dict[str, Any],
         processing_steps: list[str],
         progress_callback: Callable[[dict[str, Any]], None] | None,
@@ -629,10 +630,11 @@ class UnifiedOrchestratorController:
             processing_steps=processing_steps,
             progress_callback=progress_callback,
         )
-        if image_data:
+        if image_data or file_id:
             response = await self._client.chat_with_vision_async(
                 messages=messages,
                 image_data=image_data,
+                file_id=file_id,
                 temperature=0.1,
                 timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
                 actor_role="controller",
@@ -842,6 +844,7 @@ class UnifiedOrchestratorController:
         tool_observations: list[dict[str, Any]],
         draft_answer: str,
         image_data: str,
+        file_id: str,
         progress_callback: Callable[[dict[str, Any]], None] | None,
     ) -> tuple[str, dict[str, int]]:
         """流式生成最终答案，并通过回调推送增量正文。"""
@@ -869,10 +872,11 @@ class UnifiedOrchestratorController:
 
         chunks: list[str] = []
         tokens = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        if image_data:
+        if image_data or file_id:
             event_iter = self._client.stream_chat_with_vision_async(
                 messages=messages,
                 image_data=image_data,
+                file_id=file_id,
                 temperature=0.1,
                 timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
                 actor_role="controller",
@@ -955,6 +959,7 @@ class UnifiedOrchestratorController:
         user_id: str = "",
         max_turns: int = 3,
         image_data: str = "",
+        file_id: str = "",
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
@@ -966,7 +971,14 @@ class UnifiedOrchestratorController:
         qa_memory_text = str(safe_memory.get("qa_memory_text") or "当前暂无问答对")
         retrieval_index_text = str(safe_memory.get("retrieval_question_index_text") or "当前暂无历史检索问题")
         safe_max_turns = max(1, int(max_turns or 1))
-        safe_tool_calls = max(1, min(int(self._conf.A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT), int(self._conf.A2A_SUBAGENT_MAX_TOOL_CALLS_MAX)))
+        safe_tool_calls = max(
+            1,
+            min(
+                3,
+                int(self._conf.A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT),
+                int(self._conf.A2A_SUBAGENT_MAX_TOOL_CALLS_MAX),
+            ),
+        )
 
         tool_observations: list[dict[str, Any]] = []
         processing_steps: list[str] = ["已加载显式 QA 记忆与历史检索问题索引"]
@@ -1004,6 +1016,7 @@ class UnifiedOrchestratorController:
                     max_turns=safe_max_turns,
                     force_final=False,
                     image_data=str(image_data or "").strip(),
+                    file_id=str(file_id or "").strip(),
                     compression_state=compression_state,
                     processing_steps=processing_steps,
                     progress_callback=progress_callback,
@@ -1031,6 +1044,7 @@ class UnifiedOrchestratorController:
                     tool_observations=tool_observations,
                     draft_answer=str(action.get("answer") or "").strip(),
                     image_data=str(image_data or "").strip(),
+                    file_id=str(file_id or "").strip(),
                     progress_callback=progress_callback,
                 )
                 total_tokens += int(answer_tokens.get("total_tokens") or 0)
@@ -1090,6 +1104,7 @@ class UnifiedOrchestratorController:
                     max_turns=safe_max_turns,
                     force_final=True,
                     image_data=str(image_data or "").strip(),
+                    file_id=str(file_id or "").strip(),
                     compression_state=compression_state,
                     processing_steps=processing_steps,
                     progress_callback=progress_callback,
@@ -1111,6 +1126,7 @@ class UnifiedOrchestratorController:
                 tool_observations=tool_observations,
                 draft_answer=str(forced_action.get("answer") or "").strip(),
                 image_data=str(image_data or "").strip(),
+                file_id=str(file_id or "").strip(),
                 progress_callback=progress_callback,
             )
             total_tokens += int(answer_tokens.get("total_tokens") or 0)

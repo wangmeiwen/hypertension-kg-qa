@@ -28,7 +28,7 @@ import threading
 import uuid
 from typing import Any, Optional
 
-from app.common.concurrency import concurrency_guard
+from app.core.concurrency import concurrency_guard
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def _project_root() -> Path:
     Returns:
         Path: 项目根目录路径。
     """
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def _safe_id(raw: str, fallback: str = "unknown") -> str:

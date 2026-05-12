@@ -170,10 +170,10 @@ class Config:
             os.getenv("A2A_ORCHESTRATOR_SUPPLEMENT_MAX_ROUNDS", "2")
         )
         self.A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT = int(
-            os.getenv("A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT", "2")
+            os.getenv("A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT", "3")
         )
         self.A2A_SUBAGENT_MAX_TOOL_CALLS_MAX = int(
-            os.getenv("A2A_SUBAGENT_MAX_TOOL_CALLS_MAX", "8")
+            os.getenv("A2A_SUBAGENT_MAX_TOOL_CALLS_MAX", "3")
         )
 
         # 文档分块配置（父子块策略）

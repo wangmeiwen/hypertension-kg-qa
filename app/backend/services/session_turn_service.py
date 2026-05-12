@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from app.backend.repositories.database import MessageManager, SessionManager
 from app.backend.services.session_memory_service import SessionMemoryService
-from app.common.langsmith_tracing import set_trace_metadata
+from app.core.langsmith_tracing import set_trace_metadata
 
 
 class SessionTurnService:
@@ -74,6 +74,7 @@ class SessionTurnService:
         user_id: str,
         image_data: Any = None,
         file_name: str = "",
+        file_id: str = "",
     ) -> Dict[str, Any]:
         """准备会话轮次上下文，含会话校验、消息落库和记忆上下文构建。
 
@@ -83,6 +84,7 @@ class SessionTurnService:
             user_id: 用户标识，参与会话归属校验。
             image_data: 可选图片数据，用于标记消息内容来源。
             file_name: 可选上传文件名，用于标记消息内容来源。
+            file_id: 可选阿里 File API 文件 ID，用于标记文件已可被模型读取。
 
         Returns:
             Dict[str, Any]: 会话准备结果，失败时返回错误码，成功时返回会话、消息和记忆上下文。
@@ -115,7 +117,11 @@ class SessionTurnService:
         if image_data:
             message_content = f"[图片] {input_text}"
         elif str(file_name or "").strip():
-            message_content = f"[文件:{str(file_name).strip()}] {input_text}".strip()
+            file_marker = str(file_name or "").strip()
+            safe_file_id = str(file_id or "").strip()
+            if safe_file_id:
+                file_marker = f"{file_marker}; file_id={safe_file_id}"
+            message_content = f"[文件:{file_marker}] {input_text}".strip()
 
         user_message = await self._await_call(
             self._message_manager.add_message,

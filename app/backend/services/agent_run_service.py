@@ -15,8 +15,8 @@ from app.backend.services.a2a_event_stream_service import (
     extract_text_from_parts,
     safe_float,
 )
-from app.common.langsmith_tracing import set_trace_metadata
-from app.common.session_logger import ensure_session_meta, reset_session_context, set_session_context
+from app.core.langsmith_tracing import set_trace_metadata
+from app.backend.observability.session_logger import ensure_session_meta, reset_session_context, set_session_context
 
 
 class AgentRunService:

@@ -15,8 +15,8 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
-from app.common.concurrency import concurrency_guard
-from app.common.config import Config
+from app.core.concurrency import concurrency_guard
+from app.core.config import Config
 from app.backend.repositories.database import execute, fetch_all, fetch_one
 
 logger = logging.getLogger(__name__)

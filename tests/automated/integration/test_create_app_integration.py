@@ -52,7 +52,7 @@ def test_create_app_process_stream_uses_single_backend_entry(admin_app_client) -
 
 def test_create_app_admin_login_route_uses_real_auth_service(monkeypatch, app_client_factory) -> None:
     """验证应用工厂中的管理员登录路由接入真实认证服务。"""
-    import app.common.auth_simple as auth_module
+    import app.backend.security.admin_auth as auth_module
 
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "secret")

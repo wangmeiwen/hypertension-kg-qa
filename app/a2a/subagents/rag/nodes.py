@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.a2a.mcp.tool_gateway import MCPToolGateway
+from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.models import SubAgentResult
 from app.a2a.subagents.rag.query_builder import build_rag_payload, validate_rag_payload
+from app.a2a.subagents.retry_utils import (
+    MAX_SUBAGENT_TOOL_CALLS,
+    build_query_variants,
+    query_variant_for_attempt,
+)
 from app.a2a.subagents.rag.state import RagSubAgentState
 
 
@@ -109,10 +114,26 @@ async def node_validate_constraints(state: RagSubAgentState) -> RagSubAgentState
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
     if bool(constraints.get("allow_extra_retrieval")):
         raise PermissionError("rag_subagent_extra_retrieval_not_allowed")
-    max_tool_calls = int(constraints.get("max_tool_calls") or 1)
-    constraints["max_tool_calls"] = max(1, min(max_tool_calls, 8))
+    max_tool_calls = int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS)
+    constraints["max_tool_calls"] = max(1, min(max_tool_calls, MAX_SUBAGENT_TOOL_CALLS))
     state["constraints"] = constraints
     return state
+
+
+def _extract_retry_terms_from_evidence(state: RagSubAgentState) -> list[str]:
+    """从已有 RAG 命中中抽取下一轮检索可用的来源或短词。"""
+    evidence_obj = state.get("evidence")
+    evidence = evidence_obj if isinstance(evidence_obj, list) else []
+    terms: list[str] = []
+    for row in evidence[:3]:
+        item = row if isinstance(row, dict) else {}
+        hit_obj = item.get("hit")
+        hit = hit_obj if isinstance(hit_obj, dict) else {}
+        for field in ("source", "title", "section_title"):
+            value = str(hit.get(field) or "").strip()
+            if value:
+                terms.append(value)
+    return terms
 
 
 async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentState:
@@ -130,9 +151,33 @@ async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentS
     query_terms_obj = state.get("query_terms")
     query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
     query_terms = [item for item in query_terms if item]
-    payload = validate_rag_payload(build_rag_payload(question, arguments, query_terms=query_terms))
+
+    constraints = state.get("constraints") if isinstance(state.get("constraints"), dict) else {}
+    max_tool_calls = max(1, min(int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS), MAX_SUBAGENT_TOOL_CALLS))
+    tool_results_obj = state.get("tool_results")
+    tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
+    if len(tool_results) >= max_tool_calls:
+        state["tool_calls"] = []
+        return state
+
+    attempt_index = int(state.get("attempt_count") or 0) + 1
+    state["attempt_count"] = attempt_index
+    retry_arguments = dict(arguments)
+    if attempt_index > 1:
+        variants = build_query_variants(
+            question=question,
+            arguments=arguments,
+            query_terms=query_terms,
+            evidence_terms=_extract_retry_terms_from_evidence(state),
+        )
+        retry_arguments["query"] = query_variant_for_attempt(variants, attempt_index)
+
+    payload = validate_rag_payload(build_rag_payload(question, retry_arguments, query_terms=query_terms))
     statement = {"tool_name": "rag_search", "payload": payload}
-    state["query_statements"] = [statement]
+    existing_statements_obj = state.get("query_statements")
+    query_statements = existing_statements_obj if isinstance(existing_statements_obj, list) else []
+    query_statements.append(statement)
+    state["query_statements"] = query_statements
     state["tool_calls"] = [statement]
     return state
 
@@ -150,7 +195,9 @@ async def node_execute_rag_search(state: RagSubAgentState, tool_gateway: MCPTool
     calls_obj = state.get("tool_calls")
     calls = calls_obj if isinstance(calls_obj, list) else []
     rows = await tool_gateway.invoke_batch(calls, allow_parallel=True)
-    state["tool_results"] = rows
+    previous_obj = state.get("tool_results")
+    previous = previous_obj if isinstance(previous_obj, list) else []
+    state["tool_results"] = [*previous, *rows]
     return state
 
 
@@ -182,6 +229,8 @@ async def node_normalize_results(state: RagSubAgentState) -> RagSubAgentState:
     state["reason"] = "no_signal" if len(evidence) == 0 else "ok"
     state["telemetry"] = {
         "tool_calls": len(rows),
+        "query_rounds": int(state.get("attempt_count") or 0),
+        "max_tool_calls": int((state.get("constraints") if isinstance(state.get("constraints"), dict) else {}).get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS),
         "signal_count": len(evidence),
         "ok_count": sum(1 for row in rows if isinstance(row, dict) and bool(row.get("ok"))),
     }

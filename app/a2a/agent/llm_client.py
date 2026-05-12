@@ -1,4 +1,4 @@
-﻿"""LLM 客户端封装模块。
+"""LLM 客户端封装模块。
 
 本模块统一封装文本与视觉模型调用，提供响应内容、Token 统计与调用日志记录能力。
 
@@ -21,12 +21,12 @@ from typing import Any, AsyncIterator, Optional
 import httpx
 import requests  # type: ignore[import-untyped]
 
-from app.common.config import Config
+from app.core.config import Config
 
-from app.common.langsmith_tracing import set_trace_metadata, traceable
-from app.common.feature_flags import get_feature_flag
+from app.core.langsmith_tracing import set_trace_metadata, traceable
+from app.core.feature_flags import get_feature_flag
 
-from app.common.session_logger import get_request_id, get_session_id, log_llm_call
+from app.backend.observability.session_logger import get_request_id, get_session_id, log_llm_call
 
 
 logger = logging.getLogger(__name__)
@@ -201,9 +201,13 @@ def _extract_message_content(message: Any) -> str:
 def _prepare_vision_messages(
     messages: list[dict[str, Any]],
     image_data: Optional[str] = None,
+    file_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    """为视觉模型构建独立消息副本，避免原地修改调用方数据。"""
+    """为图片/文件输入构建独立消息副本，避免原地修改调用方数据。"""
     prepared = copy.deepcopy(messages)
+    safe_file_id = str(file_id or "").strip()
+    if safe_file_id:
+        prepared.insert(0, {"role": "system", "content": f"fileid://{safe_file_id}"})
     if not image_data:
         return prepared
 
@@ -923,6 +927,7 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         image_data: Optional[str] = None,
+        file_id: Optional[str] = None,
         temperature: float = 0.1,
         timeout: int = 120,
         actor_role: str | None = None,
@@ -933,6 +938,7 @@ class LLMClient:
         Args:
             messages: Chat Completions 格式的消息列表。
             image_data: 图片 URL 或 base64 data URL。
+            file_id: 阿里 File API 返回的文件 ID。
             temperature: 采样温度。
             timeout: 单次请求超时时间，单位秒。
             actor_role: 调用方角色，用于链路日志。
@@ -941,7 +947,7 @@ class LLMClient:
         Returns:
             标准化 LLM 响应对象。
         """
-        prepared_messages = _prepare_vision_messages(messages, image_data)
+        prepared_messages = _prepare_vision_messages(messages, image_data, file_id)
         return self.chat_with_tokens(
             prepared_messages,
             temperature,
@@ -954,6 +960,7 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         image_data: Optional[str] = None,
+        file_id: Optional[str] = None,
         temperature: float = 0.1,
         timeout: int = 120,
         actor_role: str | None = None,
@@ -964,6 +971,7 @@ class LLMClient:
         Args:
             messages: Chat Completions 格式的消息列表。
             image_data: 图片 URL 或 base64 data URL。
+            file_id: 阿里 File API 返回的文件 ID。
             temperature: 采样温度。
             timeout: 单次请求超时时间，单位秒。
             actor_role: 调用方角色，用于链路日志。
@@ -972,7 +980,7 @@ class LLMClient:
         Returns:
             标准化 LLM 响应对象。
         """
-        prepared_messages = _prepare_vision_messages(messages, image_data)
+        prepared_messages = _prepare_vision_messages(messages, image_data, file_id)
         return await self.chat_with_tokens_async(
             prepared_messages,
             temperature,
@@ -985,6 +993,7 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         image_data: Optional[str] = None,
+        file_id: Optional[str] = None,
         temperature: float = 0.1,
         timeout: int = 120,
         actor_role: str | None = None,
@@ -995,6 +1004,7 @@ class LLMClient:
         Args:
             messages: Chat Completions 格式的消息列表。
             image_data: 图片 URL 或 base64 data URL。
+            file_id: 阿里 File API 返回的文件 ID。
             temperature: 采样温度。
             timeout: 单次流式请求超时时间，单位秒。
             actor_role: 调用方角色，用于链路日志。
@@ -1003,7 +1013,7 @@ class LLMClient:
         Yields:
             视觉模型返回的流式 delta/done 事件。
         """
-        prepared_messages = _prepare_vision_messages(messages, image_data)
+        prepared_messages = _prepare_vision_messages(messages, image_data, file_id)
         async for event in self.stream_chat_with_tokens_async(
             prepared_messages,
             temperature,

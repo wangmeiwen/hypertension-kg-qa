@@ -7,8 +7,8 @@ import threading
 from typing import Any, Awaitable, Callable
 
 from app.backend.repositories.database import fetch_one
-from app.common.baseline_report import generate_api_baseline_report
-from app.common.feature_flags import get_runtime_flag_snapshot
+from app.backend.services.perf_baseline_service import generate_api_baseline_report
+from app.core.feature_flags import get_runtime_flag_snapshot
 
 
 class AdminRuntimeService:

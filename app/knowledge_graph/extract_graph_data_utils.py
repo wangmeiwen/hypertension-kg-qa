@@ -26,8 +26,8 @@ import json
 import logging
 
 from langchain_openai import ChatOpenAI
-from app.common.config import Config
-from app.common.perf_logger import log_duration
+from app.core.config import Config
+from app.core.perf_logger import log_duration
 
 logger = logging.getLogger(__name__)
 

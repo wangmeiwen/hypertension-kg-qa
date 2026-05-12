@@ -9,8 +9,8 @@ from fastapi.responses import JSONResponse
 
 from app.backend.dependencies.request_context import get_trace_id
 from app.backend.repositories.database import SessionManager
-from app.common.feature_flags import get_feature_flag
-from app.common.request_rate_limiter import InMemorySlidingWindowRateLimiter
+from app.core.feature_flags import get_feature_flag
+from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 
 
 async def is_session_owner(session_id: str, user_id: str) -> bool:

@@ -12,8 +12,8 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
-from app.common.concurrency import concurrency_guard
-from app.common.config import Config
+from app.core.concurrency import concurrency_guard
+from app.core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -555,7 +555,7 @@ class AdminDocumentsService:
         Returns:
             dict[str, Any]: 文档解析、分块和向量写入结果摘要。
         """
-        from app.common.config import Config
+        from app.core.config import Config
         from app.document_parser.docling_parser import DoclingParser
         from app.document_parser.document_segmentation import DocumentSegmentation
         from app.rag_core.document_embedding import DocumentEmbedder

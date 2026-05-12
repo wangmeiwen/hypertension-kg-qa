@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
-from app.common.config import Config
+from app.core.config import Config
 
 
 class OrchestratorExecutor:
@@ -45,6 +45,7 @@ class OrchestratorExecutor:
         strategy: str = "iterative",
         max_turns: int | None = None,
         image_data: str = "",
+        file_id: str = "",
         original_input_text: str = "",
         memory_context: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
@@ -59,6 +60,7 @@ class OrchestratorExecutor:
             strategy: 兼容旧接口的策略名，当前统一使用控制器策略。
             max_turns: 主控最大决策轮数。
             image_data: 可选图片数据，透传给最终回答生成阶段。
+            file_id: 可选阿里 File API 文件 ID，透传给最终回答生成阶段。
             original_input_text: 兼容旧接口的原始输入文本。
             memory_context: 会话记忆和历史检索索引上下文。
             progress_callback: 过程事件回调。
@@ -77,6 +79,7 @@ class OrchestratorExecutor:
             user_id=str(user_id or "").strip(),
             max_turns=safe_max_turns,
             image_data=str(image_data or "").strip(),
+            file_id=str(file_id or "").strip(),
             memory_context=safe_memory_context,
             progress_callback=progress_callback,
         )

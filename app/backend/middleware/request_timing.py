@@ -11,10 +11,10 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 from app.backend.dependencies.request_context import resolve_api_identity
-from app.common.auth_simple import reset_current_admin_token, set_current_admin_token
-from app.common.langsmith_tracing import set_trace_metadata
-from app.common.perf_logger import log_duration
-from app.common.session_logger import (
+from app.backend.security.admin_auth import reset_current_admin_token, set_current_admin_token
+from app.core.langsmith_tracing import set_trace_metadata
+from app.core.perf_logger import log_duration
+from app.backend.observability.session_logger import (
     create_request_id,
     log_api_call,
     reset_request_context,

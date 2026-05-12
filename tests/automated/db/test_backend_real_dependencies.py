@@ -15,8 +15,8 @@ from app.backend.testing.deterministic_support import (
     DeterministicMcpServer,
     DeterministicSessionMemoryService,
 )
-from app.common.config import Config
-from app.common.db_manager import check_databases
+from app.core.config import Config
+from app.backend.infrastructure.database_health import check_databases
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.rag_core.kg_milvus_store import KgMilvusStore
 

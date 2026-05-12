@@ -24,7 +24,7 @@ class SubAgentConstraints(BaseModel):
     """子代理执行约束。"""
 
     allow_extra_retrieval: bool = Field(default=False)
-    max_tool_calls: int = Field(default=2, ge=1, le=8)
+    max_tool_calls: int = Field(default=3, ge=1, le=3)
 
 
 class SubTask(BaseModel):

@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.a2a import A2AService, all_agent_cards
 from app.backend.services.a2a_dispatch_service import A2ADispatchService
-from app.common.langsmith_tracing import set_trace_metadata
+from app.core.langsmith_tracing import set_trace_metadata
 
 logger = logging.getLogger(__name__)
 

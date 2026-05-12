@@ -1,4 +1,4 @@
-﻿"""
+"""
 知识图谱向量存储模块。
 
 本模块提供基于 Milvus 的知识图谱向量存储与检索能力，支持：
@@ -37,9 +37,9 @@ import numpy as np
 from pymilvus import DataType, MilvusClient
 from sentence_transformers import SentenceTransformer
 
-from app.common.concurrency import LockAcquireTimeout, concurrency_guard
-from app.common.config import Config
-from app.common.perf_logger import log_duration
+from app.core.concurrency import LockAcquireTimeout, concurrency_guard
+from app.core.config import Config
+from app.core.perf_logger import log_duration
 from app.knowledge_graph.neo4j_manager import neo4j_client
 
 logger = logging.getLogger(__name__)

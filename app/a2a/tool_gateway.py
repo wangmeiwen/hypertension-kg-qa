@@ -1,4 +1,4 @@
-﻿"""子代理 MCP 工具调用网关。"""
+"""A2A 子代理工具调用网关。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _AGENT_TOOL_WHITELIST: dict[str, set[str]] = {
 
 
 class MCPToolGateway:
-    """封装子代理对 MCP 的调用和白名单校验。"""
+    """封装 A2A 子代理对核心 MCP 服务的调用和白名单校验。"""
 
     def __init__(self, mcp_server: Any | None = None, agent_type: str = "orchestrator"):
         """初始化 MCP 工具网关。

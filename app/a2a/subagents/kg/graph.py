@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 
-from app.a2a.mcp.tool_gateway import MCPToolGateway
+from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.subagents.kg.nodes import (
     node_build_response,
     node_execute_tools,
@@ -17,6 +17,7 @@ from app.a2a.subagents.kg.nodes import (
     node_normalize_results,
     node_validate_constraints,
 )
+from app.a2a.subagents.retry_utils import should_continue_querying
 from app.a2a.subagents.kg.state import KgSubAgentState
 
 logger = logging.getLogger(__name__)
@@ -58,9 +59,12 @@ class _FallbackGraphRunner:
             完成校验、查询生成、工具调用、结果归一化后的状态。
         """
         state = await node_validate_constraints(state)
-        state = await node_generate_query_statements(state)
-        state = await node_execute_tools(state, self.tool_gateway)
-        state = await node_normalize_results(state)
+        while True:
+            state = await node_generate_query_statements(state)
+            state = await node_execute_tools(state, self.tool_gateway)
+            state = await node_normalize_results(state)
+            if not should_continue_querying(state):
+                break
         state = await node_build_response(state)
         return state
 
@@ -99,7 +103,14 @@ def build_kg_graph(tool_gateway: MCPToolGateway) -> Any:
     builder.add_edge("validate_constraints", "generate_query_statements")
     builder.add_edge("generate_query_statements", "execute_tools")
     builder.add_edge("execute_tools", "normalize_results")
-    builder.add_edge("normalize_results", "build_response")
+    builder.add_conditional_edges(
+        "normalize_results",
+        lambda state: "continue" if should_continue_querying(state) else "done",
+        {
+            "continue": "generate_query_statements",
+            "done": "build_response",
+        },
+    )
     builder.add_edge("build_response", END)
     return builder
 
@@ -141,6 +152,7 @@ async def run_kg_graph(compiled_graph: Any, state: KgSubAgentState) -> KgSubAgen
                 "no_signal",
                 "reason",
                 "telemetry",
+                "attempt_count",
                 "final_result",
             ]
         )

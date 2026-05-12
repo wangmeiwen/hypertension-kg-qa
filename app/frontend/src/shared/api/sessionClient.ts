@@ -105,6 +105,7 @@ export async function* streamProcessWithSession(
   sessionId: string | null,
   imageData: string | null = null,
   fileName = "",
+  fileId = "",
 ): AsyncGenerator<StreamEvent, void, undefined> {
   // 组装会话流式问答 payload，图片和文件名只在用户上传附件时传递。
   const payload: Record<string, unknown> = {
@@ -114,6 +115,7 @@ export async function* streamProcessWithSession(
   };
   if (imageData) payload.image = imageData;
   if (fileName) payload.file_name = fileName;
+  if (fileId) payload.file_id = fileId;
 
   for await (const line of fetchStream("/process_with_session", payload, "问答流式请求失败")) {
     try {

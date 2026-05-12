@@ -1,4 +1,4 @@
-﻿"""
+"""
 MCP 工具装配与运行时探测模块。
 
 本模块负责构建本地 MCP 工具注册表，并提供以下能力：
@@ -23,8 +23,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from app.common.config import Config
-from app.common.perf_logger import log_duration
+from app.core.config import Config
+from app.core.perf_logger import log_duration
 from app.a2a.agent.llm_client import LLMClient
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.knowledge_graph.neo4j_manager import neo4j_client
@@ -295,7 +295,7 @@ class RagSearchTool:
                     }
                 )
             return {"hits": hits}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except Exception as exc:
             logger.exception(
                 "rag_search_failed: dependency=milvus error_type=%s error=%s",
                 type(exc).__name__,
@@ -477,7 +477,7 @@ class KgEntityRelationSearchTool:
                 disambiguation_margin=disambiguation_margin,
                 disambiguation_resolver=self._resolve_disambiguation_with_llm,
             )
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except Exception as exc:
             logger.exception(
                 "kg_entity_relation_search_failed: dependency=milvus error_type=%s error=%s",
                 type(exc).__name__,
@@ -608,7 +608,7 @@ def build_mcp_server() -> MCPServer:
             """
             return await rag_tool.query(payload)
 
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+    except Exception as exc:
         message = str(exc)
         logger.exception(
             "build_mcp_server_rag_tool_failed_fallback: error_type=%s error=%s",
@@ -646,15 +646,7 @@ def build_mcp_server() -> MCPServer:
                 with log_duration("kg_milvus.preload_embedder"):
                     kg_er_tool.store.ensure_embedder_loaded()
                 logger.info("kg_entity_relation_search 预热完成")
-            except (
-                RuntimeError,
-                ValueError,
-                TypeError,
-                KeyError,
-                AttributeError,
-                OSError,
-                ImportError,
-            ) as exc:
+            except Exception as exc:
                 logger.warning(
                     "kg_entity_relation_search_prewarm_failed: error_type=%s error=%s",
                     type(exc).__name__,
@@ -673,7 +665,7 @@ def build_mcp_server() -> MCPServer:
             """
             return await kg_er_tool.query(payload)
 
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+    except Exception as exc:
         message = str(exc)
         logger.exception(
             "build_mcp_server_kg_er_tool_failed_fallback: error_type=%s error=%s",
@@ -829,7 +821,7 @@ async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str
                     runtime_unavailable_required.append(tool_name)
                 else:
                     runtime_unavailable_optional.append(tool_name)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except Exception as exc:
             runtime_errors[tool_name] = str(exc)
             logger.warning(
                 "mcp_runtime_probe_failed: tool=%s error_type=%s error=%s",

@@ -223,11 +223,12 @@ class DeterministicA2AEventStreamService:
         session_id: str,
         request_id: str = "",
         image_data: Any = None,
+        file_id: str = "",
         original_input_text: str = "",
         memory_context: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """按固定顺序生成 job、msg、reply 和 done 事件。"""
-        _ = user_id, session_id, request_id, image_data, memory_context
+        _ = user_id, session_id, request_id, image_data, file_id, memory_context
         question = str(original_input_text or input_text or "").strip()
         reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}\n\n{MEDICAL_DISCLAIMER}"
         yield {"type": "job", "job_id": f"job-{session_id or 'deterministic'}"}
@@ -287,6 +288,7 @@ class DeterministicSessionTurnService:
         user_id: str,
         image_data: Any = None,
         file_name: str = "",
+        file_id: str = "",
     ) -> dict[str, Any]:
         """创建或复用会话、写入用户消息并返回运行时上下文。"""
         safe_user_id = str(user_id or "user-test")
@@ -295,7 +297,10 @@ class DeterministicSessionTurnService:
         if image_data:
             content = f"[图片] {content}"
         elif str(file_name or "").strip():
-            content = f"[文件:{str(file_name).strip()}] {content}".strip()
+            file_marker = str(file_name or "").strip()
+            if str(file_id or "").strip():
+                file_marker = f"{file_marker}; file_id={str(file_id or '').strip()}"
+            content = f"[文件:{file_marker}] {content}".strip()
         user_message = self._state.add_message(str(session["id"]), "user", content)
         runtime_payload = await self._memory_service.build_runtime_context(str(session["id"]), str(input_text or ""), int(user_message["id"]))
         return {
@@ -321,13 +326,14 @@ class DeterministicSessionStreamService:
         user_id: str,
         session_id: str,
         image_data: Any = None,
+        file_id: str = "",
         user_message_id: int = 0,
         request_id: str = "",
         original_input_text: str = "",
         memory_context: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
         """生成固定聊天流并在内存态会话中写入助手消息。"""
-        _ = user_id, image_data, request_id, memory_context
+        _ = user_id, image_data, file_id, request_id, memory_context
         question = str(original_input_text or input_text or "").strip()
         reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}\n\n{MEDICAL_DISCLAIMER}"
         yield _json_line({"type": "session", "session_id": session_id, "user_message_id": int(user_message_id or 0)})

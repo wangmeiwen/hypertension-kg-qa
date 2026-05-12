@@ -91,6 +91,66 @@ class AdminObservabilityService:
                 break
         return events
 
+    @staticmethod
+    def _extract_json_object(value: Any) -> dict[str, Any]:
+        """从观测卡片文本中提取 JSON 对象。"""
+        raw = str(value or "").strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError, json.JSONDecodeError):
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start < 0 or end <= start:
+                return {}
+            try:
+                parsed = json.loads(raw[start : end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError, json.JSONDecodeError):
+                return {}
+
+    def _derive_llm_metrics_from_agent_lanes(self, payload: dict[str, Any]) -> dict[str, int]:
+        """独立 LLM 日志缺失时，从 turn.agent_lanes 的 telemetry 中兜底提取指标。"""
+        agent_lanes = payload.get("agent_lanes") if isinstance(payload.get("agent_lanes"), dict) else {}
+        total_tokens = 0
+        llm_calls = 0
+        for cards in agent_lanes.values():
+            if not isinstance(cards, list):
+                continue
+            for card in cards:
+                row = card if isinstance(card, dict) else {}
+                parsed = self._extract_json_object(row.get("full_decision"))
+                total_tokens = max(total_tokens, self._to_int_metric(parsed.get("total_tokens")))
+                llm_calls = max(llm_calls, self._to_int_metric(parsed.get("llm_calls")))
+        if llm_calls <= 0 and total_tokens > 0:
+            llm_calls = 1
+        return {"llm_calls": llm_calls, "total_tokens": total_tokens}
+
+    def _merge_turn_metrics(self, payload: dict[str, Any], memory_update: dict[str, Any]) -> dict[str, Any]:
+        """合并 turn、记忆更新和内嵌 telemetry 中的 LLM 指标。"""
+        fallback_metrics = self._derive_llm_metrics_from_agent_lanes(payload)
+        merged = {
+            **payload,
+            "llm_calls": max(
+                self._to_int_metric(payload.get("llm_calls")),
+                self._to_int_metric(memory_update.get("llm_calls")),
+                self._to_int_metric(fallback_metrics.get("llm_calls")),
+            ),
+            "total_tokens": max(
+                self._to_int_metric(payload.get("total_tokens")),
+                self._to_int_metric(memory_update.get("total_tokens")),
+                self._to_int_metric(fallback_metrics.get("total_tokens")),
+            ),
+        }
+        if memory_update:
+            merged["error_types"] = {
+                **(payload.get("error_types") if isinstance(payload.get("error_types"), dict) else {}),
+                **(memory_update.get("error_types") if isinstance(memory_update.get("error_types"), dict) else {}),
+            }
+        return merged
+
     def _read_turn_logs(self, limit: int = 200) -> list[dict[str, Any]]:
         """读取会话 turn 级观测日志并合并记忆更新记录。
 
@@ -130,19 +190,7 @@ class AdminObservabilityService:
                 continue
         for turn_id, payload in turn_rows.items():
             memory_update = memory_updates.get(turn_id) if isinstance(memory_updates.get(turn_id), dict) else {}
-            if memory_update:
-                payload = {
-                    **payload,
-                    "llm_calls": max(int(payload.get("llm_calls") or 0), int(memory_update.get("llm_calls") or 0)),
-                    "total_tokens": max(int(payload.get("total_tokens") or 0), int(memory_update.get("total_tokens") or 0)),
-                    "error_types": (
-                        {
-                            **(payload.get("error_types") if isinstance(payload.get("error_types"), dict) else {}),
-                            **(memory_update.get("error_types") if isinstance(memory_update.get("error_types"), dict) else {}),
-                        }
-                    ),
-                }
-            rows.append(payload)
+            rows.append(self._merge_turn_metrics(payload, memory_update))
         rows.sort(key=lambda item: str(item.get("finished_at") or item.get("timestamp") or ""), reverse=True)
         return rows[:limit]
 

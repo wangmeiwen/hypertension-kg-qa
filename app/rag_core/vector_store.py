@@ -49,8 +49,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from app.common.perf_logger import log_duration
-from app.common.config import Config
+from app.core.perf_logger import log_duration
+from app.core.config import Config
 
 conf = Config()
 

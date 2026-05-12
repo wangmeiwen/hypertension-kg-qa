@@ -35,6 +35,9 @@ export interface SessionDetail extends SessionRecord {
 export interface UploadChatFileResult {
   is_image?: boolean;
   base64?: string;
+  file_id?: string;
+  aliyun_file_id?: string;
+  original_name?: string;
   [key: string]: unknown;
 }
 

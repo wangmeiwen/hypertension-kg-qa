@@ -9,8 +9,8 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from fastapi.responses import JSONResponse
 
-from app.common.db_manager import check_databases
-from app.common.feature_flags import get_runtime_flag_snapshot
+from app.backend.infrastructure.database_health import check_databases
+from app.core.feature_flags import get_runtime_flag_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class ReadinessService:
 
         try:
             mcp_detail = await self._await_call(get_mcp_runtime_status, self._get_mcp())
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except Exception as exc:
             mcp_error = str(exc)
             self._log_api_error("/health/readiness", "mcp_runtime_status", exc)
 

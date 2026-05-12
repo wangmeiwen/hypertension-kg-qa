@@ -14,7 +14,7 @@ from neo4j import GraphDatabase
 
 # 导入配置
 try:
-    from app.common.config import Config
+    from app.core.config import Config
 except ImportError:
     from config.config import Config
 

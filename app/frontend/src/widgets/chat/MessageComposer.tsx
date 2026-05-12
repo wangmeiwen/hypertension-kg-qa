@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import styles from "./MessageComposer.module.css";
 import { Button, Input } from "../../shared/ui/primitives";
 
+const MAX_DRAFT_LENGTH = 500;
+
 // 聊天输入区是受控组件，所有草稿、附件和发送/停止动作由页面层管理。
 export default function MessageComposer({
   draft,
@@ -50,10 +52,11 @@ export default function MessageComposer({
           className={styles.textarea}
           value={draft}
           rows={1}
+          maxLength={MAX_DRAFT_LENGTH}
           placeholder={t("chat.composerPlaceholder")}
           onChange={(event) => {
             resizeTextarea(event.target);
-            onDraftChange(event.target.value);
+            onDraftChange(event.target.value.slice(0, MAX_DRAFT_LENGTH));
           }}
         />
       </label>

@@ -77,7 +77,18 @@
   display: flex;
   justify-content: space-between;
   gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
   padding: 20px 24px 0;
+}
+
+.cardHeader > div {
+  min-width: 0;
+}
+
+.cardHeader > div:last-child {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .cardBody {
