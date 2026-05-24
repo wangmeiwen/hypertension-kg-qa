@@ -582,7 +582,7 @@ def _build_orchestrator_cards(
             "prompt_preview": _sanitize_preview(input_text, 140),
             "decision_preview": _sanitize_preview(
                 (
-                    f"controller_mode={telemetry.get('controller_mode') or 'explicit_memory_with_history_read'}；"
+                    f"controller_mode={telemetry.get('controller_mode') or 'explicit_memory_with_subagents'}；"
                     f"retrieval_round={telemetry.get('retrieval_round') or 0}；"
                     f"compression_count={telemetry.get('compression_count') or 0}；"
                     f"aborted_for_prompt_budget={'yes' if bool(telemetry.get('aborted_for_prompt_budget')) else 'no'}"
@@ -931,7 +931,7 @@ def _build_turn_observability_payload(
         "retrieval_question_index_text": str(memory_context.get("retrieval_question_index_text") or ""),
     }
     orchestrator_decision = {
-        "controller_mode": str(telemetry.get("controller_mode") or "explicit_memory_with_history_read"),
+        "controller_mode": str(telemetry.get("controller_mode") or "explicit_memory_with_subagents"),
         "retrieval_round": int(telemetry.get("retrieval_round") or 0),
         "final_source": str(telemetry.get("final_source") or "controller"),
         "answer_mode": str(evidence_summary.get("answer_mode") or ""),

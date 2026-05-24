@@ -14,7 +14,6 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
-from app.a2a.tool_gateway import MCPToolGateway
 from app.a2a.models import SubAgentConstraints, SubTask
 from app.core.config import Config
 
@@ -81,13 +80,13 @@ class UnifiedOrchestratorController:
         *,
         conf: Config | None = None,
         llm_client: LLMClient | None = None,
-        mcp_gateway: MCPToolGateway | None = None,
+        mcp_gateway: Any | None = None,
     ) -> None:
-        """初始化主控，注入 LLM、子代理客户端与 MCP 网关。"""
+        """初始化主控，注入 LLM 和子代理客户端。"""
         self._conf = conf if conf is not None else Config()
         self._client = llm_client if llm_client is not None else LLMClient(self._conf)
         self._subagent_client = subagent_client
-        self._mcp_gateway = mcp_gateway if mcp_gateway is not None else MCPToolGateway(agent_type="orchestrator")
+        self._mcp_gateway = mcp_gateway
 
     async def aclose(self) -> None:
         """释放控制器持有的底层客户端资源。"""
@@ -98,24 +97,20 @@ class UnifiedOrchestratorController:
         return (
             "你是高血压问答系统的主控agent。\n"
             "你的职责是基于当前用户问题、会话问答记忆、历史检索问题索引，以及已经拿到的工具结果，自主决定下一步动作。\n"
-            "你只能选择四种动作之一：\n"
+            "你只能选择三种动作之一：\n"
             "1. final_answer：直接给出最终回答。\n"
             "2. call_kg：调用图谱子agent。\n"
             "3. call_rag：调用检索子agent。\n"
-            "4. call_history_read：调用 MCP 工具 history_read 读取某个历史检索问题的结果。\n"
             "如果会话记忆已经可以回答此问题，直接回答。"
-            "如果历史检索里已经有高度相关的问题，优先先读 history_read，再决定是否补检索。\n"
+            "如果历史检索里已经有高度相关的问题，可以基于索引内容直接回答或要求对应子agent补检索。\n"
+            "主控只负责拆分问题和选择子agent，不允许指定 MCP 工具名、Cypher、检索 payload 或底层工具参数。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
             "{"
-            "\"action\":\"final_answer|call_kg|call_rag|call_history_read\","
+            "\"action\":\"final_answer|call_kg|call_rag\","
             "\"reason\":\"简短原因\","
-            "\"question\":\"当需要检索时要处理的问题，可为空\","
-            "\"answer\":\"仅 final_answer 时填写\","
-            "\"tool_name\":\"仅 call_kg 时可填写 kg_entity_relation_search 或 kg_query\","
-            "\"arguments\":{},"
-            "\"history_id\":\"仅 call_history_read 时可填写\","
-            "\"user_question\":\"仅 call_history_read 时可填写\""
+            "\"question\":\"当需要子agent处理时拆分出的子问题，可为空\","
+            "\"answer\":\"仅 final_answer 时填写\""
             "}\n"
             "若信息仍不足且已拿到一些证据，也要基于现有证据给出谨慎回答，不要卡住。"
         )
@@ -134,7 +129,7 @@ class UnifiedOrchestratorController:
             "\"tool_observations\":["
             "{"
             "\"agent\":\"kg|rag|history\","
-            "\"action\":\"call_kg|call_rag|call_history_read\","
+            "\"action\":\"call_kg|call_rag\","
             "\"subquery\":\"相关的子问题\","
             "\"summary\":\"该工具结果的压缩摘要\","
             "\"query_records\":["
@@ -408,7 +403,7 @@ class UnifiedOrchestratorController:
             f"用户问题：{question}\n\n"
             f"这是之前的问答情况：\n{qa_memory_text}\n\n"
             f"这是之前检索过的问题：\n{retrieval_index_text}\n\n"
-            "你可以直接回答，调用 kg/rag 工具，或调用 MCP 工具 history_read 读取某个历史检索问题的结果。\n"
+            "你可以直接回答，或把需要补证据的子问题交给 kg/rag 子agent。\n"
             f"{final_rule}\n\n"
             "这是你目前已经拿到的工具/历史读取结果：\n"
             + "\n".join(observation_lines)
@@ -705,9 +700,9 @@ class UnifiedOrchestratorController:
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
             "tool_name": f"{result.target_agent}_subagent",
-            "requested_tool_name": _sanitize_text(action.get("tool_name"), 64),
+            "requested_tool_name": "",
             "subquery": _sanitize_text(result.question, 240),
-            "arguments": _coerce_dict(action.get("arguments")),
+            "arguments": {},
             "query_records": query_records,
             "result": {
                 "ok": True,
@@ -734,11 +729,6 @@ class UnifiedOrchestratorController:
     ) -> SubTask:
         """根据主控动作构建子代理任务对象。"""
         target_agent = "kg" if str(action.get("action") or "") == "call_kg" else "rag"
-        requested_tool_name = _sanitize_text(action.get("tool_name"), 64)
-        if target_agent == "kg":
-            tool_name = requested_tool_name or "kg_entity_relation_search"
-        else:
-            tool_name = "rag_search"
         question = _sanitize_text(action.get("question"), 300) or default_question
         return SubTask(
             subtask_id=1,
@@ -750,8 +740,8 @@ class UnifiedOrchestratorController:
                 allow_extra_retrieval=False,
                 max_tool_calls=max_tool_calls,
             ),
-            tool_name=tool_name,
-            arguments=_coerce_dict(action.get("arguments")),
+            tool_name="kg_auto" if target_agent == "kg" else "rag_search",
+            arguments={},
             reason=_sanitize_text(action.get("reason"), 200),
         )
 
@@ -941,7 +931,7 @@ class UnifiedOrchestratorController:
             "reflection_events": [],
             "processing_steps": processing_steps,
             "telemetry": {
-                "controller_mode": "explicit_memory_with_history_read",
+                "controller_mode": "explicit_memory_with_subagents",
                 "retrieval_round": retrieval_round,
                 "max_turns": max_turns,
                 "total_tokens": total_tokens,
@@ -1070,25 +1060,6 @@ class UnifiedOrchestratorController:
                 tool_observations.append(self._build_subagent_observation(result, action))
                 continue
 
-            if action_name == "call_history_read":
-                retrieval_round += 1
-                payload = {
-                    "session_id": safe_session_id,
-                    "history_id": _sanitize_text(action.get("history_id"), 64),
-                    "user_question": _sanitize_text(action.get("user_question"), 300),
-                }
-                if progress_callback is not None:
-                    progress_callback(
-                        {
-                            "event": "tool_call",
-                            "detail": "读取历史检索记录",
-                            "tool_name": "history_read",
-                        }
-                    )
-                tool_result = await self._mcp_gateway.invoke_tool("history_read", payload)
-                tool_observations.append(self._build_history_observation(action, tool_result))
-                continue
-
             processing_steps.append("主控返回了未知动作，转入强制终答")
             break
 
@@ -1144,7 +1115,7 @@ class UnifiedOrchestratorController:
             "reflection_events": [],
             "processing_steps": processing_steps,
             "telemetry": {
-                "controller_mode": "explicit_memory_with_history_read",
+                "controller_mode": "explicit_memory_with_subagents",
                 "retrieval_round": retrieval_round,
                 "max_turns": safe_max_turns,
                 "total_tokens": total_tokens,

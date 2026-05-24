@@ -637,7 +637,7 @@ class DeterministicA2AService:
                     {
                         "kind": "data",
                         "data": {
-                            "controller_mode": "explicit_memory_with_history_read",
+                            "controller_mode": "explicit_memory_with_subagents",
                             "llm_calls": 2,
                             "tool_calls": 2,
                             "retrieval_round": 1,

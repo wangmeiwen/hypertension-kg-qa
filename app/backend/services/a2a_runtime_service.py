@@ -219,8 +219,10 @@ class A2ARuntimeService:
         requests = self._build_subagent_requests(
             input_text=str(input_text or ""),
             metadata=meta,
-            default_tool_name="kg_entity_relation_search",
+            default_tool_name="kg_auto",
         )
+        for row in requests:
+            row["tool_name"] = "kg_auto"
         if progress_callback is not None:
             progress_callback(
                 {

@@ -42,7 +42,7 @@ class GraphSubAgent:
         req = row if isinstance(row, dict) else {}
         subquery_id = int(req.get("subquery_id") or idx)
         subquery = str(req.get("subquery") or "").strip()
-        tool_name = str(req.get("tool_name") or "kg_entity_relation_search").strip() or "kg_entity_relation_search"
+        tool_name = str(req.get("tool_name") or "kg_auto").strip() or "kg_auto"
         arguments_obj = req.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
         constraints_obj = req.get("constraints")

@@ -908,7 +908,7 @@ async def test_a2a_runtime_service_lazy_init_and_subagent_queries(monkeypatch) -
     assert graph_result["output_type"] == "graph_subagent_batch"
     assert graph_result["confidence"] == 0.75
     assert progress_events[0]["event"] == "graph_batch_start"
-    assert runtime.graph_subagent.requests[0]["tool_name"] == "kg_entity_relation_search"
+    assert runtime.graph_subagent.requests[0]["tool_name"] == "kg_auto"
 
     retrieval_result = await service._run_retrieval_a2a_query(
         "rag question",
@@ -918,6 +918,68 @@ async def test_a2a_runtime_service_lazy_init_and_subagent_queries(monkeypatch) -
     assert retrieval_result["output_type"] == "retrieval_subagent_batch"
     assert retrieval_result["confidence"] == 0.42
     assert runtime.rag_subagent.requests[0]["tool_name"] == "rag_search"
+
+
+async def test_kg_subagent_selects_mcp_tool_internally() -> None:
+    from app.a2a.subagents.kg.nodes import node_generate_query_statements
+
+    complex_state = {
+        "input_question": "高血压合并 CKD 且有蛋白尿时优先考虑哪些药物类别和代表药？",
+        "subtask_id": 1,
+        "constraints": {"allow_extra_retrieval": False, "max_tool_calls": 3},
+        "tool_name": "kg_auto",
+        "arguments": {},
+        "query_terms": [],
+        "attempt_count": 0,
+        "tool_results": [],
+    }
+    complex_output = await node_generate_query_statements(complex_state)
+    complex_tools = [row["tool_name"] for row in complex_output["query_statements"]]
+    assert complex_tools == ["kg_entity_relation_search", "kg_query"]
+
+    exact_state = {
+        "input_question": "列出所有高血压相关节点",
+        "subtask_id": 1,
+        "constraints": {"allow_extra_retrieval": False, "max_tool_calls": 3},
+        "tool_name": "kg_auto",
+        "arguments": {},
+        "query_terms": [],
+        "attempt_count": 0,
+        "tool_results": [],
+    }
+    exact_output = await node_generate_query_statements(exact_state)
+    assert exact_output["query_statements"][0]["tool_name"] == "kg_query"
+
+
+async def test_orchestrator_hides_mcp_tool_selection_from_model() -> None:
+    from app.a2a.client.subagent_client import SubAgentClientFactory
+    from app.a2a.orchestrator.controller import UnifiedOrchestratorController
+
+    class FakeLlmClient:
+        async def aclose(self) -> None:
+            return None
+
+    controller = UnifiedOrchestratorController(
+        SubAgentClientFactory(graph_subagent=None, rag_subagent=None),
+        llm_client=FakeLlmClient(),
+    )
+    prompt = controller._build_system_prompt()
+    assert "kg_query" not in prompt
+    assert "kg_entity_relation_search" not in prompt
+    assert "history_read" not in prompt
+    assert "\"arguments\"" not in prompt
+    task = controller._build_subtask(
+        action={
+            "action": "call_kg",
+            "question": "高血压合并 CKD 和蛋白尿怎么用药？",
+            "tool_name": "kg_query",
+            "arguments": {"cypher": "MATCH (n) RETURN n"},
+        },
+        default_question="默认问题",
+        max_tool_calls=3,
+    )
+    assert task.tool_name == "kg_auto"
+    assert task.arguments == {}
 
 
 async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> None:

@@ -68,6 +68,9 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache
+/app/frontend/runtime_cache/
+/runtime_cache/defense_ppt/
+/docs/
 
 # Test coverage
 .coverage
@@ -80,7 +83,9 @@ htmlcov/
 /tests/ragas/langsmith/
 /docker/milvus/
 /.codex/
+/.codex_tmp/
 /.claude/
+/pytest_tmp_run/
 /data/
 /model/
 

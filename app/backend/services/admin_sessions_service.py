@@ -123,16 +123,16 @@ class AdminSessionsService:
     def _normalize_controller_mode(value: Any) -> str:
         """规范化主控模式标识，兜底为显式记忆主控。"""
         token = str(value or "").strip()
-        if token == "explicit_memory_with_history_read":
-            return "explicit_memory_with_history_read"
-        return token or "explicit_memory_with_history_read"
+        if token in {"explicit_memory_with_history_read", "explicit_memory_with_subagents"}:
+            return "explicit_memory_with_subagents"
+        return token or "explicit_memory_with_subagents"
 
     @staticmethod
     def _controller_mode_label(value: Any) -> str:
         """将主控模式标识转换为可展示中文标签。"""
         token = AdminSessionsService._normalize_controller_mode(value)
-        if token == "explicit_memory_with_history_read":
-            return "显式记忆主控"
+        if token == "explicit_memory_with_subagents":
+            return "显式记忆子代理主控"
         return token or "未知"
 
     def _read_session_turn_records(self, session_id: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:

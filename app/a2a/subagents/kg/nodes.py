@@ -19,6 +19,51 @@ from app.a2a.subagents.retry_utils import (
 from app.a2a.subagents.kg.state import KgSubAgentState
 
 
+_KG_QUERY_HINTS = (
+    "列出",
+    "所有节点",
+    "全部节点",
+    "节点详情",
+    "属性",
+    "标签",
+    "id",
+    "cypher",
+    "match",
+)
+
+_KG_COMPLEX_RELATION_HINTS = (
+    "合并",
+    "并发",
+    "蛋白尿",
+    "ckd",
+    "慢性肾",
+    "肾病",
+    "药物类别",
+    "代表药",
+    "治疗",
+    "推荐",
+    "机制",
+    "关系",
+    "路径",
+    "风险",
+    "禁忌",
+    "联用",
+    "作用",
+)
+
+
+def _select_kg_tool_name(question: str, arguments: dict[str, Any]) -> str:
+    """由 KG 子代理根据问题语义选择底层图谱工具。"""
+    text = f"{str(question or '').strip()} {' '.join(str(item or '') for item in arguments.values())}".lower()
+    if any(key in arguments for key in ("cypher", "list_all_nodes", "keyword")):
+        return "kg_query"
+    if any(hint in text for hint in _KG_COMPLEX_RELATION_HINTS):
+        return "kg_dual_search"
+    if any(hint in text for hint in _KG_QUERY_HINTS):
+        return "kg_query"
+    return "kg_entity_relation_search"
+
+
 def _build_query_records(
     query_statements: list[dict[str, Any]],
     tool_results: list[dict[str, Any]],
@@ -108,10 +153,12 @@ def _resolve_tool_plan(state: KgSubAgentState) -> list[dict[str, Any]]:
     Returns:
         工具调用计划列表，每项包含工具名、问题、参数和查询词。
     """
-    tool_name = str(state.get("tool_name") or "kg_entity_relation_search").strip() or "kg_entity_relation_search"
     question = str(state.get("input_question") or "").strip()
     arguments_obj = state.get("arguments")
     arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+    tool_name = str(state.get("tool_name") or "").strip()
+    if tool_name in {"", "auto", "kg_auto"}:
+        tool_name = _select_kg_tool_name(question, arguments)
     query_terms_obj = state.get("query_terms")
     query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
     query_terms = [item for item in query_terms if item]
