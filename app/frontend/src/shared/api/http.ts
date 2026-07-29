@@ -48,7 +48,12 @@ function extractMessage(payload: unknown, fallback: string): string {
   if (envelope.success && envelope.data.error) {
     return envelope.data.error;
   }
-  if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
     return payload.error;
   }
   return fallback;
@@ -58,7 +63,7 @@ export async function fetchJson<T>(
   path: string,
   schema: ZodType<T>,
   init: RequestInit = {},
-  options: { auth?: boolean; fallbackMessage?: string } = {}
+  options: { auth?: boolean; fallbackMessage?: string } = {},
 ): Promise<T> {
   // fetchJson 解析标准 envelope.data；非 envelope 响应则直接按 schema 校验原始 payload。
   const headers = new Headers(init.headers);
@@ -75,7 +80,10 @@ export async function fetchJson<T>(
   });
 
   const payload = await parseResponse(response);
-  const message = extractMessage(payload, options.fallbackMessage || `Request failed: ${response.status}`);
+  const message = extractMessage(
+    payload,
+    options.fallbackMessage || `Request failed: ${response.status}`,
+  );
   if (response.status === 401) {
     clearAdminToken();
     throw buildError(message, response.status, "unauthorized");
@@ -104,7 +112,7 @@ export async function fetchJsonEnvelope<T>(
   path: string,
   schema: ZodType<T>,
   init: RequestInit = {},
-  options: { auth?: boolean; fallbackMessage?: string } = {}
+  options: { auth?: boolean; fallbackMessage?: string } = {},
 ): Promise<T> {
   // fetchJsonEnvelope 保留完整响应 envelope，用于需要读取 ok/token/total 等顶层字段的接口。
   const headers = new Headers(init.headers);
@@ -121,7 +129,10 @@ export async function fetchJsonEnvelope<T>(
   });
 
   const payload = await parseResponse(response);
-  const message = extractMessage(payload, options.fallbackMessage || `Request failed: ${response.status}`);
+  const message = extractMessage(
+    payload,
+    options.fallbackMessage || `Request failed: ${response.status}`,
+  );
   if (response.status === 401) {
     clearAdminToken();
     throw buildError(message, response.status, "unauthorized");
@@ -145,7 +156,8 @@ export async function fetchJsonEnvelope<T>(
 export async function* fetchStream(
   path: string,
   payload: Record<string, unknown>,
-  onErrorMessage = "Streaming request failed"
+  onErrorMessage = "Streaming request failed",
+  expectedSchemaVersion?: string,
 ): AsyncGenerator<string, void, undefined> {
   // 后端流式接口按换行分隔事件；生成器逐行产出完整事件文本。
   const response = await fetch(`${BASE_URL}${path}`, {
@@ -156,6 +168,16 @@ export async function* fetchStream(
 
   if (!response.ok || !response.body) {
     throw buildError(`${onErrorMessage}: ${response.status}`, response.status);
+  }
+  if (
+    expectedSchemaVersion &&
+    response.headers.get("X-Stream-Schema-Version") !== expectedSchemaVersion
+  ) {
+    throw buildError(
+      `${onErrorMessage}: stream schema version mismatch`,
+      response.status,
+      "schema_version_error",
+    );
   }
 
   const reader = response.body.getReader();

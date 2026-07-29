@@ -305,6 +305,7 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
     process = client.post("/process", json={"input": "question", "user_id": "user-1"})
     assert process.status_code == 200
     assert process.headers["content-type"].startswith("application/x-ndjson")
+    assert process.headers["x-stream-schema-version"] == "1.0.0"
     assert '"type":"done"' in process.text
     assert (
         client.post("/agent/run", json={"input": ""}).json()["error"]
@@ -324,10 +325,23 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
         "/process_with_session", json={"input": "question", "user_id": "user-1"}
     )
     assert with_session.headers["content-type"].startswith("application/x-ndjson")
+    assert with_session.headers["x-stream-schema-version"] == "1.0.0"
     assert '"session_id":"session-1"' in with_session.text
     assert (
         client.post(
             "/process_with_session", json={"input": "bad", "user_id": "user-1"}
         ).json()["error"]
         == "bad_input"
+    )
+
+    schema = client.get("/schemas/stream-events.json").json()
+    assert schema["x-schema-version"] == "1.0.0"
+    openapi_response = client.get("/openapi.json").json()["paths"]["/process"]["post"][
+        "responses"
+    ]["200"]
+    assert (
+        openapi_response["content"]["application/x-ndjson"]["x-stream-event-schema"][
+            "$ref"
+        ]
+        == "/schemas/stream-events.json"
     )

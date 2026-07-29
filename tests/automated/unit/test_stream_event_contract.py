@@ -8,7 +8,9 @@ from pydantic import ValidationError
 from app.backend.domain.stream_events import (
     DoneStreamEvent,
     ReplyStreamEvent,
+    STREAM_EVENT_SCHEMA_VERSION,
     stream_event_json_line,
+    stream_event_json_schema,
     validate_stream_event,
 )
 
@@ -44,6 +46,23 @@ def test_stream_contract_rejects_legacy_or_unknown_fields() -> None:
                 "msg": "不应重复出现的正文",
             }
         )
+
+
+def test_stream_contract_exports_versioned_discriminated_json_schema() -> None:
+    schema = stream_event_json_schema()
+
+    assert schema["$id"] == "/schemas/stream-events.json"
+    assert schema["x-schema-version"] == STREAM_EVENT_SCHEMA_VERSION
+    assert schema["discriminator"]["propertyName"] == "type"
+    assert set(schema["discriminator"]["mapping"]) == {
+        "job",
+        "session",
+        "msg",
+        "reply",
+        "done",
+        "error",
+        "persisted",
+    }
 
 
 async def test_failed_a2a_task_emits_error_without_done() -> None:

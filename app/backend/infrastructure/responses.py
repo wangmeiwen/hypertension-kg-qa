@@ -6,6 +6,8 @@ from typing import Any, AsyncIterator
 
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.backend.domain.stream_events import STREAM_EVENT_SCHEMA_VERSION
+
 
 def unauthorized_response(message: str = "未登录") -> JSONResponse:
     """构造 401 响应。"""
@@ -78,5 +80,6 @@ def ndjson_streaming_response(event_iter: AsyncIterator[str]) -> StreamingRespon
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "X-Stream-Schema-Version": STREAM_EVENT_SCHEMA_VERSION,
         },
     )

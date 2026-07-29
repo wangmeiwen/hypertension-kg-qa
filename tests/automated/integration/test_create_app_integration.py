@@ -50,6 +50,33 @@ def test_create_app_process_stream_uses_single_backend_entry(admin_app_client) -
     assert rows[-1]["type"] == "done"
 
 
+def test_session_reconnect_recovers_persisted_stream_message_ids(
+    admin_app_client,
+) -> None:
+    """流结束后重新读取会话时，消息 ID 应与 persisted 事件一致。"""
+    user_id = "user-reconnect"
+    response = admin_app_client.post(
+        "/process_with_session",
+        json={"input": "如何控制血压？", "user_id": user_id},
+    )
+    assert response.status_code == 200
+    assert response.headers["x-stream-schema-version"] == "1.0.0"
+    rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    session_event = next(row for row in rows if row["type"] == "session")
+    persisted_event = next(row for row in rows if row["type"] == "persisted")
+    assert rows[-1]["type"] == "done"
+
+    detail = admin_app_client.get(
+        f"/sessions/{session_event['session_id']}",
+        params={"user_id": user_id},
+    )
+    assert detail.status_code == 200
+    messages = detail.json()["data"]["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[0]["id"] == persisted_event["user_message_id"]
+    assert messages[1]["id"] == persisted_event["assistant_message_id"]
+
+
 def test_create_app_admin_login_route_uses_real_auth_service(monkeypatch, app_client_factory) -> None:
     """验证应用工厂中的管理员登录路由接入真实认证服务。"""
     import app.backend.security.admin_auth as auth_module

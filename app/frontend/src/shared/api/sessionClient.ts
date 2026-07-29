@@ -4,6 +4,7 @@ import {
   rollbackResultSchema,
   sessionDetailSchema,
   sessionRecordSchema,
+  STREAM_EVENT_SCHEMA_VERSION,
   streamEventSchema,
   uploadFileResultSchema,
   type RollbackResult,
@@ -140,7 +141,12 @@ export async function* streamProcessWithSession(
   if (fileName) payload.file_name = fileName;
   if (fileId) payload.file_id = fileId;
 
-  for await (const line of fetchStream("/process_with_session", payload, "问答流式请求失败")) {
+  for await (const line of fetchStream(
+    "/process_with_session",
+    payload,
+    "问答流式请求失败",
+    STREAM_EVENT_SCHEMA_VERSION,
+  )) {
     const json = JSON.parse(line) as unknown;
     yield streamEventSchema.parse(json);
   }

@@ -1155,6 +1155,7 @@ class SessionStreamService:
         log_api_error: Any,
         event_stream_service: A2AEventStreamService,
         message_manager: Any = MessageManager,
+        create_task: Any = asyncio.create_task,
     ) -> None:
         """初始化实例并注入运行依赖。
 
@@ -1164,6 +1165,7 @@ class SessionStreamService:
             log_api_error: 统一记录会话流式接口错误的回调。
             event_stream_service: A2A 事件流服务实例。
             message_manager: 消息仓储实现。
+            create_task: 后台任务创建器，允许测试记忆刷新调度失败。
 
         Returns:
             None: 无返回值。
@@ -1173,6 +1175,7 @@ class SessionStreamService:
         self._log_api_error = log_api_error
         self._event_stream_service = event_stream_service
         self._message_manager = message_manager
+        self._create_task = create_task
 
     async def generate_data_with_session_lines(
         self,
@@ -1214,6 +1217,7 @@ class SessionStreamService:
         )
         assistant_message_persisted = False
         assistant_message_id = 0
+        assistant_persist_attempts = 0
         memory_refresh_scheduled = False
         done_emitted = False
         turn_observability_written = False
@@ -1270,11 +1274,13 @@ class SessionStreamService:
 
         async def persist_assistant_message_once() -> int:
             """确保助手消息最多落库一次，并返回助手消息 ID。"""
-            nonlocal assistant_message_persisted, assistant_message_id
+            nonlocal assistant_message_id, assistant_message_persisted
+            nonlocal assistant_persist_attempts
             if assistant_message_persisted:
                 return int(assistant_message_id or 0)
             if not full_reply:
                 return 0
+            assistant_persist_attempts += 1
             ensure_medical_disclaimer()
             assistant_message = await self._await_call(
                 self._message_manager.add_message,
@@ -1285,6 +1291,25 @@ class SessionStreamService:
             )
             assistant_message_id = int((assistant_message or {}).get("id") or 0)
             assistant_message_persisted = assistant_message_id > 0
+            if not assistant_message_persisted:
+                raise RuntimeError("assistant_message_id_missing")
+            return int(assistant_message_id or 0)
+
+        async def persist_assistant_message_with_retry(log_stage: str) -> int:
+            """在终态前最多尝试两次助手消息落库。"""
+            while not assistant_message_persisted and assistant_persist_attempts < 2:
+                try:
+                    return await persist_assistant_message_once()
+                except Exception as exc:
+                    self._log_api_error(
+                        "/process_with_session",
+                        log_stage,
+                        exc,
+                        session_id=session_id,
+                        user_id=user_id,
+                        request_id=request_id,
+                        attempt=assistant_persist_attempts,
+                    )
             return int(assistant_message_id or 0)
 
         def write_turn_observability_once() -> None:
@@ -1439,14 +1464,16 @@ class SessionStreamService:
                         request_id=request_id,
                     )
 
+            refresh_coro = refresh_memory_task()
             try:
-                refresh_task = asyncio.create_task(
-                    refresh_memory_task(),
+                refresh_task = self._create_task(
+                    refresh_coro,
                     name=f"memory-refresh-{session_id}-{persisted_assistant_message_id}",
                 )
                 refresh_task.add_done_callback(on_refresh_done)
                 memory_refresh_scheduled = True
             except Exception as exc:
+                refresh_coro.close()
                 self._log_api_error(
                     "/process_with_session",
                     "memory_refresh_schedule_failed",
@@ -1506,67 +1533,75 @@ class SessionStreamService:
                     )
 
                 if full_reply:
+                    persisted_id = await persist_assistant_message_with_retry(
+                        "assistant_persist_failed_after_done"
+                    )
+                    if persisted_id <= 0:
+                        done_status = "failed"
+                        done_emitted = True
+                        yield stream_event_json_line(
+                            ErrorStreamEvent(
+                                code="assistant_persist_failed",
+                                message="回答已生成，但会话保存失败，请稍后重试",
+                                task_id=event.task_id,
+                                recoverable=True,
+                            )
+                        )
+                        break
                     try:
-                        persisted_id = await persist_assistant_message_once()
-                        if persisted_id > 0:
-                            for index, row in enumerate(
-                                done_tool_observations, start=1
-                            ):
-                                tool_name = str(
-                                    row.get("tool_name")
-                                    or row.get("requested_tool_name")
-                                    or ""
-                                )
-                                arguments_value = row.get("arguments")
-                                arguments = (
-                                    arguments_value
-                                    if isinstance(arguments_value, dict)
-                                    else {}
-                                )
-                                result_value = row.get("result")
-                                result_obj = (
-                                    result_value
-                                    if isinstance(result_value, dict)
-                                    else {}
-                                )
-                                log_tool_event(
-                                    session_id=str(session_id or ""),
-                                    turn=int(user_message_id or index),
-                                    tool_name=tool_name or "unknown_tool",
-                                    arguments=arguments,
-                                    result_ok=bool(result_obj.get("ok", True)),
-                                    has_signal=bool(result_obj.get("result")),
-                                    duration_ms=0.0,
-                                    fallback_used=bool(row.get("used_fallback")),
-                                    blocked_reason=str(row.get("blocked_reason") or ""),
-                                )
-                            log_session_op(
+                        for index, row in enumerate(done_tool_observations, start=1):
+                            tool_name = str(
+                                row.get("tool_name")
+                                or row.get("requested_tool_name")
+                                or ""
+                            )
+                            arguments_value = row.get("arguments")
+                            arguments = (
+                                arguments_value
+                                if isinstance(arguments_value, dict)
+                                else {}
+                            )
+                            result_value = row.get("result")
+                            result_obj = (
+                                result_value if isinstance(result_value, dict) else {}
+                            )
+                            log_tool_event(
                                 session_id=str(session_id or ""),
-                                turn=int(user_message_id or 0),
-                                stage="orchestrator",
-                                action="run_end",
-                                status=done_status,
-                                output_summary=_build_reply_digest(full_reply),
+                                turn=int(user_message_id or index),
+                                tool_name=tool_name or "unknown_tool",
+                                arguments=arguments,
+                                result_ok=bool(result_obj.get("ok", True)),
+                                has_signal=bool(result_obj.get("result")),
+                                duration_ms=0.0,
+                                fallback_used=bool(row.get("used_fallback")),
+                                blocked_reason=str(row.get("blocked_reason") or ""),
                             )
-                            write_turn_observability_once()
-                            schedule_memory_refresh(persisted_id)
-                            yield stream_event_json_line(
-                                build_persisted_event(persisted_id)
-                            )
+                        log_session_op(
+                            session_id=str(session_id or ""),
+                            turn=int(user_message_id or 0),
+                            stage="orchestrator",
+                            action="run_end",
+                            status=done_status,
+                            output_summary=_build_reply_digest(full_reply),
+                        )
                     except Exception as exc:
                         self._log_api_error(
                             "/process_with_session",
-                            "assistant_persist_failed_after_done",
+                            "assistant_post_persist_observability_failed",
                             exc,
                             session_id=session_id,
                             user_id=user_id,
                             request_id=request_id,
                             done_emitted=done_emitted,
                         )
+                    write_turn_observability_once()
+                    schedule_memory_refresh(persisted_id)
+                    yield stream_event_json_line(build_persisted_event(persisted_id))
                 done_emitted = True
                 yield stream_event_json_line(event)
                 break
         except asyncio.CancelledError as exc:
+            done_status = "cancelled"
             self._log_api_error(
                 "/process_with_session",
                 "generate_data_with_session_cancelled",
@@ -1593,9 +1628,11 @@ class SessionStreamService:
                 done_emitted = True
         finally:
             if full_reply and not assistant_message_persisted:
-                try:
-                    persisted_id = await persist_assistant_message_once()
-                    if persisted_id > 0:
+                persisted_id = await persist_assistant_message_with_retry(
+                    "persist_assistant_turn_finally"
+                )
+                if persisted_id > 0:
+                    try:
                         log_session_op(
                             session_id=str(session_id or ""),
                             turn=int(user_message_id or 0),
@@ -1606,15 +1643,15 @@ class SessionStreamService:
                         )
                         write_turn_observability_once()
                         schedule_memory_refresh(persisted_id)
-                except Exception as exc:
-                    self._log_api_error(
-                        "/process_with_session",
-                        "persist_assistant_turn_finally",
-                        exc,
-                        session_id=session_id,
-                        user_id=user_id,
-                        request_id=request_id,
-                        done_emitted=done_emitted,
-                    )
+                    except Exception as exc:
+                        self._log_api_error(
+                            "/process_with_session",
+                            "assistant_finally_observability_failed",
+                            exc,
+                            session_id=session_id,
+                            user_id=user_id,
+                            request_id=request_id,
+                            done_emitted=done_emitted,
+                        )
             reset_request_context(request_token)
             reset_session_context(session_tokens)

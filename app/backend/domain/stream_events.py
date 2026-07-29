@@ -8,6 +8,9 @@ from typing import Annotated, Any, Literal, Mapping, TypeAlias, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
+STREAM_EVENT_SCHEMA_VERSION = "1.0.0"
+
+
 class StreamEventModel(BaseModel):
     """所有公开流事件共享的严格校验规则。"""
 
@@ -115,3 +118,12 @@ def stream_event_payload(event: StreamEvent | Mapping[str, Any]) -> dict[str, An
 def stream_event_json_line(event: StreamEvent | Mapping[str, Any]) -> str:
     """将事件序列化为单行 UTF-8 JSON。"""
     return json.dumps(stream_event_payload(event), ensure_ascii=False) + "\n"
+
+
+def stream_event_json_schema() -> dict[str, Any]:
+    """返回可供客户端生成类型和校验版本的完整 JSON Schema。"""
+    schema = _STREAM_EVENT_ADAPTER.json_schema()
+    schema["$id"] = "/schemas/stream-events.json"
+    schema["title"] = "Hypertension QA Stream Event"
+    schema["x-schema-version"] = STREAM_EVENT_SCHEMA_VERSION
+    return schema

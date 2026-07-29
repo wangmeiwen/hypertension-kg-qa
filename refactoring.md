@@ -192,6 +192,43 @@
 - 本轮涉及的前端文件通过 Prettier；全仓库仍有历史格式债务，继续归入独立的格式基线任务。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 
+### 第二批：断流与持久化补偿
+
+- 流消费者被取消时将本轮状态收口为 `cancelled`，在 `finally` 中最多尝试两次落库已输出的部分回答；成功后只写一次助手消息、观测记录和记忆刷新任务，不向已断开的客户端继续发送事件。
+- 正常回答完成后，助手消息落库最多尝试两次；瞬时失败恢复后仍输出 `persisted → done`，连续失败则以 `assistant_persist_failed` 可恢复错误终止，不再伪装成成功 `done`。
+- 消息仓储返回空消息 ID 视为落库失败，避免没有可追踪消息 ID 时继续发布成功终态。
+- 记忆刷新任务创建器改为可注入依赖；调度失败时主动关闭未提交协程，避免未等待协程泄漏。
+- 记忆刷新调度失败或后台执行失败只写观测错误，不改变已经成功落库的 `persisted → done` 序列。
+- 持久化完成事件与终态输出不再依赖工具/会话观测日志成功，观测失败不会遮蔽已经落库的消息 ID。
+
+### 第二批质量门禁
+
+- 新增 4 项会话流补偿测试，覆盖消费者取消、永久落库失败、瞬时落库恢复、记忆刷新调度失败和后台刷新失败。
+- 后端非数据库自动化测试：90 passed，3 deselected。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 139 个源文件，0 errors。
+- 本批涉及文件通过 Black 检查。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
+### 第三批：ASGI 断连、重连恢复与 Schema 版本
+
+- 按项目当前 Uvicorn ASGI 2.3 运行方式模拟 `http.disconnect`，验证 Starlette 会取消 NDJSON body iterator，并由会话流补偿逻辑接管部分回答落库。
+- 增加应用工厂级重连测试：`persisted` 事件中的用户/助手消息 ID 与重新请求会话历史得到的消息 ID 完全一致。
+- 流事件契约导出带 `$id`、判别字段和版本号的 JSON Schema，并通过 `/schemas/stream-events.json` 公开。
+- `/process` 与 `/process_with_session` 的 OpenAPI 响应声明 NDJSON 媒体类型、Schema 地址和 `X-Stream-Schema-Version` 响应头。
+- 所有 NDJSON 响应携带 `X-Stream-Schema-Version: 1.0.0`；前端在解析正文前校验版本，不兼容时以 `schema_version_error` 快速失败。
+
+### 第三批质量门禁
+
+- 新增 ASGI 断连传播、重连消息 ID 和 JSON Schema 契约测试。
+- 后端非数据库自动化测试：93 passed，3 deselected。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 139 个源文件，0 errors。
+- 本批涉及文件通过 Black 检查。
+- 前端测试：24 个测试文件、75 项测试通过。
+- 前端 TypeScript、ESLint、模块边界、Stylelint、Prettier 目标文件和 Vite 生产构建通过。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
 ## 当前架构边界
 
 ```text
@@ -288,7 +325,7 @@ page/workspace
 
 固定并经领域人员复核的问题集，分别运行 KG-only、dense-only、sparse-only、hybrid、rerank 和 Agent。质量报告同时记录 Recall@K、MRR、nDCG、证据命中率、延迟、token、失败率。
 
-### P1：API 与流式契约
+### P1：API 与流式契约（已完成）
 
 用 Pydantic 明确定义增量 `reply`、终止 `done`、错误和任务事件。`done` 不携带重复正文；消息落库、记忆刷新和客户端断流的补偿语义必须有集成测试。
 
@@ -299,11 +336,17 @@ page/workspace
 - A2A 失败使用 `error`，路由明确声明 NDJSON 响应类型。
 - 消息落库完成事件先于 `done`，已有服务层顺序回归测试。
 
-待完成：
+第二批已完成：
 
-- 增加真实 HTTP 客户端中途断开时的补偿集成测试，确认已输出的部分正文只落库一次。
-- 增加消息落库失败、记忆刷新调度失败和客户端重连后的协议级测试。
-- 为 `/process`、`/process_with_session` 和 A2A 任务事件生成共享的 OpenAPI/JSON Schema 文档。
+- 流消费者取消后按 `cancelled` 收口，并在服务层验证部分正文只落库一次。
+- 消息落库采用最多两次的有界重试，耗尽后输出可恢复错误。
+- 记忆刷新调度和后台执行失败不改变已持久化回答的成功终态。
+
+第三批已完成：
+
+- ASGI 2.3 `http.disconnect` 可传播为 body iterator 取消。
+- 客户端重连后可从会话历史恢复 `persisted` 对应的消息 ID。
+- `/process`、`/process_with_session` 和前端通过版本化 JSON Schema 与响应头完成契约握手。
 
 ### P2：数据库迁移与版本管理
 

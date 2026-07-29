@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const STREAM_EVENT_SCHEMA_VERSION = "1.0.0";
+
 // 后端后台任务状态枚举，兼容图谱构建、文档嵌入等异步任务。
 export const taskStatusSchema = z.enum([
   "queued",

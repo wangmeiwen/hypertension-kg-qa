@@ -9,6 +9,10 @@ from typing import Any, Callable, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.backend.domain.stream_events import (
+    STREAM_EVENT_SCHEMA_VERSION,
+    stream_event_json_schema,
+)
 from app.backend.infrastructure.responses import ndjson_streaming_response
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.agent_run_service import AgentRunService
@@ -17,6 +21,27 @@ from app.backend.services.session_stream_service import SessionStreamService
 from app.backend.services.session_turn_service import SessionTurnService
 
 logger = logging.getLogger(__name__)
+
+_NDJSON_STREAM_RESPONSE: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "逐行输出强类型问答事件",
+        "content": {
+            "application/x-ndjson": {
+                "schema": {"type": "string", "format": "binary"},
+                "x-stream-event-schema": {"$ref": "/schemas/stream-events.json"},
+            }
+        },
+        "headers": {
+            "X-Stream-Schema-Version": {
+                "description": "问答流事件契约版本",
+                "schema": {
+                    "type": "string",
+                    "example": STREAM_EVENT_SCHEMA_VERSION,
+                },
+            }
+        },
+    }
+}
 
 
 def create_query_chat_router(
@@ -50,7 +75,12 @@ def create_query_chat_router(
     """
     router = APIRouter()
 
-    @router.post("/process")
+    @router.get("/schemas/stream-events.json")
+    async def get_stream_event_schema() -> dict[str, Any]:
+        """返回问答 NDJSON 事件的版本化 JSON Schema。"""
+        return stream_event_json_schema()
+
+    @router.post("/process", responses=_NDJSON_STREAM_RESPONSE)
     async def process(data: dict, request: Request):
         """处理不落库的兼容流式问答请求入口。"""
         readiness_error = await readiness_service.ensure_core_ready("/process")
@@ -137,7 +167,7 @@ def create_query_chat_router(
             a2a_mode=a2a_mode,
         )
 
-    @router.post("/process_with_session")
+    @router.post("/process_with_session", responses=_NDJSON_STREAM_RESPONSE)
     async def process_with_session(data: dict, request: Request):
         """处理流式问答请求，并将用户问题和助手回答写入会话历史。"""
         trace_id = get_trace_id(request)
