@@ -3,10 +3,22 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import styles from "./GraphExplorerPage.module.css";
-import KnowledgeGraphCanvas, { DEFAULT_GRAPH_LIMIT, GRAPH_LIMIT_OPTIONS } from "../../entities/graph/ui/KnowledgeGraphCanvas";
+import KnowledgeGraphCanvas, {
+  DEFAULT_GRAPH_LIMIT,
+  GRAPH_LIMIT_OPTIONS,
+} from "../../entities/graph/ui/KnowledgeGraphCanvas";
 import { fetchGraph, getEntityDetail } from "../../shared/api/graphClient";
 import { queryKeys } from "../../shared/queries/queryKeys";
-import { Badge, Button, Card, InlineNotice, Input, Modal, PageHeader, Select } from "../../shared/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  InlineNotice,
+  Input,
+  Modal,
+  PageHeader,
+  Select,
+} from "../../shared/ui/primitives";
 
 function renderPropertyList(properties: Record<string, unknown> | undefined) {
   // 实体和关系属性统一按 key/value 列表展示，复杂值以 JSON 文本兜底。
@@ -88,10 +100,18 @@ export default function GraphExplorerPage() {
         eyebrow={t("graph.eyebrow")}
         title={t("graph.title")}
         description={t("graph.description")}
-        actions={<Badge>{t("graph.nodesLoaded", { nodes: graph.nodes.length, links: graph.links.length })}</Badge>}
+        actions={
+          <Badge>
+            {t("graph.nodesLoaded", { nodes: graph.nodes.length, links: graph.links.length })}
+          </Badge>
+        }
       />
 
-      {graphQuery.error ? <InlineNotice tone="error">{graphQuery.error instanceof Error ? graphQuery.error.message : String(graphQuery.error)}</InlineNotice> : null}
+      {graphQuery.error ? (
+        <InlineNotice tone="error">
+          {graphQuery.error instanceof Error ? graphQuery.error.message : String(graphQuery.error)}
+        </InlineNotice>
+      ) : null}
 
       <Card>
         <div className={styles.toolbar}>
@@ -129,7 +149,9 @@ export default function GraphExplorerPage() {
         {entityQuery.data ? (
           <div className={styles.entityMeta}>
             <h2 style={{ margin: 0 }}>{t("graph.entityDetail")}</h2>
-            <Badge>{entityQuery.data.entity.labels.join(", ") || t("graph.entityLabelFallback")}</Badge>
+            <Badge>
+              {entityQuery.data.entity.labels.join(", ") || t("graph.entityLabelFallback")}
+            </Badge>
             <div className={styles.propertyRow}>
               <strong>{t("graph.entityId")}</strong>
               <span>{String(entityQuery.data.entity.id)}</span>

@@ -56,5 +56,5 @@ export default tseslint.config(
       ],
     },
   },
-  prettier
+  prettier,
 );

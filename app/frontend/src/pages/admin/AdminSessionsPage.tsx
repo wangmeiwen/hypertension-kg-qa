@@ -14,7 +14,15 @@ import {
 import { formatDateTime, truncateText } from "../../shared/lib/format";
 import { reportFrontendError } from "../../shared/lib/observability";
 import { queryKeys } from "../../shared/queries/queryKeys";
-import { Badge, Button, Card, ConfirmDialog, DataTable, Modal, PageHeader } from "../../shared/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  ConfirmDialog,
+  DataTable,
+  Modal,
+  PageHeader,
+} from "../../shared/ui/primitives";
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
 // 管理后台会话页展示系统概览、会话列表、消息详情和危险操作入口。
@@ -25,8 +33,14 @@ export default function AdminSessionsPage() {
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
 
   const statsQuery = useQuery({ queryKey: queryKeys.admin.stats, queryFn: getAdminStats });
-  const readinessQuery = useQuery({ queryKey: queryKeys.admin.readiness, queryFn: getReadinessStatus });
-  const sessionsQuery = useQuery({ queryKey: queryKeys.admin.sessions(100, 0), queryFn: () => getAdminSessions(100, 0) });
+  const readinessQuery = useQuery({
+    queryKey: queryKeys.admin.readiness,
+    queryFn: getReadinessStatus,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions(100, 0),
+    queryFn: () => getAdminSessions(100, 0),
+  });
   const sessionDetailQuery = useQuery({
     queryKey: queryKeys.admin.sessionMessages(selectedSessionId),
     queryFn: () => getAdminSessionMessages(selectedSessionId as string),
@@ -56,33 +70,37 @@ export default function AdminSessionsPage() {
   const stats = statsQuery.data;
   const readiness = readinessQuery.data;
   const rows =
-      // DataTable 行由会话数据派生，操作列打开详情或进入删除确认。
-      sessionsQuery.data?.data.map((session) => [
-        session.id,
-        truncateText(session.title, 32),
-        String(session.message_count),
-        formatDateTime(session.updated_at),
-        <div key={`actions-${session.id}`} className={styles.rowActions}>
-          <Button
-            tone="secondary"
-            data-testid={`admin-open-session-${session.id}`}
-            onClick={() => setSelectedSessionId(session.id)}
-          >
-            {t("admin.sessionMessages")}
-          </Button>
-          <Button
-            tone="danger"
-            data-testid={`admin-delete-session-${session.id}`}
-            onClick={() => setPendingDeleteSessionId(session.id)}
-          >
-            {t("common.delete")}
-          </Button>
-        </div>,
-      ]) || [];
+    // DataTable 行由会话数据派生，操作列打开详情或进入删除确认。
+    sessionsQuery.data?.data.map((session) => [
+      session.id,
+      truncateText(session.title, 32),
+      String(session.message_count),
+      formatDateTime(session.updated_at),
+      <div key={`actions-${session.id}`} className={styles.rowActions}>
+        <Button
+          tone="secondary"
+          data-testid={`admin-open-session-${session.id}`}
+          onClick={() => setSelectedSessionId(session.id)}
+        >
+          {t("admin.sessionMessages")}
+        </Button>
+        <Button
+          tone="danger"
+          data-testid={`admin-delete-session-${session.id}`}
+          onClick={() => setPendingDeleteSessionId(session.id)}
+        >
+          {t("common.delete")}
+        </Button>
+      </div>,
+    ]) || [];
 
   return (
     <div className={styles.layout}>
-      <PageHeader eyebrow={t("admin.eyebrow")} title={t("admin.title")} description={t("admin.description")} />
+      <PageHeader
+        eyebrow={t("admin.eyebrow")}
+        title={t("admin.title")}
+        description={t("admin.description")}
+      />
       <AdminSubnav />
 
       <div className={styles.statsGrid}>
@@ -100,7 +118,10 @@ export default function AdminSessionsPage() {
         </Card>
       </div>
 
-      <Card title={t("admin.readiness")} action={<Badge>{readiness?.level || t("common.loading")}</Badge>}>
+      <Card
+        title={t("admin.readiness")}
+        action={<Badge>{readiness?.level || t("common.loading")}</Badge>}
+      >
         <div className="stack">
           <div>{formatDateTime(readiness?.checked_at)}</div>
           <div className="muted">{readiness?.critical_not_ready?.join(" / ") || "-"}</div>
@@ -123,18 +144,31 @@ export default function AdminSessionsPage() {
       <Modal open={Boolean(selectedSessionId)} onClose={() => setSelectedSessionId(null)}>
         {/* 消息详情按选中会话懒加载，避免列表页一次性拉取全部消息。 */}
         <div className={styles.modalSection}>
-          <h2 style={{ margin: 0 }}>{sessionDetailQuery.data?.session.title || t("admin.sessionMessages")}</h2>
+          <h2 style={{ margin: 0 }}>
+            {sessionDetailQuery.data?.session.title || t("admin.sessionMessages")}
+          </h2>
           <div className="inlineMeta">
-            <Button tone="danger" onClick={() => selectedSessionId && void deleteMutation.mutateAsync(selectedSessionId)}>
+            <Button
+              tone="danger"
+              onClick={() =>
+                selectedSessionId && void deleteMutation.mutateAsync(selectedSessionId)
+              }
+            >
               {t("admin.deleteSession")}
             </Button>
-            <Button tone="secondary" onClick={() => selectedSessionId && void clearMutation.mutateAsync(selectedSessionId)}>
+            <Button
+              tone="secondary"
+              onClick={() => selectedSessionId && void clearMutation.mutateAsync(selectedSessionId)}
+            >
               {t("admin.clearMessages")}
             </Button>
           </div>
           <div className="stack">
             {(sessionDetailQuery.data?.messages || []).map((message, index) => (
-              <Card key={`${message.id || index}`} title={`${message.role} #${message.id || index + 1}`}>
+              <Card
+                key={`${message.id || index}`}
+                title={`${message.role} #${message.id || index + 1}`}
+              >
                 <div className="stack">
                   <div className="muted">{formatDateTime(message.created_at)}</div>
                   <div>{message.content}</div>
@@ -153,7 +187,9 @@ export default function AdminSessionsPage() {
         confirmLabel={t("common.delete")}
         cancelLabel={t("common.cancel")}
         onClose={() => setPendingDeleteSessionId(null)}
-        onConfirm={() => pendingDeleteSessionId && void deleteMutation.mutateAsync(pendingDeleteSessionId)}
+        onConfirm={() =>
+          pendingDeleteSessionId && void deleteMutation.mutateAsync(pendingDeleteSessionId)
+        }
       />
     </div>
   );

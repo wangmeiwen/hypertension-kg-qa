@@ -37,7 +37,13 @@ describe("AdminObservabilityPage", () => {
       total_tool_calls: 2,
     });
     observabilityClientMocks.getAdminAgentObservabilityRuns.mockResolvedValue([
-      { session_id: "s1", timestamp: "2026-01-01T00:00:00Z", llm_calls: 1, tool_calls: 2, total_tokens: 80 },
+      {
+        session_id: "s1",
+        timestamp: "2026-01-01T00:00:00Z",
+        llm_calls: 1,
+        tool_calls: 2,
+        total_tokens: 80,
+      },
     ]);
     observabilityClientMocks.getAdminSessionObservability.mockResolvedValue([
       {
@@ -51,7 +57,11 @@ describe("AdminObservabilityPage", () => {
             lane: "orchestrator",
             title: "主控编排",
             summary: "规划下一步",
-            detail: { model_input_prompt: "用户问题", model_output_text: "计划", tool_call_count: 1 },
+            detail: {
+              model_input_prompt: "用户问题",
+              model_output_text: "计划",
+              tool_call_count: 1,
+            },
           },
           {
             event_id: "e2",
@@ -64,7 +74,14 @@ describe("AdminObservabilityPage", () => {
       },
     ]);
     adminClientMocks.getAdminSessionMessages.mockResolvedValue({
-      session: { id: "s1", user_id: "u1", title: "观测会话", message_count: 1, created_at: "2026-01-01", updated_at: "2026-01-01" },
+      session: {
+        id: "s1",
+        user_id: "u1",
+        title: "观测会话",
+        message_count: 1,
+        created_at: "2026-01-01",
+        updated_at: "2026-01-01",
+      },
       messages: [],
     });
   });

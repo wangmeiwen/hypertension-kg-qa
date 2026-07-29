@@ -33,7 +33,10 @@ export default function WorkspaceNav({ collapsed, onToggleCollapsed }: Workspace
         aria-label={collapsed ? "展开工作区导航" : "收起工作区导航"}
         title={collapsed ? "展开" : "收起"}
       >
-        <span className={`workspace-nav-toggle-icon${collapsed ? " collapsed" : ""}`} aria-hidden="true">
+        <span
+          className={`workspace-nav-toggle-icon${collapsed ? " collapsed" : ""}`}
+          aria-hidden="true"
+        >
           ‹
         </span>
       </button>

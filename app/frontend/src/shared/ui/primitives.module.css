@@ -11,7 +11,11 @@
   color: white;
   font-weight: 600;
   cursor: pointer;
-  transition: transform var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
+  transition:
+    transform var(--motion-fast),
+    box-shadow var(--motion-fast),
+    background var(--motion-fast),
+    border-color var(--motion-fast);
 }
 
 .button:hover:not(:disabled) {
@@ -51,7 +55,9 @@
   padding: 12px 14px;
   font: inherit;
   outline: none;
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast);
 }
 
 .input:focus,
@@ -230,7 +236,12 @@
 .skeletonLine {
   height: 14px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(226, 232, 240, 0.82), rgba(248, 250, 252, 0.96), rgba(226, 232, 240, 0.82));
+  background: linear-gradient(
+    90deg,
+    rgba(226, 232, 240, 0.82),
+    rgba(248, 250, 252, 0.96),
+    rgba(226, 232, 240, 0.82)
+  );
   background-size: 220% 100%;
   animation: skeleton-pulse 1.35s ease-in-out infinite;
 }
@@ -278,9 +289,7 @@
   padding: 36px;
   border-radius: 28px;
   border: 1px solid rgba(225, 29, 72, 0.18);
-  background:
-    radial-gradient(circle at top right, rgba(225, 29, 72, 0.08), transparent 32%),
-    white;
+  background: radial-gradient(circle at top right, rgba(225, 29, 72, 0.08), transparent 32%), white;
   color: var(--color-slate-800);
 }
 

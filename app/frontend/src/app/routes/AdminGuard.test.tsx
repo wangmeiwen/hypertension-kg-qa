@@ -13,7 +13,9 @@ const authClientMocks = vi.hoisted(() => ({
 
 // 提前 hoist API mock，确保 AdminGuard 导入时拿到可控的认证接口。
 vi.mock("../../shared/api/authClient", async () => {
-  const actual = await vi.importActual<typeof import("../../shared/api/authClient")>("../../shared/api/authClient");
+  const actual = await vi.importActual<typeof import("../../shared/api/authClient")>(
+    "../../shared/api/authClient",
+  );
   return {
     ...actual,
     checkAdminStatus: authClientMocks.checkAdminStatus,
@@ -65,8 +67,12 @@ describe("AdminGuard", () => {
     await user.type(screen.getByLabelText("用户名"), "admin");
     await user.clear(screen.getByLabelText("密码"));
     await user.type(screen.getByLabelText("密码"), "admin123");
-    await user.click(screen.getByRole("dialog").querySelector('button[type="submit"]') as HTMLButtonElement);
+    await user.click(
+      screen.getByRole("dialog").querySelector('button[type="submit"]') as HTMLButtonElement,
+    );
 
-    await waitFor(() => expect(authClientMocks.loginAsAdmin).toHaveBeenCalledWith("admin", "admin123"));
+    await waitFor(() =>
+      expect(authClientMocks.loginAsAdmin).toHaveBeenCalledWith("admin", "admin123"),
+    );
   });
 });

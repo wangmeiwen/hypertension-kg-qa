@@ -4,11 +4,23 @@ import { useTranslation } from "react-i18next";
 
 import styles from "./AdminDocumentsWorkspace.module.css";
 import type { GraphJob } from "../../../shared/api/contracts";
-import { getDocumentStats, getRecentTextEmbeddingJobs, getTextEmbeddingJobStatus, submitTextEmbeddingJob } from "../../../shared/api/graphClient";
+import {
+  getDocumentStats,
+  getRecentTextEmbeddingJobs,
+  getTextEmbeddingJobStatus,
+  submitTextEmbeddingJob,
+} from "../../../shared/api/graphClient";
 import { formatDateTime } from "../../../shared/lib/format";
 import { reportFrontendError } from "../../../shared/lib/observability";
 import { queryKeys } from "../../../shared/queries/queryKeys";
-import { Badge, Button, Card, InlineNotice, Input, VirtualList } from "../../../shared/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  InlineNotice,
+  Input,
+  VirtualList,
+} from "../../../shared/ui/primitives";
 
 function getStatusTone(status: string): "default" | "danger" | "success" {
   // 将后台任务状态映射到 Badge 颜色语义。
@@ -33,7 +45,12 @@ export default function AdminDocumentsWorkspace() {
     queryFn: () => getRecentTextEmbeddingJobs(12),
     // 仅在存在排队或运行中的任务时轮询，完成后停止刷新。
     refetchInterval: (query) =>
-      Array.isArray(query.state.data) && (query.state.data as GraphJob[]).some((job) => job.status === "queued" || job.status === "running") ? 2500 : false,
+      Array.isArray(query.state.data) &&
+      (query.state.data as GraphJob[]).some(
+        (job) => job.status === "queued" || job.status === "running",
+      )
+        ? 2500
+        : false,
   });
   const detailQuery = useQuery({
     queryKey: queryKeys.admin.documentJob(selectedJobId),
@@ -61,8 +78,14 @@ export default function AdminDocumentsWorkspace() {
     },
   });
 
-  const detailJson = useMemo(() => JSON.stringify(detailQuery.data?.result || detailQuery.data || {}, null, 2), [detailQuery.data]);
-  const statsJson = useMemo(() => JSON.stringify(statsQuery.data || {}, null, 2), [statsQuery.data]);
+  const detailJson = useMemo(
+    () => JSON.stringify(detailQuery.data?.result || detailQuery.data || {}, null, 2),
+    [detailQuery.data],
+  );
+  const statsJson = useMemo(
+    () => JSON.stringify(statsQuery.data || {}, null, 2),
+    [statsQuery.data],
+  );
   const jobs = jobsQuery.data || [];
   // 任务卡片在虚拟列表和普通列表路径下复用。
   const renderJob = (job: GraphJob) => (
@@ -92,13 +115,19 @@ export default function AdminDocumentsWorkspace() {
           <Card title={t("admin.documentsWorkspace.uploadTitle")}>
             <div className={styles.stack}>
               <div className="muted">{t("admin.documentsWorkspace.supportedFormats")}</div>
-              <Input type="file" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} />
+              <Input
+                type="file"
+                onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+              />
               {selectedFile ? (
                 <div className={styles.selectedFile}>
                   <strong>{t("admin.documentsWorkspace.selectedFile")}:</strong> {selectedFile.name}
                 </div>
               ) : null}
-              <Button onClick={() => selectedFile && void submitMutation.mutateAsync()} disabled={!selectedFile}>
+              <Button
+                onClick={() => selectedFile && void submitMutation.mutateAsync()}
+                disabled={!selectedFile}
+              >
                 {t("common.submit")}
               </Button>
             </div>
@@ -134,9 +163,13 @@ export default function AdminDocumentsWorkspace() {
                 <>
                   <div className={styles.jobHeader}>
                     <strong>{detailQuery.data.job_id}</strong>
-                    <Badge tone={getStatusTone(String(detailQuery.data.status))}>{String(detailQuery.data.status)}</Badge>
+                    <Badge tone={getStatusTone(String(detailQuery.data.status))}>
+                      {String(detailQuery.data.status)}
+                    </Badge>
                   </div>
-                  <div className="muted">{detailQuery.data.progress_text || detailQuery.data.message || "-"}</div>
+                  <div className="muted">
+                    {detailQuery.data.progress_text || detailQuery.data.message || "-"}
+                  </div>
                   <div className={styles.metaRow}>
                     <span>{formatDateTime(detailQuery.data.created_at)}</span>
                     <span>{detailQuery.data.stage || "-"}</span>

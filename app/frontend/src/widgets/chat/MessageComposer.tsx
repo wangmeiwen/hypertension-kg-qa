@@ -62,7 +62,12 @@ export default function MessageComposer({
       </label>
 
       <div className={styles.controlRow}>
-        <Input className={styles.fileInput} type="file" onChange={onFileChange} aria-label={t("chat.upload")} />
+        <Input
+          className={styles.fileInput}
+          type="file"
+          onChange={onFileChange}
+          aria-label={t("chat.upload")}
+        />
         <div className={styles.actions}>
           <Button onClick={onSend} disabled={loading}>
             {t("chat.send")}

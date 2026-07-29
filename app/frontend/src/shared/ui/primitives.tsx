@@ -13,7 +13,13 @@ export function Button({
   ...props
 }: ComponentPropsWithoutRef<"button"> & { tone?: ButtonTone }) {
   const toneClass =
-    tone === "secondary" ? styles.secondary : tone === "danger" ? styles.danger : tone === "ghost" ? styles.ghost : "";
+    tone === "secondary"
+      ? styles.secondary
+      : tone === "danger"
+        ? styles.danger
+        : tone === "ghost"
+          ? styles.ghost
+          : "";
   return (
     <button {...props} className={`${styles.button} ${toneClass} ${className}`.trim()}>
       {children}
@@ -65,7 +71,8 @@ export function Badge({
   tone?: "default" | "danger" | "success";
   children: ReactNode;
 }) {
-  const toneClass = tone === "danger" ? styles.badgeDanger : tone === "success" ? styles.badgeSuccess : "";
+  const toneClass =
+    tone === "danger" ? styles.badgeDanger : tone === "success" ? styles.badgeSuccess : "";
   return <span className={`${styles.badge} ${toneClass}`.trim()}>{children}</span>;
 }
 
@@ -78,7 +85,12 @@ export function InlineNotice({
   title?: ReactNode;
   children: ReactNode;
 }) {
-  const toneClass = tone === "error" ? styles.noticeError : tone === "success" ? styles.noticeSuccess : styles.noticeInfo;
+  const toneClass =
+    tone === "error"
+      ? styles.noticeError
+      : tone === "success"
+        ? styles.noticeSuccess
+        : styles.noticeInfo;
   return (
     <div className={`${styles.notice} ${toneClass}`.trim()}>
       {title ? <div className={styles.noticeTitle}>{title}</div> : null}
@@ -174,7 +186,10 @@ export function SkeletonTable({ rows = 6, columns = 4 }: { rows?: number; column
           style={{ "--skeleton-columns": columns } as CSSProperties}
         >
           {Array.from({ length: columns }).map((__, columnIndex) => (
-            <div key={`skeleton-table-cell-${rowIndex}-${columnIndex}`} className={styles.skeletonLine} />
+            <div
+              key={`skeleton-table-cell-${rowIndex}-${columnIndex}`}
+              className={styles.skeletonLine}
+            />
           ))}
         </div>
       ))}
@@ -325,13 +340,7 @@ export function VirtualList<T>({
   );
 }
 
-export function DataTable({
-  columns,
-  rows,
-}: {
-  columns: ReactNode[];
-  rows: ReactNode[][];
-}) {
+export function DataTable({ columns, rows }: { columns: ReactNode[]; rows: ReactNode[][] }) {
   // 大表格使用 VirtualList 渲染行，小表格保持原生 table 语义。
   if (rows.length > 100) {
     return (

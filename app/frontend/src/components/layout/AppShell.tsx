@@ -21,7 +21,10 @@ export default function AppShell() {
 
   return (
     <div className={`workspace-shell${navCollapsed ? " nav-collapsed" : ""}`}>
-      <WorkspaceNav collapsed={navCollapsed} onToggleCollapsed={() => setNavCollapsed((prev) => !prev)} />
+      <WorkspaceNav
+        collapsed={navCollapsed}
+        onToggleCollapsed={() => setNavCollapsed((prev) => !prev)}
+      />
       <main className="workspace-content">
         <Outlet />
       </main>

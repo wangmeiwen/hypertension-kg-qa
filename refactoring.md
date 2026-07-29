@@ -528,7 +528,13 @@ page/workspace
 - Python 类型检查：`mypy app` 检查 155 个源文件，0 errors。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 - 前端 TypeScript、ESLint、边界检查、Stylelint、76 项组件/契约测试和生产构建通过。
-- 前端 Prettier 基线仍有 43 个历史文件待统一，本阶段未混入机械格式化。
+- 前端 Prettier 历史基线已在独立机械格式化批次统一。
+
+前端格式基线批次：
+
+- 统一 43 个历史文件的 Prettier 格式，不包含行为变更。
+- Prettier、TypeScript、ESLint、边界检查和 Stylelint 全部通过。
+- 前端组件与契约测试 76 passed，Vite 生产构建通过。
 
 ## 每阶段完成标准
 

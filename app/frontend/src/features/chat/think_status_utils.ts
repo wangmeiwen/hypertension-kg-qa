@@ -8,12 +8,26 @@ const THINK_STATUS_META: ThinkStatusMeta[] = [
   {
     stage: "memory",
     label: "加载会话记忆",
-    keywords: ["loading session memory", "memory", "prepare_session_turn", "build_runtime_context", "ensure_memory_current", "resolve_query"],
+    keywords: [
+      "loading session memory",
+      "memory",
+      "prepare_session_turn",
+      "build_runtime_context",
+      "ensure_memory_current",
+      "resolve_query",
+    ],
   },
   {
     stage: "orchestrator",
     label: "执行主编排流程",
-    keywords: ["running orchestrator", "orchestrator", "task_submitted", "task_running", "route", "planner"],
+    keywords: [
+      "running orchestrator",
+      "orchestrator",
+      "task_submitted",
+      "task_running",
+      "route",
+      "planner",
+    ],
   },
   {
     stage: "subagent",
@@ -31,7 +45,9 @@ const THINK_LABELS = THINK_STATUS_META.map((item) => item.label);
 
 const normalizeThinkStatus = (value: string, stage = ""): string => {
   // 后端 stage 优先于文本关键词，减少不同语言日志导致的误判。
-  const safeStage = String(stage || "").trim().toLowerCase();
+  const safeStage = String(stage || "")
+    .trim()
+    .toLowerCase();
   const byStage = THINK_STATUS_META.find((item) => item.stage === safeStage);
   if (byStage) return byStage.label;
 
@@ -40,9 +56,9 @@ const normalizeThinkStatus = (value: string, stage = ""): string => {
   if (THINK_LABELS.includes(text)) return text;
 
   const lowered = text.toLowerCase();
-  const matched = THINK_STATUS_META.find((item) => (
-    item.keywords.some((keyword) => lowered.includes(String(keyword).toLowerCase()))
-  ));
+  const matched = THINK_STATUS_META.find((item) =>
+    item.keywords.some((keyword) => lowered.includes(String(keyword).toLowerCase())),
+  );
   return matched?.label || "";
 };
 
@@ -53,7 +69,8 @@ export const appendThinkStatus = (statuses: string[], value: string, stage = "")
   return [...statuses, label];
 };
 
-export const formatThinkStatuses = (statuses: string[]): string => statuses.filter(Boolean).join("\n");
+export const formatThinkStatuses = (statuses: string[]): string =>
+  statuses.filter(Boolean).join("\n");
 
 const getSimplifiedThinkStatuses = (thinkContent: string): string[] => {
   // 从历史 thinkContent 中提取少量面向用户的阶段标签。
@@ -75,7 +92,9 @@ const getSimplifiedThinkStatuses = (thinkContent: string): string[] => {
   });
 
   THINK_STATUS_META.forEach((item) => {
-    if (item.keywords.some((keyword) => text.toLowerCase().includes(String(keyword).toLowerCase()))) {
+    if (
+      item.keywords.some((keyword) => text.toLowerCase().includes(String(keyword).toLowerCase()))
+    ) {
       statuses = appendThinkStatus(statuses, item.label);
     }
   });

@@ -11,7 +11,12 @@ import { useAuthStore } from "../model/useAuthStore";
 // 统一提取未知异常中的可展示错误信息。
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
     return error.message;
   }
   return String(error);
@@ -60,7 +65,11 @@ export default function LoginDialog({ open, onClose }: { open: boolean; onClose:
         </label>
         <label className="stack">
           <span>{t("admin.password")}</span>
-          <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <Input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
         </label>
         <div className="inlineMeta">
           <Button type="submit" disabled={pending}>

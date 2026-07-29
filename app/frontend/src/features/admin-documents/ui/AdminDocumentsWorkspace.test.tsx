@@ -33,8 +33,14 @@ describe("AdminDocumentsWorkspace", () => {
         result: { file_name: "guide.pdf", chunks: 3 },
       },
     ]);
-    graphClientMocks.getTextEmbeddingJobStatus.mockResolvedValue({ job_id: "job-1", status: "queued" });
-    graphClientMocks.submitTextEmbeddingJob.mockResolvedValue({ job_id: "job-1", status: "queued" });
+    graphClientMocks.getTextEmbeddingJobStatus.mockResolvedValue({
+      job_id: "job-1",
+      status: "queued",
+    });
+    graphClientMocks.submitTextEmbeddingJob.mockResolvedValue({
+      job_id: "job-1",
+      status: "queued",
+    });
   });
 
   it("submits a document embedding job", async () => {

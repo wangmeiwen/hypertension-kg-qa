@@ -34,11 +34,17 @@ for (const file of walk(srcDir)) {
   }
 
   const text = readFileSync(file, "utf8");
-  if (/from\s+["'][^"']*\/css\/\d+_.*\.css["']/.test(text) || /@import\s+["'][^"']*\d+_.*\.css["']/.test(text)) {
+  if (
+    /from\s+["'][^"']*\/css\/\d+_.*\.css["']/.test(text) ||
+    /@import\s+["'][^"']*\d+_.*\.css["']/.test(text)
+  ) {
     violations.push(`禁止引用旧编号 CSS：${rel}`);
   }
 
-  if (/from\s+["'][^"']*src\/styles\.css["']/.test(text) || /["'][^"']*\/styles\.css["']/.test(text)) {
+  if (
+    /from\s+["'][^"']*src\/styles\.css["']/.test(text) ||
+    /["'][^"']*\/styles\.css["']/.test(text)
+  ) {
     violations.push(`禁止引用旧 src/styles.css：${rel}`);
   }
 }

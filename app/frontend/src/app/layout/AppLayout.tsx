@@ -60,16 +60,24 @@ export default function AppLayout() {
       </aside>
 
       <main className={`${styles.content} ${isChatRoute ? styles.chatContent : ""}`.trim()}>
-        {!isChatRoute ? <div className={styles.topbar}>
-          <div className={styles.languageSwitch}>
-            <Button tone={i18n.language === "zh-CN" ? "primary" : "secondary"} onClick={() => void i18n.changeLanguage("zh-CN")}>
-              {t("shell.chinese")}
-            </Button>
-            <Button tone={i18n.language === "en-US" ? "primary" : "secondary"} onClick={() => void i18n.changeLanguage("en-US")}>
-              {t("shell.english")}
-            </Button>
+        {!isChatRoute ? (
+          <div className={styles.topbar}>
+            <div className={styles.languageSwitch}>
+              <Button
+                tone={i18n.language === "zh-CN" ? "primary" : "secondary"}
+                onClick={() => void i18n.changeLanguage("zh-CN")}
+              >
+                {t("shell.chinese")}
+              </Button>
+              <Button
+                tone={i18n.language === "en-US" ? "primary" : "secondary"}
+                onClick={() => void i18n.changeLanguage("en-US")}
+              >
+                {t("shell.english")}
+              </Button>
+            </div>
           </div>
-        </div> : null}
+        ) : null}
         <Outlet />
       </main>
     </div>

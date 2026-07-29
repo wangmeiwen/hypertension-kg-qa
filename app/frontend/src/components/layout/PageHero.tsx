@@ -7,12 +7,7 @@ interface PageHeroProps {
   actions?: ReactNode;
 }
 
-export default function PageHero({
-  eyebrow,
-  title,
-  description,
-  actions = null,
-}: PageHeroProps) {
+export default function PageHero({ eyebrow, title, description, actions = null }: PageHeroProps) {
   return (
     <section className="page-hero">
       <div className="page-hero-copy">

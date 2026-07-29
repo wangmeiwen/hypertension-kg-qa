@@ -24,53 +24,60 @@ type MessageBubbleProps = {
   onResend: (message: UiMessage) => void;
 };
 
-const MessageBubble = memo(({ message, index, isLatest, loading, onCopy, onRollback, onResend }: MessageBubbleProps) => {
-  const { t } = useTranslation();
-  const renderedContent = useMemo(() => renderMarkdownContent(message.content), [message.content]);
-  const showThinkStatus = Boolean(loading && isLatest && message.role === "assistant" && message.thinkContent);
+const MessageBubble = memo(
+  ({ message, index, isLatest, loading, onCopy, onRollback, onResend }: MessageBubbleProps) => {
+    const { t } = useTranslation();
+    const renderedContent = useMemo(
+      () => renderMarkdownContent(message.content),
+      [message.content],
+    );
+    const showThinkStatus = Boolean(
+      loading && isLatest && message.role === "assistant" && message.thinkContent,
+    );
 
-  return (
-    // assistant 消息使用 Markdown 渲染，user 消息保留同一渲染路径以支持附件文本。
-    <article className={`${styles.bubble} ${message.role === "assistant" ? styles.assistant : styles.user}`.trim()}>
-      <div className={styles.header}>
-        <div className={styles.role}>{message.role === "assistant" ? t("chat.assistant") : t("chat.user")}</div>
-        <div className={styles.actions}>
-          <Button tone="secondary" onClick={() => onCopy(message, index)}>
-            {t("chat.copy")}
-          </Button>
-          {message.role === "user" ? (
-            <Button tone="ghost" onClick={() => onResend(message)}>
-              {t("chat.resend")}
+    return (
+      // assistant 消息使用 Markdown 渲染，user 消息保留同一渲染路径以支持附件文本。
+      <article
+        className={`${styles.bubble} ${message.role === "assistant" ? styles.assistant : styles.user}`.trim()}
+      >
+        <div className={styles.header}>
+          <div className={styles.role}>
+            {message.role === "assistant" ? t("chat.assistant") : t("chat.user")}
+          </div>
+          <div className={styles.actions}>
+            <Button tone="secondary" onClick={() => onCopy(message, index)}>
+              {t("chat.copy")}
             </Button>
-          ) : null}
-          {message.role === "user" && message.id ? (
-            <Button tone="ghost" onClick={() => onRollback(message)}>
-              {t("chat.rollback")}
-            </Button>
-          ) : null}
+            {message.role === "user" ? (
+              <Button tone="ghost" onClick={() => onResend(message)}>
+                {t("chat.resend")}
+              </Button>
+            ) : null}
+            {message.role === "user" && message.id ? (
+              <Button tone="ghost" onClick={() => onRollback(message)}>
+                {t("chat.rollback")}
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
-      {message.image ? (
-        <div className={styles.imagePreview}>
-          <img src={message.image} alt="" />
-        </div>
-      ) : null}
-      {showThinkStatus ? <div className={`${styles.think} muted`}>{message.thinkContent}</div> : null}
-      <div className="messageMarkdown">{renderedContent}</div>
-    </article>
-  );
-});
+        {message.image ? (
+          <div className={styles.imagePreview}>
+            <img src={message.image} alt="" />
+          </div>
+        ) : null}
+        {showThinkStatus ? (
+          <div className={`${styles.think} muted`}>{message.thinkContent}</div>
+        ) : null}
+        <div className="messageMarkdown">{renderedContent}</div>
+      </article>
+    );
+  },
+);
 
 MessageBubble.displayName = "MessageBubble";
 
 // 消息线程负责展示用户/助手消息，并暴露复制、回滚、重新发送等动作入口。
-const MessageThread = ({
-  messages,
-  loading,
-  onCopy,
-  onRollback,
-  onResend,
-}: MessageThreadProps) => {
+const MessageThread = ({ messages, loading, onCopy, onRollback, onResend }: MessageThreadProps) => {
   const { t } = useTranslation();
 
   if (!messages.length && !loading) {

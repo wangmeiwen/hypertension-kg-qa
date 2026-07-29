@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 
 import styles from "./AdminPages.module.css";
 import { getBaseUrl } from "../../shared/api/http";
-import { getAdminPerfBaseline, getAdminQueueStatus, getAdminRuntimeFlags } from "../../shared/api/runtimeClient";
+import {
+  getAdminPerfBaseline,
+  getAdminQueueStatus,
+  getAdminRuntimeFlags,
+} from "../../shared/api/runtimeClient";
 import { formatDateTime } from "../../shared/lib/format";
 import { queryKeys } from "../../shared/queries/queryKeys";
 import { Button, Card, PageHeader } from "../../shared/ui/primitives";
@@ -28,16 +32,26 @@ export default function AdminSettingsPage() {
 
   return (
     <div className={styles.layout}>
-      <PageHeader eyebrow={t("admin.eyebrow")} title={t("admin.settingsTitle")} description={t("admin.description")} />
+      <PageHeader
+        eyebrow={t("admin.eyebrow")}
+        title={t("admin.settingsTitle")}
+        description={t("admin.description")}
+      />
       <AdminSubnav />
 
       <div className={styles.twoColumn}>
         <Card title={t("shell.language")}>
           <div className="inlineMeta">
-            <Button tone={i18n.language === "zh-CN" ? "primary" : "secondary"} onClick={() => void i18n.changeLanguage("zh-CN")}>
+            <Button
+              tone={i18n.language === "zh-CN" ? "primary" : "secondary"}
+              onClick={() => void i18n.changeLanguage("zh-CN")}
+            >
               {t("shell.chinese")}
             </Button>
-            <Button tone={i18n.language === "en-US" ? "primary" : "secondary"} onClick={() => void i18n.changeLanguage("en-US")}>
+            <Button
+              tone={i18n.language === "en-US" ? "primary" : "secondary"}
+              onClick={() => void i18n.changeLanguage("en-US")}
+            >
               {t("shell.english")}
             </Button>
           </div>
@@ -54,7 +68,9 @@ export default function AdminSettingsPage() {
             <div className="muted">
               {t("admin.updatedAt")}: {formatDateTime(runtimeFlagsQuery.data?.updated_at)}
             </div>
-            <div className={styles.mono}>{JSON.stringify(runtimeFlagsQuery.data?.flags || {}, null, 2)}</div>
+            <div className={styles.mono}>
+              {JSON.stringify(runtimeFlagsQuery.data?.flags || {}, null, 2)}
+            </div>
           </div>
         </Card>
         <Card title={t("admin.queueStatus")}>

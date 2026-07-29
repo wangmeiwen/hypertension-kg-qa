@@ -39,7 +39,8 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: ({ request }) => ["script", "style", "font", "image"].includes(request.destination),
+            urlPattern: ({ request }) =>
+              ["script", "style", "font", "image"].includes(request.destination),
             handler: "CacheFirst",
             options: {
               cacheName: "static-assets",
@@ -62,10 +63,17 @@ export default defineConfig({
       output: {
         // 将 React、查询库和图谱渲染依赖拆成稳定 chunk，降低业务代码变更后的缓存失效范围。
         manualChunks(id) {
-          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router")) {
+          if (
+            id.includes("node_modules/react") ||
+            id.includes("node_modules/react-dom") ||
+            id.includes("node_modules/react-router")
+          ) {
             return "vendor-react";
           }
-          if (id.includes("node_modules/@tanstack/react-query") || id.includes("node_modules/@tanstack/query-core")) {
+          if (
+            id.includes("node_modules/@tanstack/react-query") ||
+            id.includes("node_modules/@tanstack/query-core")
+          ) {
             return "vendor-query";
           }
           if (

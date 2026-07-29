@@ -33,7 +33,9 @@
   outline: none;
   resize: none;
   overflow-y: auto;
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast);
 }
 
 .textarea:focus {

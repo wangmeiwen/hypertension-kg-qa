@@ -22,7 +22,9 @@ function AppErrorFallback({ error, onReset }: { error: Error; onReset: () => voi
           description={error.message || t("common.errorBoundary.description")}
           actions={
             <>
-              <Button onClick={() => window.location.reload()}>{t("common.errorBoundary.refreshPage")}</Button>
+              <Button onClick={() => window.location.reload()}>
+                {t("common.errorBoundary.refreshPage")}
+              </Button>
               <Button tone="secondary" onClick={onReset}>
                 {t("common.retry")}
               </Button>
@@ -37,7 +39,10 @@ function AppErrorFallback({ error, onReset }: { error: Error; onReset: () => voi
   );
 }
 
-export default class AppErrorBoundary extends Component<{ children: ReactNode }, AppErrorBoundaryState> {
+export default class AppErrorBoundary extends Component<
+  { children: ReactNode },
+  AppErrorBoundaryState
+> {
   state: AppErrorBoundaryState = { error: null };
 
   // React class error boundary 必须使用该静态方法把渲染错误同步到 state。
@@ -55,7 +60,9 @@ export default class AppErrorBoundary extends Component<{ children: ReactNode },
 
   render() {
     if (this.state.error) {
-      return <AppErrorFallback error={this.state.error} onReset={() => this.setState({ error: null })} />;
+      return (
+        <AppErrorFallback error={this.state.error} onReset={() => this.setState({ error: null })} />
+      );
     }
 
     return this.props.children;
