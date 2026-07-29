@@ -3,7 +3,6 @@
 提供面向 A2A 编排层的知识图谱子代理适配入口。
 """
 
-
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +28,9 @@ class GraphSubAgent:
         self.tool_gateway = MCPToolGateway(mcp_server=mcp_server, agent_type="kg")
         self.executor = KgSubAgentExecutor(self.tool_gateway)
 
-    async def _run_single_request(self, idx: int, row: dict[str, Any]) -> dict[str, Any]:
+    async def _run_single_request(
+        self, idx: int, row: dict[str, Any]
+    ) -> dict[str, Any]:
         """执行单个图谱检索请求并标准化返回结构。
 
         Args:
@@ -46,7 +47,11 @@ class GraphSubAgent:
         arguments_obj = req.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
         constraints_obj = req.get("constraints")
-        constraints = constraints_obj if isinstance(constraints_obj, dict) else {"allow_extra_retrieval": False, "max_tool_calls": 3}
+        constraints = (
+            constraints_obj
+            if isinstance(constraints_obj, dict)
+            else {"allow_extra_retrieval": False, "max_tool_calls": 3}
+        )
 
         item = {
             "subquery_id": subquery_id,
@@ -71,23 +76,65 @@ class GraphSubAgent:
             item.update(
                 {
                     "ok": True,
-                    "query_statements": result.get("query_statements") if isinstance(result.get("query_statements"), list) else [],
-                    "queries_used": result.get("queries_used") if isinstance(result.get("queries_used"), list) else [],
-                    "query_records": result.get("query_records") if isinstance(result.get("query_records"), list) else [],
-                    "tool_results": result.get("tool_results") if isinstance(result.get("tool_results"), list) else [],
+                    "query_statements": (
+                        result.get("query_statements")
+                        if isinstance(result.get("query_statements"), list)
+                        else []
+                    ),
+                    "queries_used": (
+                        result.get("queries_used")
+                        if isinstance(result.get("queries_used"), list)
+                        else []
+                    ),
+                    "query_records": (
+                        result.get("query_records")
+                        if isinstance(result.get("query_records"), list)
+                        else []
+                    ),
+                    "tool_results": (
+                        result.get("tool_results")
+                        if isinstance(result.get("tool_results"), list)
+                        else []
+                    ),
                     "evidence": evidence,
                     "signal": str(result.get("signal") or "none"),
-                    "coverage": result.get("coverage") if isinstance(result.get("coverage"), dict) else {},
-                    "missing_points": result.get("missing_points") if isinstance(result.get("missing_points"), list) else [],
+                    "coverage": (
+                        result.get("coverage")
+                        if isinstance(result.get("coverage"), dict)
+                        else {}
+                    ),
+                    "missing_points": (
+                        result.get("missing_points")
+                        if isinstance(result.get("missing_points"), list)
+                        else []
+                    ),
                     "direct_support": bool(result.get("direct_support")),
-                    "suggested_next_route": str(result.get("suggested_next_route") or ""),
+                    "suggested_next_route": str(
+                        result.get("suggested_next_route") or ""
+                    ),
                     "no_signal": no_signal,
                     "reason": str(result.get("reason") or "ok"),
-                    "token_usage": result.get("token_usage") if isinstance(result.get("token_usage"), dict) else {},
-                    "telemetry": result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {},
+                    "token_usage": (
+                        result.get("token_usage")
+                        if isinstance(result.get("token_usage"), dict)
+                        else {}
+                    ),
+                    "telemetry": (
+                        result.get("telemetry")
+                        if isinstance(result.get("telemetry"), dict)
+                        else {}
+                    ),
                 }
             )
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             item.update(
                 {
                     "ok": False,
@@ -140,7 +187,11 @@ class GraphSubAgent:
         total_requests = len(items)
         ok_count = sum(1 for item in items if bool(item.get("ok")))
         error_count = total_requests - ok_count
-        signal_count = sum(1 for item in items if bool(item.get("ok")) and not bool(item.get("no_signal")))
+        signal_count = sum(
+            1
+            for item in items
+            if bool(item.get("ok")) and not bool(item.get("no_signal"))
+        )
 
         note = f"Graph 子代理完成 {total_requests} 个检索任务"
         summary = {

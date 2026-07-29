@@ -3,7 +3,6 @@
 提供 A2A 请求 message 到内部运行上下文的解析能力。
 """
 
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -58,7 +57,9 @@ class RequestContextParser:
         message = message_obj if isinstance(message_obj, dict) else {}
         metadata_obj = message.get("metadata")
         metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
-        context_id = str(message.get("contextId") or metadata.get("session_id") or "").strip()
+        context_id = str(
+            message.get("contextId") or metadata.get("session_id") or ""
+        ).strip()
         user_id = str(message.get("userId") or metadata.get("user_id") or "").strip()
         text = cls.extract_text(message.get("parts"))
         if not text:

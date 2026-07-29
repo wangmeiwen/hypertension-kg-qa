@@ -110,12 +110,12 @@ class UnifiedOrchestratorController:
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
             "{"
-            "\"action\":\"final_answer|call_kg|call_rag|call_history_read\","
-            "\"reason\":\"简短原因\","
-            "\"question\":\"当需要子agent处理时拆分出的子问题，可为空\","
-            "\"history_id\":\"仅 call_history_read 时填写索引中的 history_id\","
-            "\"user_question\":\"仅 call_history_read 且没有 history_id 时填写历史问题\","
-            "\"answer\":\"仅 final_answer 时填写\""
+            '"action":"final_answer|call_kg|call_rag|call_history_read",'
+            '"reason":"简短原因",'
+            '"question":"当需要子agent处理时拆分出的子问题，可为空",'
+            '"history_id":"仅 call_history_read 时填写索引中的 history_id",'
+            '"user_question":"仅 call_history_read 且没有 history_id 时填写历史问题",'
+            '"answer":"仅 final_answer 时填写"'
             "}\n"
             "若信息仍不足且已拿到一些证据，也要基于现有证据给出谨慎回答，不要卡住。"
         )
@@ -129,31 +129,31 @@ class UnifiedOrchestratorController:
             "返回 JSON 对象，不要输出任何额外解释。\n"
             "JSON 格式必须满足：\n"
             "{"
-            "\"qa_memory_text\":\"压缩后的问答记忆文本\","
-            "\"retrieval_question_index_text\":\"压缩后的历史检索问题索引文本\","
-            "\"tool_observations\":["
+            '"qa_memory_text":"压缩后的问答记忆文本",'
+            '"retrieval_question_index_text":"压缩后的历史检索问题索引文本",'
+            '"tool_observations":['
             "{"
-            "\"agent\":\"kg|rag|history\","
-            "\"action\":\"call_kg|call_rag|call_history_read\","
-            "\"subquery\":\"相关的子问题\","
-            "\"summary\":\"该工具结果的压缩摘要\","
-            "\"evidence\":["
+            '"agent":"kg|rag|history",'
+            '"action":"call_kg|call_rag|call_history_read",'
+            '"subquery":"相关的子问题",'
+            '"summary":"该工具结果的压缩摘要",'
+            '"evidence":['
             "{"
-            "\"source_type\":\"document|knowledge_graph|history\","
-            "\"source_id\":\"来源标识\","
-            "\"document_id\":\"文档标识，可为空\","
-            "\"chunk_id\":\"分块标识，可为空\","
-            "\"page\":null,"
-            "\"section\":\"章节，可为空\","
-            "\"content\":\"和当前问题最相关的证据内容\","
-            "\"score\":null,"
-            "\"retrieval_method\":\"检索方法\","
-            "\"provenance\":{}"
+            '"source_type":"document|knowledge_graph|history",'
+            '"source_id":"来源标识",'
+            '"document_id":"文档标识，可为空",'
+            '"chunk_id":"分块标识，可为空",'
+            '"page":null,'
+            '"section":"章节，可为空",'
+            '"content":"和当前问题最相关的证据内容",'
+            '"score":null,'
+            '"retrieval_method":"检索方法",'
+            '"provenance":{}'
             "}"
             "]"
             "}"
             "],"
-            "\"compression_reason\":\"可选，简述这次压缩策略\""
+            '"compression_reason":"可选，简述这次压缩策略"'
             "}\n"
             "要求：\n"
             "1. qa_memory_text 只保留和当前问题直接相关的问答。\n"
@@ -176,7 +176,9 @@ class UnifiedOrchestratorController:
             500,
         )
 
-    def _build_observation_lines(self, tool_observations: list[dict[str, Any]]) -> list[str]:
+    def _build_observation_lines(
+        self, tool_observations: list[dict[str, Any]]
+    ) -> list[str]:
         """将工具观测列表转为主控提示词可读行。"""
         if not tool_observations:
             return ["当前还没有新的工具结果。"]
@@ -231,9 +233,7 @@ class UnifiedOrchestratorController:
         prefix = f"{citation} " if citation else ""
         return f"{prefix}{content}"
 
-    def _summarize_evidence(
-        self, rows: list[dict[str, Any]], *, limit: int = 3
-    ) -> str:
+    def _summarize_evidence(self, rows: list[dict[str, Any]], *, limit: int = 3) -> str:
         """提炼 Evidence 并保留来源标签。"""
         snippets: list[str] = []
         for item in rows[: max(1, int(limit or 1))]:
@@ -246,12 +246,16 @@ class UnifiedOrchestratorController:
         """使用 jieba 统计提示词分词数。"""
         if jieba is None:
             raise RuntimeError("jieba_not_installed")
-        text = "\n".join(_sanitize_text(_coerce_dict(row).get("content"), 200000) for row in messages)
+        text = "\n".join(
+            _sanitize_text(_coerce_dict(row).get("content"), 200000) for row in messages
+        )
         if not text.strip():
             return 0
         return sum(1 for token in jieba.lcut(text) if str(token).strip())
 
-    def _normalize_query_record(self, row: Any, default_agent: str = "unknown") -> dict[str, Any] | None:
+    def _normalize_query_record(
+        self, row: Any, default_agent: str = "unknown"
+    ) -> dict[str, Any] | None:
         """标准化单条 query_record，缺关键字段时返回 None。"""
         if not isinstance(row, dict):
             return None
@@ -298,7 +302,9 @@ class UnifiedOrchestratorController:
             return ["numeric_conflict"]
         return []
 
-    def _normalize_compressed_tool_observations(self, rows: Any) -> list[dict[str, Any]]:
+    def _normalize_compressed_tool_observations(
+        self, rows: Any
+    ) -> list[dict[str, Any]]:
         """规范化压缩器返回的工具观测数据结构。"""
         if not isinstance(rows, list):
             return []
@@ -308,7 +314,9 @@ class UnifiedOrchestratorController:
                 continue
             agent = _sanitize_text(item.get("agent"), 32) or "unknown"
             action = _sanitize_text(item.get("action"), 32) or "call_history_read"
-            result_payload = _coerce_dict(_coerce_dict(item.get("result")).get("result"))
+            result_payload = _coerce_dict(
+                _coerce_dict(item.get("result")).get("result")
+            )
             summary = _sanitize_text(
                 item.get("summary")
                 or item.get("result_summary")
@@ -331,10 +339,15 @@ class UnifiedOrchestratorController:
                 {
                     "agent": agent,
                     "action": action,
-                    "tool_name": _sanitize_text(item.get("tool_name"), 64) or (
-                        "history_read" if action == "call_history_read" else f"{agent}_subagent"
+                    "tool_name": _sanitize_text(item.get("tool_name"), 64)
+                    or (
+                        "history_read"
+                        if action == "call_history_read"
+                        else f"{agent}_subagent"
                     ),
-                    "subquery": _sanitize_text(item.get("subquery") or item.get("question"), 240),
+                    "subquery": _sanitize_text(
+                        item.get("subquery") or item.get("question"), 240
+                    ),
                     "arguments": _coerce_dict(item.get("arguments")),
                     "evidence": evidence,
                     "result": {
@@ -346,7 +359,9 @@ class UnifiedOrchestratorController:
             )
         return normalized_rows
 
-    def _compact_tool_observations_for_compression(self, tool_observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _compact_tool_observations_for_compression(
+        self, tool_observations: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """裁剪工具观测字段，生成压缩器输入。"""
         compact_rows: list[dict[str, Any]] = []
         for row in tool_observations[-8:]:
@@ -356,7 +371,9 @@ class UnifiedOrchestratorController:
                 {
                     "agent": _sanitize_text(row.get("agent"), 32),
                     "action": _sanitize_text(row.get("action"), 32),
-                    "subquery": _sanitize_text(row.get("subquery") or row.get("question"), 240),
+                    "subquery": _sanitize_text(
+                        row.get("subquery") or row.get("question"), 240
+                    ),
                     "summary": self._summarize_observation_result(row),
                     "evidence": [
                         normalized
@@ -366,12 +383,23 @@ class UnifiedOrchestratorController:
                         )
                         if normalized is not None
                     ],
-                    "history_id": _sanitize_text(_coerce_dict(_coerce_dict(row.get("result")).get("result")).get("history_id"), 64),
+                    "history_id": _sanitize_text(
+                        _coerce_dict(_coerce_dict(row.get("result")).get("result")).get(
+                            "history_id"
+                        ),
+                        64,
+                    ),
                     "user_question": _sanitize_text(
-                        _coerce_dict(_coerce_dict(row.get("result")).get("result")).get("user_question"),
+                        _coerce_dict(_coerce_dict(row.get("result")).get("result")).get(
+                            "user_question"
+                        ),
                         240,
                     ),
-                    "matched": bool(_coerce_dict(_coerce_dict(row.get("result")).get("result")).get("matched")),
+                    "matched": bool(
+                        _coerce_dict(_coerce_dict(row.get("result")).get("result")).get(
+                            "matched"
+                        )
+                    ),
                 }
             )
         return compact_rows
@@ -396,7 +424,9 @@ class UnifiedOrchestratorController:
                     "compression_count": compression_count,
                     "qa_memory_text": qa_memory_text,
                     "retrieval_question_index_text": retrieval_index_text,
-                    "tool_observations": self._compact_tool_observations_for_compression(tool_observations),
+                    "tool_observations": self._compact_tool_observations_for_compression(
+                        tool_observations
+                    ),
                 },
                 12000,
             )
@@ -429,8 +459,7 @@ class UnifiedOrchestratorController:
             f"这是之前检索过的问题：\n{retrieval_index_text}\n\n"
             "你可以直接回答、读取历史 Evidence，或把需要补证据的子问题交给 kg/rag 子agent。\n"
             f"{final_rule}\n\n"
-            "这是你目前已经拿到的工具/历史读取结果：\n"
-            + "\n".join(observation_lines)
+            "这是你目前已经拿到的工具/历史读取结果：\n" + "\n".join(observation_lines)
         )
 
     async def _compress_prompt_sections(
@@ -470,10 +499,15 @@ class UnifiedOrchestratorController:
             "total_tokens": int(getattr(response, "total_tokens", 0) or 0),
         }
         return {
-            "qa_memory_text": _sanitize_text(parsed.get("qa_memory_text"), 6000) or "当前暂无问答对",
-            "retrieval_question_index_text": _sanitize_text(parsed.get("retrieval_question_index_text"), 6000)
+            "qa_memory_text": _sanitize_text(parsed.get("qa_memory_text"), 6000)
+            or "当前暂无问答对",
+            "retrieval_question_index_text": _sanitize_text(
+                parsed.get("retrieval_question_index_text"), 6000
+            )
             or "当前暂无历史检索问题",
-            "tool_observations": self._normalize_compressed_tool_observations(parsed.get("tool_observations")),
+            "tool_observations": self._normalize_compressed_tool_observations(
+                parsed.get("tool_observations")
+            ),
             "compression_reason": _sanitize_text(parsed.get("compression_reason"), 240)
             or "删除了和当前问题无关的记忆与工具结果",
         }, tokens
@@ -495,9 +529,17 @@ class UnifiedOrchestratorController:
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """在预算约束下构建主控决策消息，必要时执行压缩。"""
         current_qa_memory_text = str(qa_memory_text or "当前暂无问答对")
-        current_retrieval_index_text = str(retrieval_index_text or "当前暂无历史检索问题")
-        current_tool_observations = tool_observations if isinstance(tool_observations, list) else []
-        compression_tokens = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        current_retrieval_index_text = str(
+            retrieval_index_text or "当前暂无历史检索问题"
+        )
+        current_tool_observations = (
+            tool_observations if isinstance(tool_observations, list) else []
+        )
+        compression_tokens = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
         while True:
             messages = [
@@ -518,13 +560,19 @@ class UnifiedOrchestratorController:
             ]
             prompt_token_count = self._count_prompt_tokens(messages)
             compression_state["prompt_budget_limit"] = self._PROMPT_TOKEN_LIMIT
-            compression_state["prompt_token_count_before_last_decision"] = int(prompt_token_count)
-            compression_state["prompt_token_count_after_last_compression"] = int(prompt_token_count)
+            compression_state["prompt_token_count_before_last_decision"] = int(
+                prompt_token_count
+            )
+            compression_state["prompt_token_count_after_last_compression"] = int(
+                prompt_token_count
+            )
 
             if prompt_token_count <= self._PROMPT_TOKEN_LIMIT:
                 return messages, compression_tokens
 
-            current_compression_count = int(compression_state.get("compression_count") or 0)
+            current_compression_count = int(
+                compression_state.get("compression_count") or 0
+            )
             if current_compression_count >= self._MAX_PROMPT_COMPRESSIONS:
                 compression_state["aborted_for_prompt_budget"] = True
                 processing_steps.append(
@@ -553,17 +601,20 @@ class UnifiedOrchestratorController:
                 compression_count=next_compression_index,
             )
             compression_tokens["prompt_tokens"] += int(tokens.get("prompt_tokens") or 0)
-            compression_tokens["completion_tokens"] += int(tokens.get("completion_tokens") or 0)
+            compression_tokens["completion_tokens"] += int(
+                tokens.get("completion_tokens") or 0
+            )
             compression_tokens["total_tokens"] += int(tokens.get("total_tokens") or 0)
 
             compression_state["compression_count"] = next_compression_index
-            current_qa_memory_text = str(compressed_sections.get("qa_memory_text") or "当前暂无问答对")
+            current_qa_memory_text = str(
+                compressed_sections.get("qa_memory_text") or "当前暂无问答对"
+            )
             current_retrieval_index_text = str(
-                compressed_sections.get("retrieval_question_index_text") or "当前暂无历史检索问题"
+                compressed_sections.get("retrieval_question_index_text")
+                or "当前暂无历史检索问题"
             )
-            compressed_tool_observations = compressed_sections.get(
-                "tool_observations"
-            )
+            compressed_tool_observations = compressed_sections.get("tool_observations")
             current_tool_observations = (
                 compressed_tool_observations
                 if isinstance(compressed_tool_observations, list)
@@ -586,7 +637,9 @@ class UnifiedOrchestratorController:
                 },
             ]
             compressed_prompt_token_count = self._count_prompt_tokens(messages)
-            compression_state["prompt_token_count_after_last_compression"] = int(compressed_prompt_token_count)
+            compression_state["prompt_token_count_after_last_compression"] = int(
+                compressed_prompt_token_count
+            )
             compression_events = compression_state.get("compression_events")
             if not isinstance(compression_events, list):
                 compression_events = []
@@ -596,7 +649,9 @@ class UnifiedOrchestratorController:
                     "attempt": next_compression_index,
                     "before_tokens": int(prompt_token_count),
                     "after_tokens": int(compressed_prompt_token_count),
-                    "reason": _sanitize_text(compressed_sections.get("compression_reason"), 240),
+                    "reason": _sanitize_text(
+                        compressed_sections.get("compression_reason"), 240
+                    ),
                 }
             )
             processing_steps.append(
@@ -681,7 +736,9 @@ class UnifiedOrchestratorController:
         }
         return parsed, tokens
 
-    def _build_history_observation(self, action: dict[str, Any], tool_result: dict[str, Any]) -> dict[str, Any]:
+    def _build_history_observation(
+        self, action: dict[str, Any], tool_result: dict[str, Any]
+    ) -> dict[str, Any]:
         """将 history_read 工具结果包装成统一观测结构。"""
         payload = _coerce_dict(tool_result.get("result"))
         evidence = [
@@ -696,7 +753,9 @@ class UnifiedOrchestratorController:
             "agent": "history",
             "action": "call_history_read",
             "tool_name": "history_read",
-            "subquery": _sanitize_text(action.get("user_question") or action.get("history_id"), 200),
+            "subquery": _sanitize_text(
+                action.get("user_question") or action.get("history_id"), 200
+            ),
             "arguments": {
                 "history_id": _sanitize_text(action.get("history_id"), 64),
                 "user_question": _sanitize_text(action.get("user_question"), 200),
@@ -719,13 +778,21 @@ class UnifiedOrchestratorController:
             },
         }
 
-    def _build_subagent_observation(self, result: Any, action: dict[str, Any]) -> dict[str, Any]:
+    def _build_subagent_observation(
+        self, result: Any, action: dict[str, Any]
+    ) -> dict[str, Any]:
         """将子代理结果包装成主控统一观测结构。"""
         query_records = [
             normalized
             for normalized in (
-                self._normalize_query_record(item, default_agent=str(result.target_agent or "unknown"))
-                for item in (result.query_records if isinstance(result.query_records, list) else [])
+                self._normalize_query_record(
+                    item, default_agent=str(result.target_agent or "unknown")
+                )
+                for item in (
+                    result.query_records
+                    if isinstance(result.query_records, list)
+                    else []
+                )
             )
             if normalized is not None
         ]
@@ -754,7 +821,8 @@ class UnifiedOrchestratorController:
                 "ok": True,
                 "error": "",
                 "result": {
-                    "summary": evidence_summary or f"signal={result.signal}; evidence_count={len(evidence)}; queries={len(result.queries_used)}",
+                    "summary": evidence_summary
+                    or f"signal={result.signal}; evidence_count={len(evidence)}; queries={len(result.queries_used)}",
                     "signal": result.signal,
                     "coverage": result.coverage,
                     "reason": result.reason,
@@ -793,7 +861,9 @@ class UnifiedOrchestratorController:
             reason=_sanitize_text(action.get("reason"), 200),
         )
 
-    def _build_evidence_summary(self, tool_observations: list[dict[str, Any]]) -> dict[str, Any]:
+    def _build_evidence_summary(
+        self, tool_observations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """汇总工具观测中的证据覆盖信息。"""
         evidence: list[dict[str, Any]] = []
         covered_topics: list[str] = []
@@ -826,11 +896,15 @@ class UnifiedOrchestratorController:
             "retrieval_risk_flags": retrieval_risk_flags,
         }
 
-    def _build_budget_telemetry(self, compression_state: dict[str, Any]) -> dict[str, Any]:
+    def _build_budget_telemetry(
+        self, compression_state: dict[str, Any]
+    ) -> dict[str, Any]:
         """构建提示词预算相关观测字段。"""
         compression_events = compression_state.get("compression_events")
         return {
-            "prompt_budget_limit": int(compression_state.get("prompt_budget_limit") or self._PROMPT_TOKEN_LIMIT),
+            "prompt_budget_limit": int(
+                compression_state.get("prompt_budget_limit") or self._PROMPT_TOKEN_LIMIT
+            ),
             "compression_count": int(compression_state.get("compression_count") or 0),
             "prompt_token_count_before_last_decision": int(
                 compression_state.get("prompt_token_count_before_last_decision") or 0
@@ -838,8 +912,12 @@ class UnifiedOrchestratorController:
             "prompt_token_count_after_last_compression": int(
                 compression_state.get("prompt_token_count_after_last_compression") or 0
             ),
-            "aborted_for_prompt_budget": bool(compression_state.get("aborted_for_prompt_budget")),
-            "prompt_budget_events": compression_events if isinstance(compression_events, list) else [],
+            "aborted_for_prompt_budget": bool(
+                compression_state.get("aborted_for_prompt_budget")
+            ),
+            "prompt_budget_events": (
+                compression_events if isinstance(compression_events, list) else []
+            ),
         }
 
     def _build_final_answer_system_prompt(self) -> str:
@@ -874,7 +952,11 @@ class UnifiedOrchestratorController:
             "当前已获取的工具/检索结果：\n"
             + "\n".join(observation_lines)
             + "\n\n"
-            + (f"主控草稿答案（可参考但不要机械复述）：\n{draft_text}\n\n" if draft_text else "")
+            + (
+                f"主控草稿答案（可参考但不要机械复述）：\n{draft_text}\n\n"
+                if draft_text
+                else ""
+            )
             + "请输出最终回答。"
         )
 
@@ -954,7 +1036,9 @@ class UnifiedOrchestratorController:
             if str(event.type or "") == "done":
                 tokens = {
                     "prompt_tokens": int(getattr(event, "prompt_tokens", 0) or 0),
-                    "completion_tokens": int(getattr(event, "completion_tokens", 0) or 0),
+                    "completion_tokens": int(
+                        getattr(event, "completion_tokens", 0) or 0
+                    ),
                     "total_tokens": int(getattr(event, "total_tokens", 0) or 0),
                 }
 
@@ -1012,7 +1096,9 @@ class UnifiedOrchestratorController:
         safe_session_id = str(session_id or "").strip()
         safe_memory = memory_context if isinstance(memory_context, dict) else {}
         qa_memory_text = str(safe_memory.get("qa_memory_text") or "当前暂无问答对")
-        retrieval_index_text = str(safe_memory.get("retrieval_question_index_text") or "当前暂无历史检索问题")
+        retrieval_index_text = str(
+            safe_memory.get("retrieval_question_index_text") or "当前暂无历史检索问题"
+        )
         safe_max_turns = max(1, int(max_turns or 1))
         safe_tool_calls = max(
             1,
@@ -1107,13 +1193,9 @@ class UnifiedOrchestratorController:
                 if self._mcp_gateway is None:
                     from app.a2a.tool_gateway import MCPToolGateway
 
-                    self._mcp_gateway = MCPToolGateway(
-                        agent_type="orchestrator"
-                    )
+                    self._mcp_gateway = MCPToolGateway(agent_type="orchestrator")
                 history_id = _sanitize_text(action.get("history_id"), 64)
-                history_question = _sanitize_text(
-                    action.get("user_question"), 300
-                )
+                history_question = _sanitize_text(action.get("user_question"), 300)
                 history_result = await self._mcp_gateway.invoke_tool(
                     "history_read",
                     {
@@ -1143,7 +1225,9 @@ class UnifiedOrchestratorController:
                     max_tool_calls=safe_tool_calls,
                 )
                 result = await self._subagent_client.send_task(task)
-                tool_observations.append(self._build_subagent_observation(result, action))
+                tool_observations.append(
+                    self._build_subagent_observation(result, action)
+                )
                 continue
 
             processing_steps.append("主控返回了未知动作，转入强制终答")
@@ -1188,7 +1272,9 @@ class UnifiedOrchestratorController:
             )
             total_tokens += int(answer_tokens.get("total_tokens") or 0)
             if not final_answer:
-                final_answer = "当前基于已有问答记忆和检索记录，仍缺少足够证据给出更确定的回答。"
+                final_answer = (
+                    "当前基于已有问答记忆和检索记录，仍缺少足够证据给出更确定的回答。"
+                )
             processing_steps.append("已执行强制终答")
             confidence = 0.6 if tool_observations else 0.3
 

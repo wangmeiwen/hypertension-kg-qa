@@ -3,7 +3,6 @@
 提供会话记忆摘要和检索摘要的异步数据访问能力。
 """
 
-
 from __future__ import annotations
 
 from app.backend.repositories.database import fetch_one, execute
@@ -66,7 +65,9 @@ class SessionMemoryManager:
         return str((row or {}).get("retrieval_summary_text") or "")
 
     @staticmethod
-    async def upsert_retrieval_summary(session_id: str, retrieval_summary_text: str) -> bool:
+    async def upsert_retrieval_summary(
+        session_id: str, retrieval_summary_text: str
+    ) -> bool:
         """写入或更新会话检索摘要。
 
         Args:
@@ -82,7 +83,10 @@ class SessionMemoryManager:
             VALUES (:session_id, :retrieval_summary_text) AS new
             ON DUPLICATE KEY UPDATE retrieval_summary_text=new.retrieval_summary_text
             """,
-            {"session_id": session_id, "retrieval_summary_text": retrieval_summary_text},
+            {
+                "session_id": session_id,
+                "retrieval_summary_text": retrieval_summary_text,
+            },
         )
         return affected > 0
 

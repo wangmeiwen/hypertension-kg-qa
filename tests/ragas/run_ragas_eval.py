@@ -50,12 +50,34 @@ METRIC_ALIASES = {
 
 def parse_args() -> argparse.Namespace:
     """解析 Ragas 离线评分脚本命令行参数。"""
-    parser = argparse.ArgumentParser(description="Run Ragas scoring on an existing eval result file.")
-    parser.add_argument("--input", required=True, help="Path to an eval result JSON file under tests/ragas/eval_runs.")
-    parser.add_argument("--output", default="", help="Optional output file path. Defaults to overwrite input.")
-    parser.add_argument("--model-name", default="", help="Optional evaluator model name. Defaults to MODEL_NAME.")
-    parser.add_argument("--base-url", default="", help="Optional evaluator base URL. Defaults to MODEL_BASE_URL.")
-    parser.add_argument("--api-key", default="", help="Optional evaluator API key. Defaults to MODEL_API_KEY.")
+    parser = argparse.ArgumentParser(
+        description="Run Ragas scoring on an existing eval result file."
+    )
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Path to an eval result JSON file under tests/ragas/eval_runs.",
+    )
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Optional output file path. Defaults to overwrite input.",
+    )
+    parser.add_argument(
+        "--model-name",
+        default="",
+        help="Optional evaluator model name. Defaults to MODEL_NAME.",
+    )
+    parser.add_argument(
+        "--base-url",
+        default="",
+        help="Optional evaluator base URL. Defaults to MODEL_BASE_URL.",
+    )
+    parser.add_argument(
+        "--api-key",
+        default="",
+        help="Optional evaluator API key. Defaults to MODEL_API_KEY.",
+    )
     parser.add_argument(
         "--embedding-model-path",
         default="",
@@ -66,16 +88,30 @@ def parse_args() -> argparse.Namespace:
         default="cpu",
         help="Embedding device for local HuggingFace embeddings. Defaults to cpu.",
     )
-    parser.add_argument("--timeout", type=float, default=180.0, help="LLM timeout in seconds.")
+    parser.add_argument(
+        "--timeout", type=float, default=180.0, help="LLM timeout in seconds."
+    )
     parser.add_argument("--max-workers", type=int, default=1, help="Ragas max workers.")
-    parser.add_argument("--max-retries", type=int, default=1, help="Retry count for each failed Ragas job.")
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=1,
+        help="Retry count for each failed Ragas job.",
+    )
     parser.add_argument(
         "--metrics",
         default="faithfulness,answer_relevancy,context_precision,context_recall",
         help="Comma-separated metrics: faithfulness, answer_relevancy, context_precision, context_recall",
     )
-    parser.add_argument("--offset", type=int, default=0, help="Start row position for this run.")
-    parser.add_argument("--limit", type=int, default=0, help="Max rows to score after offset. 0 means all.")
+    parser.add_argument(
+        "--offset", type=int, default=0, help="Start row position for this run."
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max rows to score after offset. 0 means all.",
+    )
     parser.add_argument(
         "--indices",
         default="",
@@ -124,7 +160,9 @@ def _load_ragas_modules() -> dict[str, Any]:
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(f"ragas_metric_import_failed:{exc}") from exc
     try:
-        from langchain_community.embeddings import HuggingFaceEmbeddings as LangchainHuggingFaceEmbeddings
+        from langchain_community.embeddings import (
+            HuggingFaceEmbeddings as LangchainHuggingFaceEmbeddings,
+        )
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(f"langchain_embedding_import_failed:{exc}") from exc
 
@@ -147,12 +185,23 @@ def _resolve_env(args: argparse.Namespace) -> tuple[str, str, str]:
     env_path = PROJECT_ROOT / ".env"
     load_dotenv(env_path, override=False)
 
-    api_key = args.api_key or os.getenv("MODEL_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-    base_url = args.base_url or os.getenv("MODEL_BASE_URL") or os.getenv("OPENAI_BASE_URL") or ""
-    model_name = args.model_name or os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or ""
+    api_key = (
+        args.api_key or os.getenv("MODEL_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+    )
+    base_url = (
+        args.base_url
+        or os.getenv("MODEL_BASE_URL")
+        or os.getenv("OPENAI_BASE_URL")
+        or ""
+    )
+    model_name = (
+        args.model_name or os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or ""
+    )
 
     if not api_key or not model_name:
-        raise RuntimeError("missing_model_env; need MODEL_API_KEY and MODEL_NAME or explicit args")
+        raise RuntimeError(
+            "missing_model_env; need MODEL_API_KEY and MODEL_NAME or explicit args"
+        )
     return api_key, base_url, model_name
 
 
@@ -200,11 +249,15 @@ def _parse_metric_names(raw: str) -> list[str]:
         if not key:
             continue
         if key == "factual_correctness":
-            raise RuntimeError("unsupported_metric:factual_correctness; use faithfulness,answer_relevancy,context_precision,context_recall")
+            raise RuntimeError(
+                "unsupported_metric:factual_correctness; use faithfulness,answer_relevancy,context_precision,context_recall"
+            )
         if key not in names:
             names.append(key)
     if not names:
-        raise RuntimeError("invalid_metrics; use faithfulness,answer_relevancy,context_precision,context_recall")
+        raise RuntimeError(
+            "invalid_metrics; use faithfulness,answer_relevancy,context_precision,context_recall"
+        )
     return names
 
 
@@ -225,7 +278,10 @@ def _has_selected_scores(row: dict[str, Any], metric_names: list[str]) -> bool:
     scores = row.get("ragas_scores")
     if not isinstance(scores, dict):
         return False
-    return all(_safe_number(scores.get(metric_name)) is not None for metric_name in metric_names)
+    return all(
+        _safe_number(scores.get(metric_name)) is not None
+        for metric_name in metric_names
+    )
 
 
 def _build_metrics(modules: dict[str, Any], metric_names: list[str]) -> list[Any]:
@@ -239,7 +295,9 @@ def _build_metrics(modules: dict[str, Any], metric_names: list[str]) -> list[Any
     return metrics
 
 
-def _build_embeddings(modules: dict[str, Any], embedding_model_path: str, embedding_device: str) -> Any | None:
+def _build_embeddings(
+    modules: dict[str, Any], embedding_model_path: str, embedding_device: str
+) -> Any | None:
     if not embedding_model_path:
         return None
     path = Path(embedding_model_path)
@@ -253,7 +311,9 @@ def _build_embeddings(modules: dict[str, Any], embedding_model_path: str, embedd
     )
 
 
-def _recompute_summary(items: list[Any], metric_names: list[str] | None = None) -> tuple[dict[str, float | None], list[str]]:
+def _recompute_summary(
+    items: list[Any], metric_names: list[str] | None = None
+) -> tuple[dict[str, float | None], list[str]]:
     discovered: list[str] = []
     if metric_names:
         discovered.extend(metric_names)
@@ -298,12 +358,16 @@ def _clear_rows(items: list[Any], clear_indices: set[int]) -> int:
     return cleared
 
 
-def _save_payload(payload: dict[str, Any], output_path: Path, metric_names: list[str] | None = None) -> tuple[dict[str, float | None], list[str]]:
+def _save_payload(
+    payload: dict[str, Any], output_path: Path, metric_names: list[str] | None = None
+) -> tuple[dict[str, float | None], list[str]]:
     summary, metrics = _recompute_summary(payload.get("items", []), metric_names)
     payload["ragas_summary"] = summary
     payload["ragas_metrics"] = metrics
     payload["ragas_scored_at"] = datetime.now().isoformat(timespec="seconds")
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return summary, metrics
 
 
@@ -319,7 +383,11 @@ def main() -> None:
 
     output_path = Path(args.output).resolve() if args.output else input_path
     payload = json.loads(input_path.read_text(encoding="utf-8"))
-    items = payload.get("items") if isinstance(payload, dict) and isinstance(payload.get("items"), list) else []
+    items = (
+        payload.get("items")
+        if isinstance(payload, dict) and isinstance(payload.get("items"), list)
+        else []
+    )
     if not items:
         raise RuntimeError("no_items_in_result_file")
 
@@ -339,7 +407,9 @@ def main() -> None:
                         "position": position,
                         "index": item_index,
                         "has_answer": bool(str(row.get("answer") or "").strip()),
-                        "has_reference": bool(str(row.get("ground_truth") or "").strip()),
+                        "has_reference": bool(
+                            str(row.get("ground_truth") or "").strip()
+                        ),
                         "has_selected_scores": _has_selected_scores(row, metric_names),
                         "question": question[:120],
                     },
@@ -349,7 +419,9 @@ def main() -> None:
         return
 
     if output_path != input_path:
-        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         payload = json.loads(output_path.read_text(encoding="utf-8"))
         items = payload.get("items") if isinstance(payload.get("items"), list) else []
 
@@ -485,7 +557,11 @@ def main() -> None:
             continue
         row_index = int(row.get("index") or position)
         if row_index in per_row_scores:
-            existing_scores = row.get("ragas_scores") if isinstance(row.get("ragas_scores"), dict) else {}
+            existing_scores = (
+                row.get("ragas_scores")
+                if isinstance(row.get("ragas_scores"), dict)
+                else {}
+            )
             row["ragas_scores"] = {**existing_scores, **per_row_scores[row_index]}
             row.pop("ragas_error", None)
         elif "ragas_scores" not in row:

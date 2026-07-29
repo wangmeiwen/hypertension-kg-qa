@@ -27,12 +27,14 @@ def get_kg_milvus_config():
         dict: Milvus 连接信息和知识图谱集合名称。
     """
     conf = Config()
-    collection_name = os.getenv("KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection")
+    collection_name = os.getenv(
+        "KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection"
+    )
     return {
         "host": conf.MILVUS_HOST,
         "port": conf.MILVUS_PORT,
         "database": conf.MILVUS_DATABASE_NAME,
-        "collection_name": collection_name
+        "collection_name": collection_name,
     }
 
 
@@ -56,9 +58,7 @@ def drop_collection(client: MilvusClient, collection_name: str) -> bool:
 
 
 def create_kg_collection_with_schema(
-    client: MilvusClient,
-    collection_name: str,
-    embedding_dim: int = 1024
+    client: MilvusClient, collection_name: str, embedding_dim: int = 1024
 ) -> bool:
     """
     创建知识图谱 Milvus 集合并设置 Schema
@@ -73,19 +73,37 @@ def create_kg_collection_with_schema(
         schema = client.create_schema(auto_id=True, enable_dynamic_field=False)
 
         # 添加字段
-        schema.add_field(field_name="pk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
+        schema.add_field(
+            field_name="pk_id", datatype=DataType.INT64, is_primary=True, auto_id=True
+        )
         schema.add_field(field_name="doc_id", datatype=DataType.VARCHAR, max_length=64)
-        schema.add_field(field_name="item_type", datatype=DataType.VARCHAR, max_length=32)
+        schema.add_field(
+            field_name="item_type", datatype=DataType.VARCHAR, max_length=32
+        )
         schema.add_field(field_name="name", datatype=DataType.VARCHAR, max_length=512)
         schema.add_field(field_name="label", datatype=DataType.VARCHAR, max_length=128)
-        schema.add_field(field_name="source_name", datatype=DataType.VARCHAR, max_length=512)
-        schema.add_field(field_name="source_label", datatype=DataType.VARCHAR, max_length=128)
-        schema.add_field(field_name="relation_type", datatype=DataType.VARCHAR, max_length=128)
-        schema.add_field(field_name="target_name", datatype=DataType.VARCHAR, max_length=512)
-        schema.add_field(field_name="target_label", datatype=DataType.VARCHAR, max_length=128)
+        schema.add_field(
+            field_name="source_name", datatype=DataType.VARCHAR, max_length=512
+        )
+        schema.add_field(
+            field_name="source_label", datatype=DataType.VARCHAR, max_length=128
+        )
+        schema.add_field(
+            field_name="relation_type", datatype=DataType.VARCHAR, max_length=128
+        )
+        schema.add_field(
+            field_name="target_name", datatype=DataType.VARCHAR, max_length=512
+        )
+        schema.add_field(
+            field_name="target_label", datatype=DataType.VARCHAR, max_length=128
+        )
         schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="timestamp", datatype=DataType.VARCHAR, max_length=64)
-        schema.add_field(field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=embedding_dim)
+        schema.add_field(
+            field_name="timestamp", datatype=DataType.VARCHAR, max_length=64
+        )
+        schema.add_field(
+            field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=embedding_dim
+        )
 
         # 创建索引参数
         index_params = client.prepare_index_params()
@@ -96,20 +114,22 @@ def create_kg_collection_with_schema(
             index_name="embedding_index",
             index_type="IVF_FLAT",
             metric_type="COSINE",
-            params={"nlist": 128}
+            params={"nlist": 128},
         )
 
         # 创建集合
         client.create_collection(
-            collection_name=collection_name,
-            schema=schema,
-            index_params=index_params
+            collection_name=collection_name, schema=schema, index_params=index_params
         )
 
         print(f"✅ 已创建知识图谱集合: {collection_name}")
         print(f"   - 向量维度: {embedding_dim}")
-        print("   - 字段: pk_id, doc_id, item_type, name, label, source_name, source_label,")
-        print("           relation_type, target_name, target_label, text, timestamp, embedding")
+        print(
+            "   - 字段: pk_id, doc_id, item_type, name, label, source_name, source_label,"
+        )
+        print(
+            "           relation_type, target_name, target_label, text, timestamp, embedding"
+        )
         return True
 
     except Exception as e:
@@ -141,16 +161,17 @@ def recreate_kg_collection(embedding_dim: int = 1024, skip_confirm: bool = False
 
     # 确认操作
     if not skip_confirm:
-        confirm = input(f"\n⚠️  警告: 这将删除知识图谱集合 '{collection_name}' 中的所有数据！\n是否继续? (yes/no): ")
-        if confirm.lower() not in ['yes', 'y']:
+        confirm = input(
+            f"\n⚠️  警告: 这将删除知识图谱集合 '{collection_name}' 中的所有数据！\n是否继续? (yes/no): "
+        )
+        if confirm.lower() not in ["yes", "y"]:
             print("❌ 操作已取消")
             return False
 
     try:
         # 创建客户端
         client = MilvusClient(
-            uri=f"http://{config['host']}:{config['port']}",
-            db_name=config["database"]
+            uri=f"http://{config['host']}:{config['port']}", db_name=config["database"]
         )
 
         # 删除现有集合
@@ -178,8 +199,7 @@ def get_kg_collection_stats():
 
     try:
         client = MilvusClient(
-            uri=f"http://{config['host']}:{config['port']}",
-            db_name=config["database"]
+            uri=f"http://{config['host']}:{config['port']}", db_name=config["database"]
         )
 
         if not client.has_collection(collection_name):
@@ -207,7 +227,9 @@ def get_kg_collection_stats():
             )
 
             entity_count = sum(1 for row in result if row.get("item_type") == "entity")
-            rel_count = sum(1 for row in result if row.get("item_type") == "relationship")
+            rel_count = sum(
+                1 for row in result if row.get("item_type") == "relationship"
+            )
 
             print(f"实体数量: {entity_count}")
             print(f"关系数量: {rel_count}")
@@ -234,7 +256,9 @@ def run_interactive_mode(default_dim: int = 1024) -> int:
     try:
         action = input("请输入选项 [1/2/3/0]: ").strip()
     except EOFError:
-        print("❌ 未检测到可用输入流，请使用参数模式执行（--stats / --recreate / --drop-only）")
+        print(
+            "❌ 未检测到可用输入流，请使用参数模式执行（--stats / --recreate / --drop-only）"
+        )
         return 2
 
     if action == "1":
@@ -251,19 +275,24 @@ def run_interactive_mode(default_dim: int = 1024) -> int:
             print("❌ 向量维度必须是正整数")
             return 1
         embedding_dim = int(dim_text) if dim_text else default_dim
-        success = recreate_kg_collection(embedding_dim=embedding_dim, skip_confirm=False)
+        success = recreate_kg_collection(
+            embedding_dim=embedding_dim, skip_confirm=False
+        )
         return 0 if success else 1
 
     if action == "3":
         config = get_kg_milvus_config()
         client = MilvusClient(
-            uri=f"http://{config['host']}:{config['port']}",
-            db_name=config["database"]
+            uri=f"http://{config['host']}:{config['port']}", db_name=config["database"]
         )
         try:
-            confirm = input(
-                f"⚠️  这将删除集合 '{config['collection_name']}' 中的所有数据，是否继续? (yes/no): "
-            ).strip().lower()
+            confirm = (
+                input(
+                    f"⚠️  这将删除集合 '{config['collection_name']}' 中的所有数据，是否继续? (yes/no): "
+                )
+                .strip()
+                .lower()
+            )
         except EOFError:
             print("❌ 未检测到可用输入流，操作已取消")
             return 2
@@ -291,31 +320,16 @@ def main():
 
     parser = argparse.ArgumentParser(description="知识图谱 Milvus 集合管理工具")
     parser.add_argument(
-        "--recreate", "-r",
-        action="store_true",
-        help="删除并重新创建集合"
+        "--recreate", "-r", action="store_true", help="删除并重新创建集合"
     )
     parser.add_argument(
-        "--drop-only", "-d",
-        action="store_true",
-        help="仅删除集合，不重新创建"
+        "--drop-only", "-d", action="store_true", help="仅删除集合，不重新创建"
     )
+    parser.add_argument("--stats", "-s", action="store_true", help="显示集合统计信息")
     parser.add_argument(
-        "--stats", "-s",
-        action="store_true",
-        help="显示集合统计信息"
+        "--dim", "-D", type=int, default=1024, help="向量维度 (默认: 1024)"
     )
-    parser.add_argument(
-        "--dim", "-D",
-        type=int,
-        default=1024,
-        help="向量维度 (默认: 1024)"
-    )
-    parser.add_argument(
-        "--yes", "-y",
-        action="store_true",
-        help="跳过确认提示"
-    )
+    parser.add_argument("--yes", "-y", action="store_true", help="跳过确认提示")
 
     args = parser.parse_args()
 
@@ -328,8 +342,7 @@ def main():
     elif args.drop_only:
         config = get_kg_milvus_config()
         client = MilvusClient(
-            uri=f"http://{config['host']}:{config['port']}",
-            db_name=config["database"]
+            uri=f"http://{config['host']}:{config['port']}", db_name=config["database"]
         )
         drop_collection(client, config["collection_name"])
         sys.exit(0)

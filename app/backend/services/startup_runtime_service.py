@@ -116,7 +116,10 @@ class StartupRuntimeService:
                 with log_duration("startup.prewarm_vector_store"):
                     vector_store_factory()
                 kg_store = kg_store_factory()
-                if self._runtime.config.preload_kg_entity_relation_embedder and hasattr(kg_store, "ensure_embedder_loaded"):
+                if (
+                    self._runtime.config.preload_kg_entity_relation_embedder
+                    and hasattr(kg_store, "ensure_embedder_loaded")
+                ):
                     with log_duration("startup.prewarm_kg_embedder"):
                         kg_store.ensure_embedder_loaded()
                 logger.info("共享检索资源预热完成")
@@ -194,7 +197,15 @@ class StartupRuntimeService:
             from app.knowledge_graph.neo4j_manager import neo4j_client
 
             await neo4j_client.close()
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error("shutdown", "neo4j_close", exc)
 
     async def _close_llm_runtime_resources(self) -> None:

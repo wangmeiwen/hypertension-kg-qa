@@ -37,11 +37,11 @@ class GraphServiceStub:
 
 
 def create_client(service: GraphServiceStub) -> TestClient:
-  """构建只挂载 admin graph router 的测试客户端。"""
-  app = FastAPI()
-  app.include_router(create_admin_graph_router(service))
-  app.dependency_overrides[require_admin_login] = lambda: None
-  return TestClient(app)
+    """构建只挂载 admin graph router 的测试客户端。"""
+    app = FastAPI()
+    app.include_router(create_admin_graph_router(service))
+    app.dependency_overrides[require_admin_login] = lambda: None
+    return TestClient(app)
 
 
 def test_admin_graph_router_core_routes():
@@ -52,15 +52,23 @@ def test_admin_graph_router_core_routes():
     assert labels.status_code == 200
     assert labels.json()["data"] == ["Disease"]
 
-    nodes = client.get("/admin/graph/nodes", params={"label": "Disease", "keyword": "高血压", "limit": 20, "offset": 0})
+    nodes = client.get(
+        "/admin/graph/nodes",
+        params={"label": "Disease", "keyword": "高血压", "limit": 20, "offset": 0},
+    )
     assert nodes.status_code == 200
     assert nodes.json()["total"] == 1
 
-    created = client.post("/admin/graph/nodes", json={"label": "Disease", "properties": {"name": "高血压"}})
+    created = client.post(
+        "/admin/graph/nodes",
+        json={"label": "Disease", "properties": {"name": "高血压"}},
+    )
     assert created.status_code == 200
     assert created.json()["data"]["id"] == 1
 
-    cypher = client.post("/admin/graph/execute-cypher", json={"query": "MATCH (n) RETURN n LIMIT 1"})
+    cypher = client.post(
+        "/admin/graph/execute-cypher", json={"query": "MATCH (n) RETURN n LIMIT 1"}
+    )
     assert cypher.status_code == 200
     assert cypher.json()["data"][0]["name"] == "高血压"
 

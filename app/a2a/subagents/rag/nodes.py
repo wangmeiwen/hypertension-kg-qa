@@ -21,7 +21,9 @@ def _is_statistical_query(query: str) -> bool:
     if not text:
         return False
     keywords = ("患病率", "加权", "成人", "18岁", "知晓率", "治疗率", "控制率")
-    return any(char.isdigit() for char in text) and any(token in text for token in keywords)
+    return any(char.isdigit() for char in text) and any(
+        token in text for token in keywords
+    )
 
 
 def _trim_hit_snippet(query: str, snippet: str) -> str:
@@ -51,7 +53,11 @@ def _build_query_records(
         query = str(payload.get("query") or "").strip()
         if not query:
             continue
-        row = tool_results[index] if index < len(tool_results) and isinstance(tool_results[index], dict) else {}
+        row = (
+            tool_results[index]
+            if index < len(tool_results) and isinstance(tool_results[index], dict)
+            else {}
+        )
         result_obj = row.get("result")
         result = result_obj if isinstance(result_obj, dict) else {}
         evidence_obj = result.get("evidence")
@@ -70,9 +76,7 @@ def _build_query_records(
         end_page = top_provenance.get("end_page")
         chunk_id = str(top_evidence.get("chunk_id") or "").strip()
         selected_evidence = (
-            evidence_rows[:1]
-            if _is_statistical_query(query)
-            else evidence_rows[:3]
+            evidence_rows[:1] if _is_statistical_query(query) else evidence_rows[:3]
         )
         for item in selected_evidence:
             if not isinstance(item, dict):
@@ -84,9 +88,7 @@ def _build_query_records(
             page_label = item.get("page")
             item_provenance_obj = item.get("provenance")
             item_provenance = (
-                item_provenance_obj
-                if isinstance(item_provenance_obj, dict)
-                else {}
+                item_provenance_obj if isinstance(item_provenance_obj, dict) else {}
             )
             start_label = item_provenance.get("start_page")
             end_label = item_provenance.get("end_page")
@@ -94,7 +96,11 @@ def _build_query_records(
             if page_label not in (None, ""):
                 citation = f"{source}@p{page_label}" if source else f"p{page_label}"
             elif start_label not in (None, ""):
-                citation = f"{source}@p{start_label}-{end_label}" if source else f"p{start_label}-{end_label}"
+                citation = (
+                    f"{source}@p{start_label}-{end_label}"
+                    if source
+                    else f"p{start_label}-{end_label}"
+                )
             if citation and citation not in citations:
                 citations.append(citation)
         record = {
@@ -163,12 +169,22 @@ async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentS
     arguments_obj = state.get("arguments")
     arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
     query_terms_obj = state.get("query_terms")
-    query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
+    query_terms = (
+        [str(item or "").strip() for item in query_terms_obj]
+        if isinstance(query_terms_obj, list)
+        else []
+    )
     query_terms = [item for item in query_terms if item]
 
     constraints_obj = state.get("constraints")
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
-    max_tool_calls = max(1, min(int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS), MAX_SUBAGENT_TOOL_CALLS))
+    max_tool_calls = max(
+        1,
+        min(
+            int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS),
+            MAX_SUBAGENT_TOOL_CALLS,
+        ),
+    )
     tool_results_obj = state.get("tool_results")
     tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
     if len(tool_results) >= max_tool_calls:
@@ -187,17 +203,23 @@ async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentS
         )
         retry_arguments["query"] = query_variant_for_attempt(variants, attempt_index)
 
-    payload = validate_rag_payload(build_rag_payload(question, retry_arguments, query_terms=query_terms))
+    payload = validate_rag_payload(
+        build_rag_payload(question, retry_arguments, query_terms=query_terms)
+    )
     statement = {"tool_name": "rag_search", "payload": payload}
     existing_statements_obj = state.get("query_statements")
-    query_statements = existing_statements_obj if isinstance(existing_statements_obj, list) else []
+    query_statements = (
+        existing_statements_obj if isinstance(existing_statements_obj, list) else []
+    )
     query_statements.append(statement)
     state["query_statements"] = query_statements
     state["tool_calls"] = [statement]
     return state
 
 
-async def node_execute_rag_search(state: RagSubAgentState, tool_gateway: MCPToolGateway) -> RagSubAgentState:
+async def node_execute_rag_search(
+    state: RagSubAgentState, tool_gateway: MCPToolGateway
+) -> RagSubAgentState:
     """调用 MCP 网关执行 RAG 检索工具。
 
     Args:
@@ -251,7 +273,9 @@ async def node_normalize_results(state: RagSubAgentState) -> RagSubAgentState:
             constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS
         ),
         "signal_count": len(evidence),
-        "ok_count": sum(1 for row in rows if isinstance(row, dict) and bool(row.get("ok"))),
+        "ok_count": sum(
+            1 for row in rows if isinstance(row, dict) and bool(row.get("ok"))
+        ),
     }
     return state
 
@@ -273,7 +297,9 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
     evidence_count = len(evidence_models)
 
     query_statements_obj = state.get("query_statements")
-    query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
+    query_statements = (
+        query_statements_obj if isinstance(query_statements_obj, list) else []
+    )
     tool_results_obj = state.get("tool_results")
     tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
     queries_used: list[str] = []
@@ -306,7 +332,11 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
         signal=signal,
         coverage={
             "coverage_status": "none" if evidence_count == 0 else "partial",
-            "coverage_ratio": 0.0 if evidence_count == 0 else min(1.0, round(float(evidence_count) / 3.0, 4)),
+            "coverage_ratio": (
+                0.0
+                if evidence_count == 0
+                else min(1.0, round(float(evidence_count) / 3.0, 4))
+            ),
             "evidence_count": evidence_count,
         },
         missing_points=[],

@@ -36,7 +36,9 @@ class AdminObservabilityService:
         """
         return Path(__file__).resolve().parents[3]
 
-    def _read_perf_event_logs(self, event_name: str, limit: int = 200) -> list[dict[str, Any]]:
+    def _read_perf_event_logs(
+        self, event_name: str, limit: int = 200
+    ) -> list[dict[str, Any]]:
         """从性能日志文件中读取指定事件的最近记录。
 
         Args:
@@ -58,9 +60,21 @@ class AdminObservabilityService:
             if not path.exists():
                 continue
             try:
-                lines.extend(path.read_text(encoding="utf-8", errors="ignore").splitlines())
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-                self._log_api_error("_read_perf_event_logs", "read_file", exc, path=str(path))
+                lines.extend(
+                    path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                )
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+            ) as exc:
+                self._log_api_error(
+                    "_read_perf_event_logs", "read_file", exc, path=str(path)
+                )
                 continue
 
         if not lines:
@@ -81,7 +95,15 @@ class AdminObservabilityService:
             payload_text = payload_text[json_start:]
             try:
                 payload = json.loads(payload_text)
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+            ) as exc:
                 self._log_api_error("_read_perf_event_logs", "json_parse", exc)
                 continue
             if payload.get("event") != event_name:
@@ -100,7 +122,16 @@ class AdminObservabilityService:
         try:
             parsed = json.loads(raw)
             return parsed if isinstance(parsed, dict) else {}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError, json.JSONDecodeError):
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            json.JSONDecodeError,
+        ):
             start = raw.find("{")
             end = raw.rfind("}")
             if start < 0 or end <= start:
@@ -108,10 +139,21 @@ class AdminObservabilityService:
             try:
                 parsed = json.loads(raw[start : end + 1])
                 return parsed if isinstance(parsed, dict) else {}
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError, json.JSONDecodeError):
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+                json.JSONDecodeError,
+            ):
                 return {}
 
-    def _derive_llm_metrics_from_agent_lanes(self, payload: dict[str, Any]) -> dict[str, int]:
+    def _derive_llm_metrics_from_agent_lanes(
+        self, payload: dict[str, Any]
+    ) -> dict[str, int]:
         """独立 LLM 日志缺失时，从 turn.agent_lanes 的 telemetry 中兜底提取指标。"""
         agent_lanes_value = payload.get("agent_lanes")
         agent_lanes = agent_lanes_value if isinstance(agent_lanes_value, dict) else {}
@@ -123,13 +165,17 @@ class AdminObservabilityService:
             for card in cards:
                 row = card if isinstance(card, dict) else {}
                 parsed = self._extract_json_object(row.get("full_decision"))
-                total_tokens = max(total_tokens, self._to_int_metric(parsed.get("total_tokens")))
+                total_tokens = max(
+                    total_tokens, self._to_int_metric(parsed.get("total_tokens"))
+                )
                 llm_calls = max(llm_calls, self._to_int_metric(parsed.get("llm_calls")))
         if llm_calls <= 0 and total_tokens > 0:
             llm_calls = 1
         return {"llm_calls": llm_calls, "total_tokens": total_tokens}
 
-    def _merge_turn_metrics(self, payload: dict[str, Any], memory_update: dict[str, Any]) -> dict[str, Any]:
+    def _merge_turn_metrics(
+        self, payload: dict[str, Any], memory_update: dict[str, Any]
+    ) -> dict[str, Any]:
         """合并 turn、记忆更新和内嵌 telemetry 中的 LLM 指标。"""
         fallback_metrics = self._derive_llm_metrics_from_agent_lanes(payload)
         merged = {
@@ -149,7 +195,9 @@ class AdminObservabilityService:
             payload_error_types = payload.get("error_types")
             memory_error_types = memory_update.get("error_types")
             merged["error_types"] = {
-                **(payload_error_types if isinstance(payload_error_types, dict) else {}),
+                **(
+                    payload_error_types if isinstance(payload_error_types, dict) else {}
+                ),
                 **(memory_error_types if isinstance(memory_error_types, dict) else {}),
             }
         return merged
@@ -171,7 +219,9 @@ class AdminObservabilityService:
         rows: list[dict[str, Any]] = []
         for turn_file in turns_root.glob("*/turns/*.jsonl"):
             try:
-                for line in turn_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                for line in turn_file.read_text(
+                    encoding="utf-8", errors="ignore"
+                ).splitlines():
                     if not line.strip():
                         continue
                     payload = json.loads(line)
@@ -188,8 +238,18 @@ class AdminObservabilityService:
                         turn_id = str(payload.get("turn_id") or "")
                         if turn_id:
                             memory_updates[turn_id] = payload
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-                self._log_api_error("_read_turn_logs", "read_file", exc, path=str(turn_file))
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+            ) as exc:
+                self._log_api_error(
+                    "_read_turn_logs", "read_file", exc, path=str(turn_file)
+                )
                 continue
         for turn_id, payload in turn_rows.items():
             memory_update_value = memory_updates.get(turn_id)
@@ -197,7 +257,12 @@ class AdminObservabilityService:
                 memory_update_value if isinstance(memory_update_value, dict) else {}
             )
             rows.append(self._merge_turn_metrics(payload, memory_update))
-        rows.sort(key=lambda item: str(item.get("finished_at") or item.get("timestamp") or ""), reverse=True)
+        rows.sort(
+            key=lambda item: str(
+                item.get("finished_at") or item.get("timestamp") or ""
+            ),
+            reverse=True,
+        )
         return rows[:limit]
 
     @staticmethod
@@ -257,7 +322,9 @@ class AdminObservabilityService:
         return 0
 
     @staticmethod
-    def _split_error_types(event: dict[str, Any], strategy_error_keys: set[str]) -> tuple[dict[str, int], dict[str, int]]:
+    def _split_error_types(
+        event: dict[str, Any], strategy_error_keys: set[str]
+    ) -> tuple[dict[str, int], dict[str, int]]:
         """拆分策略层错误和执行层错误计数。
 
         Args:
@@ -283,9 +350,13 @@ class AdminObservabilityService:
                 error_key = str(key)
                 error_count = int(value or 0)
                 if error_key in strategy_error_keys:
-                    strategy_fallback[error_key] = strategy_fallback.get(error_key, 0) + error_count
+                    strategy_fallback[error_key] = (
+                        strategy_fallback.get(error_key, 0) + error_count
+                    )
                 else:
-                    execution_fallback[error_key] = execution_fallback.get(error_key, 0) + error_count
+                    execution_fallback[error_key] = (
+                        execution_fallback.get(error_key, 0) + error_count
+                    )
         return strategy_fallback, execution_fallback
 
     def _normalize_run_row(self, event: dict[str, Any], rank: int) -> dict[str, Any]:
@@ -308,7 +379,9 @@ class AdminObservabilityService:
             "job_cancelled",
             "final_summarize_error",
         }
-        strategy_errors, execution_errors = self._split_error_types(event, strategy_error_keys)
+        strategy_errors, execution_errors = self._split_error_types(
+            event, strategy_error_keys
+        )
         timestamp = (
             str(event.get("finished_at") or "")
             or str(event.get("timestamp") or "")
@@ -321,23 +394,59 @@ class AdminObservabilityService:
             "user_id": str(event.get("user_id") or ""),
             "duration_ms": self._to_float_metric(event.get("duration_ms")),
             "llm_calls": self._to_int_metric(event.get("llm_calls")),
-            "attempted_tool_actions": self._to_int_metric(event.get("attempted_tool_actions") if event.get("attempted_tool_actions") is not None else event.get("tool_calls")),
-            "blocked_tool_actions": self._to_int_metric(event.get("blocked_tool_actions")),
+            "attempted_tool_actions": self._to_int_metric(
+                event.get("attempted_tool_actions")
+                if event.get("attempted_tool_actions") is not None
+                else event.get("tool_calls")
+            ),
+            "blocked_tool_actions": self._to_int_metric(
+                event.get("blocked_tool_actions")
+            ),
             "tool_calls": self._to_int_metric(event.get("tool_calls")),
-            "execution_tool_success_rate": self._to_float_metric(event.get("execution_tool_success_rate") if event.get("execution_tool_success_rate") is not None else event.get("tool_success_rate")),
-            "attempted_action_success_rate": self._to_float_metric(event.get("attempted_action_success_rate") if event.get("attempted_action_success_rate") is not None else event.get("tool_success_rate")),
+            "execution_tool_success_rate": self._to_float_metric(
+                event.get("execution_tool_success_rate")
+                if event.get("execution_tool_success_rate") is not None
+                else event.get("tool_success_rate")
+            ),
+            "attempted_action_success_rate": self._to_float_metric(
+                event.get("attempted_action_success_rate")
+                if event.get("attempted_action_success_rate") is not None
+                else event.get("tool_success_rate")
+            ),
             "tool_success_rate": self._to_float_metric(event.get("tool_success_rate")),
             "total_tokens": self._to_int_metric(event.get("total_tokens")),
-            "error_types": event.get("error_types") if isinstance(event.get("error_types"), dict) else {},
+            "error_types": (
+                event.get("error_types")
+                if isinstance(event.get("error_types"), dict)
+                else {}
+            ),
             "strategy_error_types": strategy_errors,
             "execution_error_types": execution_errors,
-            "tool_observations": event.get("tool_observations") if isinstance(event.get("tool_observations"), list) else [],
-            "reflection_events": event.get("reflection_events") if isinstance(event.get("reflection_events"), list) else [],
-            "turn_metrics": event.get("turn_metrics") if isinstance(event.get("turn_metrics"), list) else [],
-            "processing_steps": event.get("processing_steps") if isinstance(event.get("processing_steps"), list) else [],
+            "tool_observations": (
+                event.get("tool_observations")
+                if isinstance(event.get("tool_observations"), list)
+                else []
+            ),
+            "reflection_events": (
+                event.get("reflection_events")
+                if isinstance(event.get("reflection_events"), list)
+                else []
+            ),
+            "turn_metrics": (
+                event.get("turn_metrics")
+                if isinstance(event.get("turn_metrics"), list)
+                else []
+            ),
+            "processing_steps": (
+                event.get("processing_steps")
+                if isinstance(event.get("processing_steps"), list)
+                else []
+            ),
         }
 
-    async def admin_agent_observability_summary(self, limit: int = 200) -> dict[str, Any]:
+    async def admin_agent_observability_summary(
+        self, limit: int = 200
+    ) -> dict[str, Any]:
         """获取 Agent 可观测性汇总指标。
 
         Args:
@@ -348,7 +457,9 @@ class AdminObservabilityService:
         """
         safe_limit = max(10, min(limit, 2000))
         primary_events = self._read_turn_logs(limit=safe_limit)
-        events = primary_events or self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
+        events = primary_events or self._read_perf_event_logs(
+            "iterative_agent_run", limit=safe_limit
+        )
         if not events:
             return {
                 "ok": True,
@@ -394,9 +505,21 @@ class AdminObservabilityService:
         }
 
         for event in events:
-            execution_rate_value = event.get("execution_tool_success_rate") if event.get("execution_tool_success_rate") is not None else event.get("tool_success_rate")
-            attempted_rate_value = event.get("attempted_action_success_rate") if event.get("attempted_action_success_rate") is not None else event.get("tool_success_rate")
-            attempted_actions_value = event.get("attempted_tool_actions") if event.get("attempted_tool_actions") is not None else event.get("tool_calls")
+            execution_rate_value = (
+                event.get("execution_tool_success_rate")
+                if event.get("execution_tool_success_rate") is not None
+                else event.get("tool_success_rate")
+            )
+            attempted_rate_value = (
+                event.get("attempted_action_success_rate")
+                if event.get("attempted_action_success_rate") is not None
+                else event.get("tool_success_rate")
+            )
+            attempted_actions_value = (
+                event.get("attempted_tool_actions")
+                if event.get("attempted_tool_actions") is not None
+                else event.get("tool_calls")
+            )
             total_duration += self._to_float_metric(event.get("duration_ms"))
             total_success_rate += self._to_float_metric(event.get("tool_success_rate"))
             total_execution_success_rate += self._to_float_metric(execution_rate_value)
@@ -404,28 +527,42 @@ class AdminObservabilityService:
             total_tokens += self._to_int_metric(event.get("total_tokens"))
             total_llm_calls += self._to_int_metric(event.get("llm_calls"))
             total_attempted_tool_actions += self._to_int_metric(attempted_actions_value)
-            total_blocked_tool_actions += self._to_int_metric(event.get("blocked_tool_actions"))
+            total_blocked_tool_actions += self._to_int_metric(
+                event.get("blocked_tool_actions")
+            )
             total_tool_calls += self._to_int_metric(event.get("tool_calls"))
 
             event_errors = event.get("error_types") or {}
             if isinstance(event_errors, dict):
                 for key, value in event_errors.items():
                     safe_key = str(key)
-                    error_counter[safe_key] = int(error_counter.get(safe_key) or 0) + int(value or 0)
+                    error_counter[safe_key] = int(
+                        error_counter.get(safe_key) or 0
+                    ) + int(value or 0)
 
-            strategy_errors, execution_errors = self._split_error_types(event, strategy_error_keys)
+            strategy_errors, execution_errors = self._split_error_types(
+                event, strategy_error_keys
+            )
             for key, value in strategy_errors.items():
-                strategy_error_counter[key] = int(strategy_error_counter.get(key) or 0) + int(value or 0)
+                strategy_error_counter[key] = int(
+                    strategy_error_counter.get(key) or 0
+                ) + int(value or 0)
             for key, value in execution_errors.items():
-                execution_error_counter[key] = int(execution_error_counter.get(key) or 0) + int(value or 0)
+                execution_error_counter[key] = int(
+                    execution_error_counter.get(key) or 0
+                ) + int(value or 0)
 
         return {
             "ok": True,
             "data": {
                 "total_runs": total_runs,
                 "avg_duration_ms": round(total_duration / total_runs, 2),
-                "avg_execution_tool_success_rate": round(total_execution_success_rate / total_runs, 4),
-                "avg_attempted_action_success_rate": round(total_attempted_success_rate / total_runs, 4),
+                "avg_execution_tool_success_rate": round(
+                    total_execution_success_rate / total_runs, 4
+                ),
+                "avg_attempted_action_success_rate": round(
+                    total_attempted_success_rate / total_runs, 4
+                ),
                 "avg_tool_success_rate": round(total_success_rate / total_runs, 4),
                 "total_tokens": total_tokens,
                 "total_llm_calls": total_llm_calls,
@@ -449,6 +586,11 @@ class AdminObservabilityService:
         """
         safe_limit = max(1, min(limit, 200))
         primary_events = self._read_turn_logs(limit=safe_limit)
-        events = primary_events or self._read_perf_event_logs("iterative_agent_run", limit=safe_limit)
-        rows = [self._normalize_run_row(event, index + 1) for index, event in enumerate(events)]
+        events = primary_events or self._read_perf_event_logs(
+            "iterative_agent_run", limit=safe_limit
+        )
+        rows = [
+            self._normalize_run_row(event, index + 1)
+            for index, event in enumerate(events)
+        ]
         return {"ok": True, "data": rows, "count": len(rows)}

@@ -16,7 +16,10 @@ class AdminSessionsServiceStub:
         return {"ok": True, "data": {"session_id": session_id}}
 
     async def admin_get_session_observability(self, session_id):
-        return {"ok": True, "data": {"turns": [{"turn_id": "t1", "session_id": session_id}]}}
+        return {
+            "ok": True,
+            "data": {"turns": [{"turn_id": "t1", "session_id": session_id}]},
+        }
 
     async def admin_get_session_memory(self, session_id):
         return {"ok": True, "data": {"session_id": session_id}}
@@ -45,7 +48,9 @@ def create_client() -> TestClient:
     """构建同时挂载后台会话与观测 router 的测试客户端。"""
     app = FastAPI()
     app.include_router(create_admin_sessions_router(AdminSessionsServiceStub()))
-    app.include_router(create_admin_observability_router(AdminObservabilityServiceStub()))
+    app.include_router(
+        create_admin_observability_router(AdminObservabilityServiceStub())
+    )
     app.dependency_overrides[require_admin_login] = lambda: None
     return TestClient(app)
 

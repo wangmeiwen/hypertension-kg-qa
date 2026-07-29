@@ -70,10 +70,14 @@ class MCPToolGateway:
         error = str(row.get("error") or "")
         meta_obj = row.get("meta")
         meta = meta_obj if isinstance(meta_obj, dict) else {}
-        model = ToolCallResult(ok=ok, tool_name=tool_name, result=result, error=error, meta=meta)
+        model = ToolCallResult(
+            ok=ok, tool_name=tool_name, result=result, error=error, meta=meta
+        )
         return model.model_dump()
 
-    async def invoke_tool(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def invoke_tool(
+        self, tool_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         """调用单个 MCP 工具并返回标准化结果。
 
         Args:
@@ -134,5 +138,9 @@ class MCPToolGateway:
 
         results = []
         for row in safe_calls:
-            results.append(await self.invoke_tool(str(row.get("tool_name") or ""), row.get("payload") or {}))
+            results.append(
+                await self.invoke_tool(
+                    str(row.get("tool_name") or ""), row.get("payload") or {}
+                )
+            )
         return results

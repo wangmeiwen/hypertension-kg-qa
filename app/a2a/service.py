@@ -55,13 +55,17 @@ class A2AService:
         self._agent_description = str(agent_description or "").strip()
         self._protocol_version = str(protocol_version or "0.2.5").strip() or "0.2.5"
         self._agent_url = str(agent_url or "/a2a/rpc").strip() or "/a2a/rpc"
-        self._events_base_path = str(events_base_path or "/a2a/tasks").strip() or "/a2a/tasks"
+        self._events_base_path = (
+            str(events_base_path or "/a2a/tasks").strip() or "/a2a/tasks"
+        )
 
         self._lock = asyncio.Lock()
         self._tasks: dict[str, dict[str, Any]] = {}
 
     @staticmethod
-    def _public_task_payload(task: dict[str, Any], include_events: bool = False) -> dict[str, Any]:
+    def _public_task_payload(
+        task: dict[str, Any], include_events: bool = False
+    ) -> dict[str, Any]:
         """构建对外可返回的任务载荷。
 
         Args:
@@ -88,11 +92,17 @@ class A2AService:
         """
         name_lower = self._agent_name.lower()
         if "graph" in name_lower:
-            card = build_kg_subagent_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
+            card = build_kg_subagent_card(
+                agent_url=self._agent_url, protocol_version=self._protocol_version
+            )
         elif "retrieval" in name_lower or "rag" in name_lower:
-            card = build_rag_subagent_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
+            card = build_rag_subagent_card(
+                agent_url=self._agent_url, protocol_version=self._protocol_version
+            )
         else:
-            card = build_orchestrator_card(agent_url=self._agent_url, protocol_version=self._protocol_version)
+            card = build_orchestrator_card(
+                agent_url=self._agent_url, protocol_version=self._protocol_version
+            )
         card["name"] = self._agent_name
         card["description"] = self._agent_description
         return card
@@ -107,7 +117,9 @@ class A2AService:
         return f"task-{uuid.uuid4().hex}"
 
     @staticmethod
-    def _build_status_message(*, text: str, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _build_status_message(
+        *, text: str, metadata: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """构建标准状态消息对象。
 
         Args:
@@ -147,7 +159,11 @@ class A2AService:
                     "event": str(event.get("event") or ""),
                     "detail": str(event.get("detail") or ""),
                     "tool_name": str(event.get("tool_name") or ""),
-                    "metadata": event.get("metadata") if isinstance(event.get("metadata"), dict) else {},
+                    "metadata": (
+                        event.get("metadata")
+                        if isinstance(event.get("metadata"), dict)
+                        else {}
+                    ),
                 }
             )
             task["events"] = events
@@ -177,7 +193,9 @@ class A2AService:
                 return
             task["status"] = {
                 "state": str(state or "running"),
-                "message": self._build_status_message(text=text, metadata=metadata or {}),
+                "message": self._build_status_message(
+                    text=text, metadata=metadata or {}
+                ),
                 "updatedAt": int(time.time() * 1000),
             }
 
@@ -200,9 +218,15 @@ class A2AService:
             if state == "canceled":
                 return True
             cancel_event = task.get("cancel_event")
-            return bool(cancel_event.is_set()) if isinstance(cancel_event, asyncio.Event) else False
+            return (
+                bool(cancel_event.is_set())
+                if isinstance(cancel_event, asyncio.Event)
+                else False
+            )
 
-    def _build_artifacts(self, result: dict[str, Any], progress_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _build_artifacts(
+        self, result: dict[str, Any], progress_events: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """根据执行结果构建任务产物列表。
 
         Args:
@@ -217,14 +241,20 @@ class A2AService:
         confidence = float(result.get("confidence") or 0.0)
 
         tool_observations_obj = result.get("tool_observations")
-        tool_observations = tool_observations_obj if isinstance(tool_observations_obj, list) else []
+        tool_observations = (
+            tool_observations_obj if isinstance(tool_observations_obj, list) else []
+        )
         telemetry_obj = result.get("telemetry")
         telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
 
         evidence_summary_obj = result.get("evidence_summary")
-        evidence_summary = evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
+        evidence_summary = (
+            evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
+        )
         processing_steps_obj = result.get("processing_steps")
-        processing_steps = processing_steps_obj if isinstance(processing_steps_obj, list) else []
+        processing_steps = (
+            processing_steps_obj if isinstance(processing_steps_obj, list) else []
+        )
 
         return [
             {
@@ -302,7 +332,11 @@ class A2AService:
             if not task:
                 return True
             cancel_event = task.get("cancel_event")
-            return bool(cancel_event.is_set()) if isinstance(cancel_event, asyncio.Event) else False
+            return (
+                bool(cancel_event.is_set())
+                if isinstance(cancel_event, asyncio.Event)
+                else False
+            )
 
         try:
             await self._set_status(task_id, state="running", text="task_running")
@@ -418,7 +452,9 @@ class A2AService:
                 },
             )
 
-    async def asend_message(self, message: dict[str, Any], trace_id: str = "") -> dict[str, Any]:
+    async def asend_message(
+        self, message: dict[str, Any], trace_id: str = ""
+    ) -> dict[str, Any]:
         """提交消息并创建异步任务。
 
         Args:
@@ -434,7 +470,9 @@ class A2AService:
 
         task_id = self._new_task_id()
         now_ms = int(time.time() * 1000)
-        context_id = str(message_obj.get("contextId") or metadata.get("context_id") or "")
+        context_id = str(
+            message_obj.get("contextId") or metadata.get("context_id") or ""
+        )
         user_id = str(message_obj.get("userId") or metadata.get("user_id") or "")
 
         task_payload = {
@@ -448,7 +486,9 @@ class A2AService:
             "message": copy.deepcopy(message_obj),
             "status": {
                 "state": "submitted",
-                "message": self._build_status_message(text="task_submitted", metadata={}),
+                "message": self._build_status_message(
+                    text="task_submitted", metadata={}
+                ),
                 "updatedAt": now_ms,
             },
             "events": [
@@ -467,7 +507,9 @@ class A2AService:
             "task_loop": asyncio.get_running_loop(),
         }
 
-        async_task = asyncio.create_task(self._run_task(task_id), name=f"a2a-task-{task_id}")
+        async_task = asyncio.create_task(
+            self._run_task(task_id), name=f"a2a-task-{task_id}"
+        )
         task_payload["async_task"] = async_task
 
         async with self._lock:
@@ -491,7 +533,9 @@ class A2AService:
                 return None
             return self._public_task_payload(task, include_events=True)
 
-    async def alist_tasks(self, context_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    async def alist_tasks(
+        self, context_id: str = "", limit: int = 20
+    ) -> list[dict[str, Any]]:
         """列出任务列表。
 
         Args:
@@ -506,14 +550,24 @@ class A2AService:
         async with self._lock:
             rows = list(self._tasks.values())
         if safe_context:
-            rows = [row for row in rows if str(row.get("contextId") or "") == safe_context]
+            rows = [
+                row for row in rows if str(row.get("contextId") or "") == safe_context
+            ]
         rows.sort(
-            key=lambda item: int(((item.get("status") or {}).get("updatedAt") or item.get("updatedAt") or 0)),
+            key=lambda item: int(
+                (
+                    (item.get("status") or {}).get("updatedAt")
+                    or item.get("updatedAt")
+                    or 0
+                )
+            ),
             reverse=True,
         )
         return [self._public_task_payload(row) for row in rows[:safe_limit]]
 
-    async def aget_task_updates(self, task_id: str, cursor: int = 0) -> Optional[dict[str, Any]]:
+    async def aget_task_updates(
+        self, task_id: str, cursor: int = 0
+    ) -> Optional[dict[str, Any]]:
         """按游标拉取任务增量事件。
 
         Args:
@@ -549,7 +603,9 @@ class A2AService:
             "task": task_payload if is_terminal else None,
         }
 
-    async def acancel_task(self, task_id: str, reason: str = "manual_cancel") -> dict[str, Any]:
+    async def acancel_task(
+        self, task_id: str, reason: str = "manual_cancel"
+    ) -> dict[str, Any]:
         """取消指定任务。
 
         Args:
@@ -571,7 +627,11 @@ class A2AService:
             status = status_obj if isinstance(status_obj, dict) else {}
             state = str(status.get("state") or "").strip().lower()
             if state in TerminalStates:
-                return {"ok": False, "error": "task_already_terminal", "task": self._public_task_payload(task)}
+                return {
+                    "ok": False,
+                    "error": "task_already_terminal",
+                    "task": self._public_task_payload(task),
+                }
             cancel_event = task.get("cancel_event")
             async_task = task.get("async_task")
 
@@ -611,7 +671,10 @@ class A2AService:
         """
         safe_task_id = str(task_id or "").strip()
         safe_cursor = max(0, int(cursor or 0))
-        return {"url": f"{self._events_base_path}/{safe_task_id}/events?cursor={safe_cursor}", "cursor": safe_cursor}
+        return {
+            "url": f"{self._events_base_path}/{safe_task_id}/events?cursor={safe_cursor}",
+            "cursor": safe_cursor,
+        }
 
     @staticmethod
     def _rpc_ok(rpc_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -627,7 +690,9 @@ class A2AService:
         return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
     @staticmethod
-    def _rpc_error(rpc_id: Any, code: int, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _rpc_error(
+        rpc_id: Any, code: int, message: str, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """构建 JSON-RPC 错误响应。
 
         Args:
@@ -649,7 +714,9 @@ class A2AService:
             },
         }
 
-    async def ahandle_rpc(self, data: dict[str, Any], trace_id: str = "") -> dict[str, Any]:
+    async def ahandle_rpc(
+        self, data: dict[str, Any], trace_id: str = ""
+    ) -> dict[str, Any]:
         """处理 A2A JSON-RPC 请求。
 
         Args:
@@ -680,7 +747,9 @@ class A2AService:
                 task_id = str(params.get("taskId") or "").strip()
                 stored_task = await self.aget_task(task_id)
                 if not stored_task:
-                    return self._rpc_error(rpc_id, -32004, "task_not_found", {"taskId": task_id})
+                    return self._rpc_error(
+                        rpc_id, -32004, "task_not_found", {"taskId": task_id}
+                    )
                 return self._rpc_ok(rpc_id, {"task": stored_task})
 
             if method == "tasks/resubscribe":
@@ -688,7 +757,9 @@ class A2AService:
                 cursor = int(params.get("cursor") or 0)
                 stored_task = await self.aget_task(task_id)
                 if not stored_task:
-                    return self._rpc_error(rpc_id, -32004, "task_not_found", {"taskId": task_id})
+                    return self._rpc_error(
+                        rpc_id, -32004, "task_not_found", {"taskId": task_id}
+                    )
                 return self._rpc_ok(
                     rpc_id,
                     {
@@ -709,7 +780,9 @@ class A2AService:
                 rows = await self.alist_tasks(context_id=context_id, limit=limit)
                 return self._rpc_ok(rpc_id, {"tasks": rows})
 
-            return self._rpc_error(rpc_id, -32601, "method_not_found", {"method": method})
+            return self._rpc_error(
+                rpc_id, -32601, "method_not_found", {"method": method}
+            )
         except Exception as exc:
             logger.exception(
                 "a2a_rpc_failed: method=%s trace_id=%s error_type=%s error=%s",
@@ -722,7 +795,11 @@ class A2AService:
                 rpc_id,
                 -32000,
                 "internal_error",
-                {"detail": str(exc), "method": method, "trace_id": str(trace_id or "").strip()},
+                {
+                    "detail": str(exc),
+                    "method": method,
+                    "trace_id": str(trace_id or "").strip(),
+                },
             )
 
     async def ashutdown(self) -> None:
@@ -739,6 +816,10 @@ class A2AService:
                 async_task.cancel()
         if rows:
             await asyncio.gather(
-                *[row["async_task"] for row in rows if isinstance(row.get("async_task"), asyncio.Task)],
+                *[
+                    row["async_task"]
+                    for row in rows
+                    if isinstance(row.get("async_task"), asyncio.Task)
+                ],
                 return_exceptions=True,
             )

@@ -15,7 +15,9 @@ from app.backend.services.graph_extraction_lane_pool import GraphExtractionLaneP
 from app.backend.services.graph_crud_mixin import GraphCrudMixin
 from app.backend.services.graph_import_cache_mixin import GraphImportCacheMixin
 from app.backend.services.graph_import_parser import GraphImportParser
-from app.backend.services.graph_import_repository_mixin import GraphImportRepositoryMixin
+from app.backend.services.graph_import_repository_mixin import (
+    GraphImportRepositoryMixin,
+)
 from app.backend.services.graph_import_writer import GraphImportWriter
 from app.core.config import Config
 
@@ -105,7 +107,9 @@ class GraphAdminService(
             return f"检测到未完成导入，正在从第 {chunk_index} 块继续"
         return "检测到未完成导入，正在自动继续执行"
 
-    async def submit_graph_extract_import_job(self, file: UploadFile) -> dict[str, Any]:  # pragma: no cover - background task orchestration
+    async def submit_graph_extract_import_job(
+        self, file: UploadFile
+    ) -> dict[str, Any]:  # pragma: no cover - background task orchestration
         """读取上传文件并提交图谱抽取导入后台任务。
 
         Args:
@@ -128,40 +132,75 @@ class GraphAdminService(
                 chunk_strategy_version=self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
             )
             if resumable_run:
-                active_job = await self._find_active_job_by_run_id(str(resumable_run.get("run_id") or ""))
+                active_job = await self._find_active_job_by_run_id(
+                    str(resumable_run.get("run_id") or "")
+                )
                 if active_job and resumable_run.get("status") == "running":
-                    active_job["message"] = "检测到同文件导入任务仍在执行，已返回当前任务状态"
+                    active_job["message"] = (
+                        "检测到同文件导入任务仍在执行，已返回当前任务状态"
+                    )
                     active_job["deduplicated"] = True
                     active_job["existing_job_id"] = active_job.get("job_id")
                     active_job["existing_run_id"] = resumable_run.get("run_id")
                     return {"ok": True, "data": active_job}
             resumed_from_chunk = None
             if resumable_run:
-                resumed_from_chunk = await self._find_first_unfinished_chunk_index(str(resumable_run.get("run_id") or ""))
+                resumed_from_chunk = await self._find_first_unfinished_chunk_index(
+                    str(resumable_run.get("run_id") or "")
+                )
             return await self._start_background_job(
                 job_type=self.IMPORT_JOB_TYPE,
-                runner=lambda job_id: self._extract_and_import_graph_sync(file_bytes, filename, job_id),
+                runner=lambda job_id: self._extract_and_import_graph_sync(
+                    file_bytes, filename, job_id
+                ),
                 dedupe_active=True,
                 seed={
                     "file_hash": file_hash,
                     "is_resumed": bool(resumable_run),
-                    "resume_run_id": resumable_run.get("run_id") if resumable_run else None,
+                    "resume_run_id": (
+                        resumable_run.get("run_id") if resumable_run else None
+                    ),
                     "resumed_from_chunk": resumed_from_chunk,
                     "chunk_limit": self.GRAPH_IMPORT_CHUNK_LIMIT,
                     "chunk_strategy_version": self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
                     "resume_compatible": bool(resumable_run) if resumable_run else None,
-                    "parallelism": min(self.GRAPH_LLM_MAX_PARALLELISM, len(self._graph_llm_lane_configs)),
-                    "active_lanes": min(self.GRAPH_LLM_MAX_PARALLELISM, len(self._graph_llm_lane_configs)),
+                    "parallelism": min(
+                        self.GRAPH_LLM_MAX_PARALLELISM,
+                        len(self._graph_llm_lane_configs),
+                    ),
+                    "active_lanes": min(
+                        self.GRAPH_LLM_MAX_PARALLELISM,
+                        len(self._graph_llm_lane_configs),
+                    ),
                     "current_attempt": 0,
                     "max_attempts": self.GRAPH_LLM_MAX_ATTEMPTS,
-                    "progress_text": self._format_resume_message(resumed_from_chunk) if resumable_run else "任务已提交，等待执行",
+                    "progress_text": (
+                        self._format_resume_message(resumed_from_chunk)
+                        if resumable_run
+                        else "任务已提交，等待执行"
+                    ),
                 },
             )
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            self._log_api_error("/admin/graph/jobs/extract-import", "extract_import_submit", exc, filename=filename)
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
+            self._log_api_error(
+                "/admin/graph/jobs/extract-import",
+                "extract_import_submit",
+                exc,
+                filename=filename,
+            )
             return {"ok": False, "error": f"提交抽取导入任务失败: {exc}"}
 
-    async def submit_graph_embed_milvus_job(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:  # pragma: no cover - background task orchestration
+    async def submit_graph_embed_milvus_job(
+        self, data: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:  # pragma: no cover - background task orchestration
         """提交图谱嵌入 Milvus 后台任务。
 
         Args:
@@ -173,7 +212,11 @@ class GraphAdminService(
         try:
             payload = data or {}
             labels_obj = payload.get("labels")
-            labels = [str(item).strip() for item in labels_obj if str(item).strip()] if isinstance(labels_obj, list) else None
+            labels = (
+                [str(item).strip() for item in labels_obj if str(item).strip()]
+                if isinstance(labels_obj, list)
+                else None
+            )
             batch_size_raw = payload.get("batch_size", 100)
             try:
                 batch_size = int(batch_size_raw)
@@ -187,11 +230,23 @@ class GraphAdminService(
                     "batch_size": batch_size,
                 },
             )
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            self._log_api_error("/admin/graph/jobs/embed-milvus", "embed_graph_submit", exc)
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
+            self._log_api_error(
+                "/admin/graph/jobs/embed-milvus", "embed_graph_submit", exc
+            )
             return {"ok": False, "error": f"提交嵌入任务失败: {exc}"}
 
-    async def _extract_and_import_graph_sync(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:  # pragma: no cover - external LLM/Neo4j background runtime
+    async def _extract_and_import_graph_sync(
+        self, file_bytes: bytes, filename: str, job_id: str
+    ) -> dict[str, Any]:  # pragma: no cover - external LLM/Neo4j background runtime
         """执行图谱抽取导入主体，包含解析、续跑、抽取和写入。
 
         Args:
@@ -216,7 +271,8 @@ class GraphAdminService(
         file_size = len(file_bytes)
         chunk_limit = int(prepared.get("chunk_limit") or self.GRAPH_IMPORT_CHUNK_LIMIT)
         chunk_strategy_version = int(
-            prepared.get("chunk_strategy_version") or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION
+            prepared.get("chunk_strategy_version")
+            or self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION
         )
         cache_used = bool(prepared.get("cache_used"))
         cache_invalidated_reason = str(prepared.get("cache_invalidated_reason") or "")
@@ -235,7 +291,8 @@ class GraphAdminService(
 
         if latest_run and (
             int(latest_run.get("chunk_limit") or 0) != chunk_limit
-            or int(latest_run.get("chunk_strategy_version") or 0) != chunk_strategy_version
+            or int(latest_run.get("chunk_strategy_version") or 0)
+            != chunk_strategy_version
         ):
             resume_compatible = False
             compatibility_reason = (
@@ -265,7 +322,9 @@ class GraphAdminService(
             existing_chunks = await self._load_graph_import_chunks(run_id)
             if existing_chunks and len(existing_chunks) != total_chunks:
                 resume_compatible = False
-                incompatibility_reason = "旧导入断点与当前分块结果不一致，已终止旧断点并改为新任务导入"
+                incompatibility_reason = (
+                    "旧导入断点与当前分块结果不一致，已终止旧断点并改为新任务导入"
+                )
                 await self._set_graph_run_status(
                     run_id,
                     "failed",
@@ -322,7 +381,9 @@ class GraphAdminService(
         )
 
         progress = await self._recompute_graph_run_progress(run_id)
-        chunk_map = {int(item.get("chunk_index") or 0): item for item in existing_chunks}
+        chunk_map = {
+            int(item.get("chunk_index") or 0): item for item in existing_chunks
+        }
         for index in range(1, total_chunks + 1):
             if chunk_map.get(index, {}).get("status") != "succeeded":
                 resumed_from_chunk = index if is_resumed else None
@@ -366,7 +427,11 @@ class GraphAdminService(
                     "total_chunks": total_chunks,
                     "completed_chunks": progress["completed_chunks"],
                     "current_chunk_index": resumed_from_chunk or 0,
-                    "current_chunk_chars": len(chunks[(resumed_from_chunk or 1) - 1]) if resumed_from_chunk and resumed_from_chunk <= total_chunks else 0,
+                    "current_chunk_chars": (
+                        len(chunks[(resumed_from_chunk or 1) - 1])
+                        if resumed_from_chunk and resumed_from_chunk <= total_chunks
+                        else 0
+                    ),
                 },
             )
 
@@ -412,7 +477,9 @@ class GraphAdminService(
         )
         return prepared
 
-    async def _embed_graph_to_milvus_sync(self, data: Optional[dict[str, Any]], job_id: str) -> dict[str, Any]:  # pragma: no cover - external Milvus runtime
+    async def _embed_graph_to_milvus_sync(
+        self, data: Optional[dict[str, Any]], job_id: str
+    ) -> dict[str, Any]:  # pragma: no cover - external Milvus runtime
         """执行图谱嵌入主体，从 Neo4j 读取数据并重建 Milvus 索引。
 
         Args:
@@ -433,7 +500,9 @@ class GraphAdminService(
             """将 Milvus 重建进度回传到后台任务心跳。"""
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._heartbeat_job_stage(job_id, detail=str(text or ""), progress_text=str(text or "")),
+                    self._heartbeat_job_stage(
+                        job_id, detail=str(text or ""), progress_text=str(text or "")
+                    ),
                     loop,
                 )
             except RuntimeError:
@@ -446,7 +515,9 @@ class GraphAdminService(
             progress_callback=progress_callback,
         )
         await self._complete_job_stage(job_id, detail="Milvus 嵌入完成")
-        await self._enter_job_stage(job_id, "finalize", "Milvus 嵌入已完成，正在整理结果")
+        await self._enter_job_stage(
+            job_id, "finalize", "Milvus 嵌入已完成，正在整理结果"
+        )
         await self._complete_job_stage(job_id, detail="任务执行完成")
         return {
             "message": f"知识图谱嵌入成功，共 {stats['total_documents']} 条记录",

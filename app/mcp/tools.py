@@ -265,7 +265,15 @@ class KnowledgeGraphTool:
                 "blocked": False,
                 "mode": "keyword",
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             logger.exception(
                 "kg_query_failed: dependency=neo4j error_type=%s error=%s",
                 type(exc).__name__,
@@ -308,7 +316,9 @@ class RagSearchTool:
         top_k = int(payload.get("top_k") or self.conf.RAG_SEARCH_TOP_K_DEFAULT)
         top_k = max(1, min(top_k, int(self.conf.RAG_SEARCH_TOP_K_MAX)))
         source_filter = payload.get("source_filter")
-        source_filter = str(source_filter).strip() if source_filter is not None else None
+        source_filter = (
+            str(source_filter).strip() if source_filter is not None else None
+        )
         if source_filter == "":
             source_filter = None
         if not query:
@@ -386,7 +396,15 @@ class KgEntityRelationSearchTool:
         self._llm: Optional[LLMClient] = None
         try:
             self._llm = LLMClient(conf)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             logger.warning(
                 "kg_disambiguation_llm_init_failed: error_type=%s error=%s",
                 type(exc).__name__,
@@ -400,7 +418,9 @@ class KgEntityRelationSearchTool:
         if self._llm is not None:
             await self._llm.aclose()
 
-    def _resolve_disambiguation_with_llm(self, query: str, candidates: list[dict[str, Any]], margin: float) -> dict[str, Any]:
+    def _resolve_disambiguation_with_llm(
+        self, query: str, candidates: list[dict[str, Any]], margin: float
+    ) -> dict[str, Any]:
         """调用 LLM 对候选实体进行语义消歧。
 
         Args:
@@ -438,7 +458,15 @@ class KgEntityRelationSearchTool:
                 actor_role="graph",
                 actor_name="kg_entity_disambiguation",
             )
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             logger.warning(
                 "entity_disambiguation_call_failed: error_type=%s error=%s",
                 type(exc).__name__,
@@ -513,14 +541,33 @@ class KgEntityRelationSearchTool:
             dict[str, Any]: Evidence 实体关系检索结果。
         """
         query = (payload.get("query") or payload.get("keyword") or "").strip()
-        top_k = int(payload.get("top_k") or payload.get("limit") or self.conf.KG_RETRIEVAL_TOP_K_DEFAULT)
+        top_k = int(
+            payload.get("top_k")
+            or payload.get("limit")
+            or self.conf.KG_RETRIEVAL_TOP_K_DEFAULT
+        )
         top_k = max(1, min(top_k, int(self.conf.KG_RETRIEVAL_TOP_K_MAX)))
-        lexical_weight = float(payload.get("lexical_weight") or self.conf.KG_RETRIEVAL_LEXICAL_WEIGHT_DEFAULT)
-        expansion_limit = int(payload.get("expansion_limit") or self.conf.KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT)
-        enable_disambiguation = _to_bool(payload.get("enable_disambiguation"), default=True)
-        enable_community_detection = _to_bool(payload.get("enable_community_detection"), default=True)
-        community_top_k = int(payload.get("community_top_k") or self.conf.KG_COMMUNITY_TOP_K_DEFAULT)
-        disambiguation_margin = float(payload.get("disambiguation_margin") or self.conf.KG_DISAMBIGUATION_MARGIN_DEFAULT)
+        lexical_weight = float(
+            payload.get("lexical_weight")
+            or self.conf.KG_RETRIEVAL_LEXICAL_WEIGHT_DEFAULT
+        )
+        expansion_limit = int(
+            payload.get("expansion_limit")
+            or self.conf.KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT
+        )
+        enable_disambiguation = _to_bool(
+            payload.get("enable_disambiguation"), default=True
+        )
+        enable_community_detection = _to_bool(
+            payload.get("enable_community_detection"), default=True
+        )
+        community_top_k = int(
+            payload.get("community_top_k") or self.conf.KG_COMMUNITY_TOP_K_DEFAULT
+        )
+        disambiguation_margin = float(
+            payload.get("disambiguation_margin")
+            or self.conf.KG_DISAMBIGUATION_MARGIN_DEFAULT
+        )
 
         if not query:
             return {
@@ -638,6 +685,7 @@ class HistoryReadTool:
 # 全局 MCP 服务器实例（单例模式）
 _mcp_server_instance: Optional[MCPServer] = None
 
+
 def get_mcp_server() -> MCPServer:
     """获取全局 MCPServer 单例。
 
@@ -663,6 +711,7 @@ async def close_mcp_server() -> None:
     _mcp_server_instance = None
     if server is not None:
         await server.aclose()
+
 
 def build_mcp_server() -> MCPServer:
     """构建并注册 MCP 工具服务。
@@ -841,7 +890,9 @@ def build_mcp_server() -> MCPServer:
     manager = ToolManager(config_path=config_path)
 
     extra_blacklist_raw = os.getenv("MCP_TOOL_BLACKLIST", "")
-    extra_blacklist = [item.strip() for item in extra_blacklist_raw.split(",") if item.strip()]
+    extra_blacklist = [
+        item.strip() for item in extra_blacklist_raw.split(",") if item.strip()
+    ]
     manager.register_tools(
         server=server,
         builtin_registry=builtin_registry,
@@ -889,9 +940,7 @@ async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str
 
     tools = target_server.list_tools()
     tool_names = {
-        str(item.get("name") or "")
-        for item in tools
-        if isinstance(item, dict)
+        str(item.get("name") or "") for item in tools if isinstance(item, dict)
     }
 
     required_tools = ["kg_query", "rag_search", "history_read"]
@@ -961,7 +1010,9 @@ async def get_mcp_runtime_status(server: Optional[MCPServer] = None) -> dict[str
     }
 
 
-def sanitize_tool_observation(observation: dict[str, Any], max_chars: int = 4000) -> str:
+def sanitize_tool_observation(
+    observation: dict[str, Any], max_chars: int = 4000
+) -> str:
     """将工具观测对象裁剪为紧凑可日志化文本。
 
     Args:

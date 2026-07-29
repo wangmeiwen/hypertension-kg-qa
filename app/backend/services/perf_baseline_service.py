@@ -95,7 +95,10 @@ def _target_dates(days: int) -> set[str]:
     """
     safe_days = max(1, min(int(days), 30))
     today = datetime.now().date()
-    return {(today - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(safe_days)}
+    return {
+        (today - timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in range(safe_days)
+    }
 
 
 def _collect_api_rows(days: int) -> List[Dict[str, Any]]:
@@ -146,7 +149,9 @@ def _collect_api_rows(days: int) -> List[Dict[str, Any]]:
     return rows
 
 
-def generate_api_baseline_report(days: int = 1, target_paths: List[str] | None = None) -> Dict[str, Any]:
+def generate_api_baseline_report(
+    days: int = 1, target_paths: List[str] | None = None
+) -> Dict[str, Any]:
     """
     生成 API 基线性能报告。
 
@@ -220,4 +225,3 @@ def generate_api_baseline_report(days: int = 1, target_paths: List[str] | None =
             for path, avg_ms, count in top_slowest_paths[:20]
         ],
     }
-

@@ -3,8 +3,7 @@ name: backend
 on:
   push:
     paths:
-      - "app/backend/**"
-      - "app/core/**"
+      - "app/**/*.py"
       - "tests/**"
       - "requirements.txt"
       - "pytest.ini"
@@ -12,8 +11,7 @@ on:
       - ".github/workflows/backend.yml"
   pull_request:
     paths:
-      - "app/backend/**"
-      - "app/core/**"
+      - "app/**/*.py"
       - "tests/**"
       - "requirements.txt"
       - "pytest.ini"
@@ -55,6 +53,12 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Check Black formatting
+        run: python -m black --check app tests
+      - name: Run Ruff checks
+        run: python -m ruff check app tests
+      - name: Run mypy checks
+        run: python -m mypy app
       - name: Initialize MySQL schema
         run: python -c "import asyncio; from app.backend.repositories.database import initialize_database; assert asyncio.run(initialize_database(force=True))"
       - name: Run fast tests with coverage

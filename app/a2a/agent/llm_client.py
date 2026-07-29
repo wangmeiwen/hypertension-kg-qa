@@ -25,7 +25,11 @@ from app.core.config import Config
 
 from app.core.langsmith_tracing import set_trace_metadata, traceable
 
-from app.backend.observability.session_logger import get_request_id, get_session_id, log_llm_call
+from app.backend.observability.session_logger import (
+    get_request_id,
+    get_session_id,
+    log_llm_call,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -419,7 +423,9 @@ class LLMClient:
                 TimeoutError,
             ) as exc:
                 error_text = _format_error_text(exc)
-                errors.append(f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}")
+                errors.append(
+                    f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}"
+                )
 
                 _log_server_llm_event(
                     "llm_request_error",
@@ -435,7 +441,9 @@ class LLMClient:
                         "attempt": attempt,
                         "max_attempts": max_attempts,
                         "timeout_seconds": request_timeout,
-                        "will_retry": bool(_is_retryable_timeout_error(exc) and attempt < max_attempts),
+                        "will_retry": bool(
+                            _is_retryable_timeout_error(exc) and attempt < max_attempts
+                        ),
                     },
                 )
 
@@ -596,8 +604,12 @@ class LLMClient:
                 TimeoutError,
             ) as exc:
                 error_text = _format_error_text(exc)
-                errors.append(f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}")
-                should_retry = _is_retryable_timeout_error(exc) and attempt < max_attempts
+                errors.append(
+                    f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}"
+                )
+                should_retry = (
+                    _is_retryable_timeout_error(exc) and attempt < max_attempts
+                )
 
                 _log_server_llm_event(
                     "llm_request_error",
@@ -784,7 +796,9 @@ class LLMClient:
                         try:
                             data = json.loads(line)
                         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                            raise ValueError(f"invalid_stream_chunk:{line[:120]}") from exc
+                            raise ValueError(
+                                f"invalid_stream_chunk:{line[:120]}"
+                            ) from exc
 
                         raw_last_chunk = data if isinstance(data, dict) else {}
                         (
@@ -792,7 +806,11 @@ class LLMClient:
                             chunk_completion_tokens,
                             chunk_total_tokens,
                         ) = _extract_usage_dict(raw_last_chunk)
-                        if chunk_prompt_tokens or chunk_completion_tokens or chunk_total_tokens:
+                        if (
+                            chunk_prompt_tokens
+                            or chunk_completion_tokens
+                            or chunk_total_tokens
+                        ):
                             prompt_tokens = chunk_prompt_tokens
                             completion_tokens = chunk_completion_tokens
                             total_tokens = chunk_total_tokens
@@ -801,7 +819,9 @@ class LLMClient:
                         if not choices:
                             continue
                         choice = choices[0] if isinstance(choices[0], dict) else {}
-                        finish_reason = str(choice.get("finish_reason", "") or finish_reason or "")
+                        finish_reason = str(
+                            choice.get("finish_reason", "") or finish_reason or ""
+                        )
                         delta = _extract_message_content(choice.get("delta"))
                         if not delta:
                             continue
@@ -828,8 +848,14 @@ class LLMClient:
                 TimeoutError,
             ) as exc:
                 error_text = _format_error_text(exc)
-                errors.append(f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}")
-                should_retry = _is_retryable_timeout_error(exc) and not full_chunks and attempt < max_attempts
+                errors.append(
+                    f"attempt={attempt}, error_type={type(exc).__name__}, error={error_text}"
+                )
+                should_retry = (
+                    _is_retryable_timeout_error(exc)
+                    and not full_chunks
+                    and attempt < max_attempts
+                )
 
                 _log_server_llm_event(
                     "llm_stream_request_error",
@@ -1022,6 +1048,3 @@ class LLMClient:
             actor_name=actor_name,
         ):
             yield event
-
-
-

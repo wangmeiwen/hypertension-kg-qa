@@ -80,7 +80,9 @@ def build_query_variants(
     """按尝试次数构造检索语句候选。"""
     args = arguments if isinstance(arguments, dict) else {}
     terms = normalize_query_terms(query_terms)
-    evidence = normalize_query_terms(evidence_terms if isinstance(evidence_terms, list) else [])
+    evidence = normalize_query_terms(
+        evidence_terms if isinstance(evidence_terms, list) else []
+    )
     base = str(args.get("query") or args.get("keyword") or question or "").strip()
     compact_base = compact_query_text(base)
     compact_question = compact_query_text(question)
@@ -89,7 +91,17 @@ def build_query_variants(
     evidence_query = " ".join([compact_question, *evidence[:4]]).strip()
     guideline_query = " ".join([seed, "指南 推荐 证据"]).strip()
     treatment_query = " ".join([seed, "治疗 用药 标准"]).strip()
-    return unique_texts([base, term_query, compact_base, compact_question, evidence_query, guideline_query, treatment_query])
+    return unique_texts(
+        [
+            base,
+            term_query,
+            compact_base,
+            compact_question,
+            evidence_query,
+            guideline_query,
+            treatment_query,
+        ]
+    )
 
 
 def query_variant_for_attempt(variants: list[str], attempt_index: int) -> str:

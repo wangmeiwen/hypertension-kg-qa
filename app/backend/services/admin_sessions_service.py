@@ -9,7 +9,10 @@ import shutil
 from typing import Any, Awaitable, Callable
 
 from app.backend.repositories.session_manager import MessageManager, SessionManager
-from app.backend.services.session_log_repository import read_request_records, safe_log_id
+from app.backend.services.session_log_repository import (
+    read_request_records,
+    safe_log_id,
+)
 from app.core.concurrency import concurrency_guard
 from app.core.config import Config
 
@@ -81,9 +84,13 @@ class AdminSessionsService:
     async def _clear_session_memory(self, session_id: str) -> tuple[bool, str]:
         """清理会话记忆；失败不阻断消息/会话删除。"""
         try:
-            await self._await_call(self._get_session_memory_service().clear_memory, session_id)
+            await self._await_call(
+                self._get_session_memory_service().clear_memory, session_id
+            )
             return True, ""
-        except Exception as exc:  # pragma: no cover - error type is surfaced to API response
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - error type is surfaced to API response
             logger.exception(
                 "clear_session_memory_failed: session_id=%s error_type=%s error=%s",
                 session_id,
@@ -95,16 +102,22 @@ class AdminSessionsService:
     def _delete_session_log_artifacts(self, session_id: str) -> tuple[bool, str]:
         """删除单个会话的日志 JSON/JSONL 目录，限制在 logs/sessions 内。"""
         try:
-            with concurrency_guard.sync_keyed_lock(f"session-artifacts:{self._safe_log_id(session_id)}"):
+            with concurrency_guard.sync_keyed_lock(
+                f"session-artifacts:{self._safe_log_id(session_id)}"
+            ):
                 logs_root = (self._project_root() / "logs" / "sessions").resolve()
                 target_dir = (logs_root / self._safe_log_id(session_id)).resolve()
-                if target_dir == logs_root or not self._is_relative_to(target_dir, logs_root):
+                if target_dir == logs_root or not self._is_relative_to(
+                    target_dir, logs_root
+                ):
                     return False, "unsafe_log_path"
                 if not target_dir.exists():
                     return True, ""
                 shutil.rmtree(target_dir)
                 return True, ""
-        except Exception as exc:  # pragma: no cover - filesystem failures depend on OS state
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - filesystem failures depend on OS state
             logger.exception(
                 "delete_session_log_artifacts_failed: session_id=%s error_type=%s error=%s",
                 session_id,
@@ -117,7 +130,10 @@ class AdminSessionsService:
     def _normalize_controller_mode(value: Any) -> str:
         """规范化主控模式标识，兜底为显式记忆主控。"""
         token = str(value or "").strip()
-        if token in {"explicit_memory_with_history_read", "explicit_memory_with_subagents"}:
+        if token in {
+            "explicit_memory_with_history_read",
+            "explicit_memory_with_subagents",
+        }:
             return "explicit_memory_with_subagents"
         return token or "explicit_memory_with_subagents"
 
@@ -129,7 +145,9 @@ class AdminSessionsService:
             return "显式记忆子代理主控"
         return token or "未知"
 
-    def _read_session_turn_records(self, session_id: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    def _read_session_turn_records(
+        self, session_id: str
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         """读取指定会话的 turn 观测记录和记忆更新记录。
 
         Args:
@@ -138,14 +156,22 @@ class AdminSessionsService:
         Returns:
             tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]: turn 记录列表和按 turn_id 索引的记忆更新记录。
         """
-        turns_dir = self._project_root() / "logs" / "sessions" / self._safe_log_id(session_id) / "turns"
+        turns_dir = (
+            self._project_root()
+            / "logs"
+            / "sessions"
+            / self._safe_log_id(session_id)
+            / "turns"
+        )
         turn_rows: list[dict[str, Any]] = []
         memory_updates: dict[str, dict[str, Any]] = {}
         if not turns_dir.exists():
             return turn_rows, memory_updates
         for file_path in sorted(turns_dir.glob("*.jsonl")):
             try:
-                for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                for line in file_path.read_text(
+                    encoding="utf-8", errors="ignore"
+                ).splitlines():
                     if not line.strip():
                         continue
                     payload = json.loads(line)
@@ -170,7 +196,9 @@ class AdminSessionsService:
         return turn_rows, memory_updates
 
     @classmethod
-    def _derive_llm_metrics_from_agent_lanes(cls, turn: dict[str, Any]) -> dict[str, int]:
+    def _derive_llm_metrics_from_agent_lanes(
+        cls, turn: dict[str, Any]
+    ) -> dict[str, int]:
         """从内嵌 agent_lanes telemetry 中兜底提取 LLM 指标。"""
         agent_lanes = cls._as_dict(turn.get("agent_lanes"))
         total_tokens = 0
@@ -181,7 +209,9 @@ class AdminSessionsService:
             for card in cards:
                 row = card if isinstance(card, dict) else {}
                 parsed = cls._extract_json_object(row.get("full_decision"))
-                total_tokens = max(total_tokens, cls._to_int_metric(parsed.get("total_tokens")))
+                total_tokens = max(
+                    total_tokens, cls._to_int_metric(parsed.get("total_tokens"))
+                )
                 llm_calls = max(llm_calls, cls._to_int_metric(parsed.get("llm_calls")))
         if llm_calls <= 0 and total_tokens > 0:
             llm_calls = 1
@@ -204,7 +234,9 @@ class AdminSessionsService:
         return 0
 
     @classmethod
-    def _merge_turn_memory_update(cls, turn: dict[str, Any], memory_update: dict[str, Any]) -> dict[str, Any]:
+    def _merge_turn_memory_update(
+        cls, turn: dict[str, Any], memory_update: dict[str, Any]
+    ) -> dict[str, Any]:
         """将 turn 观测记录与同轮记忆更新记录合并。
 
         Args:
@@ -229,8 +261,14 @@ class AdminSessionsService:
         memory_compression = cls._as_list(turn.get("memory_compression"))
         snapshot = cls._as_dict(memory_update.get("snapshot"))
         updated_at = str(memory_update.get("updated_at") or "")
-        merged_turn["llm_calls"] = max(cls._to_int_metric(merged_turn.get("llm_calls")), cls._to_int_metric(memory_update.get("llm_calls")))
-        merged_turn["total_tokens"] = max(cls._to_int_metric(merged_turn.get("total_tokens")), cls._to_int_metric(memory_update.get("total_tokens")))
+        merged_turn["llm_calls"] = max(
+            cls._to_int_metric(merged_turn.get("llm_calls")),
+            cls._to_int_metric(memory_update.get("llm_calls")),
+        )
+        merged_turn["total_tokens"] = max(
+            cls._to_int_metric(merged_turn.get("total_tokens")),
+            cls._to_int_metric(memory_update.get("total_tokens")),
+        )
         update_errors = cls._as_dict(memory_update.get("error_types"))
         if update_errors:
             base_errors = cls._as_dict(merged_turn.get("error_types"))
@@ -379,7 +417,9 @@ class AdminSessionsService:
     def _safe_json_text(cls, value: Any, limit: int = 1600) -> str:
         """将对象安全序列化为展示文本，无法 JSON 编码时退回普通文本。"""
         try:
-            return cls._sanitize_text(json.dumps(value, ensure_ascii=False), limit) or "无"
+            return (
+                cls._sanitize_text(json.dumps(value, ensure_ascii=False), limit) or "无"
+            )
         except (TypeError, ValueError):
             return cls._sanitize_text(value, limit) or "无"
 
@@ -423,15 +463,36 @@ class AdminSessionsService:
         messages_text = str(row.get("messages_compact") or "")
         if "会话记忆更新器" in messages_text:
             return "", actor_role, "ignored_memory_writer"
-        if "你是高血压问答系统的主控agent" in messages_text or "主控agent" in messages_text:
+        if (
+            "你是高血压问答系统的主控agent" in messages_text
+            or "主控agent" in messages_text
+        ):
             return "主控编排", actor_role, "legacy_controller_prompt"
-        if "Hypertension Graph Agent" in messages_text or "Graph Agent" in messages_text:
+        if (
+            "Hypertension Graph Agent" in messages_text
+            or "Graph Agent" in messages_text
+        ):
             return "图谱代理", actor_role, "legacy_graph_prompt"
-        if "Hypertension Retrieval Agent" in messages_text or "Retrieval Agent" in messages_text:
+        if (
+            "Hypertension Retrieval Agent" in messages_text
+            or "Retrieval Agent" in messages_text
+        ):
             return "检索代理", actor_role, "legacy_retrieval_prompt"
 
         response_text = str(row.get("response_compact") or "")
-        if any(token in response_text for token in ('"action":"final_answer"', '"action": "final_answer"', '"action":"call_kg"', '"action": "call_kg"', '"action":"call_rag"', '"action": "call_rag"', '"action":"call_history_read"', '"action": "call_history_read"')):
+        if any(
+            token in response_text
+            for token in (
+                '"action":"final_answer"',
+                '"action": "final_answer"',
+                '"action":"call_kg"',
+                '"action": "call_kg"',
+                '"action":"call_rag"',
+                '"action": "call_rag"',
+                '"action":"call_history_read"',
+                '"action": "call_history_read"',
+            )
+        ):
             return "主控编排", actor_role, "legacy_controller_action"
 
         return "主控编排", actor_role, "default_controller_fallback"
@@ -440,13 +501,25 @@ class AdminSessionsService:
     def _infer_tool_lane(cls, observation: dict[str, Any]) -> str:
         """根据工具观测信息推断工具所属泳道。"""
         agent = str(observation.get("agent") or "").strip().lower()
-        tool_name = str(observation.get("tool_name") or observation.get("requested_tool_name") or "").strip().lower()
+        tool_name = (
+            str(
+                observation.get("tool_name")
+                or observation.get("requested_tool_name")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         action = str(observation.get("action") or "").strip().lower()
         if agent == "kg" or tool_name.startswith("kg_"):
             return "图谱代理"
         if agent == "rag" or "rag" in tool_name:
             return "检索代理"
-        if action == "call_history_read" or "history_read" in tool_name or agent == "history":
+        if (
+            action == "call_history_read"
+            or "history_read" in tool_name
+            or agent == "history"
+        ):
             return "主控编排"
         return "主控编排"
 
@@ -474,8 +547,16 @@ class AdminSessionsService:
         """
         tool_log = cls._as_dict(observation.get("_tool_log"))
         result_obj = cls._as_dict(observation.get("result"))
-        event_time = str(tool_log.get("ts") or turn.get("finished_at") or turn.get("started_at") or "")
-        summary = cls._sanitize_text(cls._summarize_tool_observation(observation), 180) or "该次工具调用暂无输出"
+        event_time = str(
+            tool_log.get("ts")
+            or turn.get("finished_at")
+            or turn.get("started_at")
+            or ""
+        )
+        summary = (
+            cls._sanitize_text(cls._summarize_tool_observation(observation), 180)
+            or "该次工具调用暂无输出"
+        )
         return {
             "event_id": cls._safe_event_id(turn_id, "tool_action", sequence_index),
             "event_time": event_time,
@@ -485,7 +566,9 @@ class AdminSessionsService:
             "summary": summary,
             "actor": lane_name,
             "kind": "tool_action",
-            "status": "失败" if cls._sanitize_text(result_obj.get("error"), 120) else "完成",
+            "status": (
+                "失败" if cls._sanitize_text(result_obj.get("error"), 120) else "完成"
+            ),
             "detail": {
                 "model_input_prompt": "该代理本次未记录独立模型输入",
                 "model_output_text": "该代理本次未记录独立模型输出",
@@ -571,7 +654,9 @@ class AdminSessionsService:
         return ""
 
     @classmethod
-    def _read_session_llm_records(cls, session_id: str, request_id: str) -> list[dict[str, Any]]:
+    def _read_session_llm_records(
+        cls, session_id: str, request_id: str
+    ) -> list[dict[str, Any]]:
         """读取指定请求的 LLM 日志。"""
         return read_request_records(
             project_root=cls._project_root(),
@@ -583,7 +668,9 @@ class AdminSessionsService:
         )
 
     @classmethod
-    def _read_session_tool_records(cls, session_id: str, request_id: str) -> list[dict[str, Any]]:
+    def _read_session_tool_records(
+        cls, session_id: str, request_id: str
+    ) -> list[dict[str, Any]]:
         """读取指定请求的工具日志。"""
         return read_request_records(
             project_root=cls._project_root(),
@@ -606,7 +693,9 @@ class AdminSessionsService:
         bound_rows: list[dict[str, Any]] = []
         for observation in tool_observations:
             row = observation if isinstance(observation, dict) else {}
-            tool_name = str(row.get("tool_name") or row.get("requested_tool_name") or "").strip()
+            tool_name = str(
+                row.get("tool_name") or row.get("requested_tool_name") or ""
+            ).strip()
             matched_index: int | None = None
             if tool_name:
                 for idx, tool_row in enumerate(available_rows):
@@ -621,14 +710,23 @@ class AdminSessionsService:
                         continue
                     matched_index = idx
                     break
-            matched_row = available_rows[matched_index] if matched_index is not None else {}
+            matched_row = (
+                available_rows[matched_index] if matched_index is not None else {}
+            )
             if matched_index is not None:
                 used_indexes.add(matched_index)
-            bound_rows.append({**row, "_tool_log": matched_row if isinstance(matched_row, dict) else {}})
+            bound_rows.append(
+                {
+                    **row,
+                    "_tool_log": matched_row if isinstance(matched_row, dict) else {},
+                }
+            )
         return bound_rows
 
     @classmethod
-    def _format_tool_input(cls, tool_row: dict[str, Any], observation: dict[str, Any], index: int) -> str:
+    def _format_tool_input(
+        cls, tool_row: dict[str, Any], observation: dict[str, Any], index: int
+    ) -> str:
         """格式化工具调用输入文本。"""
         tool_name = str(
             observation.get("tool_name")
@@ -636,7 +734,9 @@ class AdminSessionsService:
             or tool_row.get("tool_name")
             or "unknown_tool"
         ).strip()
-        question = str(observation.get("subquery") or observation.get("question") or "").strip()
+        question = str(
+            observation.get("subquery") or observation.get("question") or ""
+        ).strip()
         arguments = cls._as_dict(tool_row.get("arguments"))
         rows = [f"{index}. 工具：{tool_name}"]
         if question:
@@ -662,7 +762,9 @@ class AdminSessionsService:
         )
         error_text = cls._sanitize_text(result_obj.get("error") or "", 320)
         query_records = cls._as_list(observation.get("query_records"))
-        lines = [f"{index}. 状态：{'成功' if bool(result_obj.get('ok', True)) else '失败'}"]
+        lines = [
+            f"{index}. 状态：{'成功' if bool(result_obj.get('ok', True)) else '失败'}"
+        ]
         if summary:
             lines.append(f"摘要：{summary}")
         if error_text:
@@ -692,9 +794,18 @@ class AdminSessionsService:
     ) -> dict[str, Any]:
         """从 turn.agent_lanes 的卡片兜底生成泳道事件。"""
         title = cls._sanitize_text(card.get("title"), 80) or f"{lane_name}行动"
-        event_time = str(card.get("occurred_at") or card.get("started_at") or card.get("finished_at") or turn.get("finished_at") or turn.get("started_at") or "")
+        event_time = str(
+            card.get("occurred_at")
+            or card.get("started_at")
+            or card.get("finished_at")
+            or turn.get("finished_at")
+            or turn.get("started_at")
+            or ""
+        )
         full_prompt = str(card.get("full_prompt") or card.get("prompt_preview") or "无")
-        full_decision = str(card.get("full_decision") or card.get("decision_preview") or "无")
+        full_decision = str(
+            card.get("full_decision") or card.get("decision_preview") or "无"
+        )
         is_tool_card = "工具" in title or lane_name in {"图谱代理", "检索代理"}
         return {
             "event_id": cls._safe_event_id(turn_id, "agent_lane", sequence_index),
@@ -702,15 +813,28 @@ class AdminSessionsService:
             "lane": lane_name,
             "stage": "代理行动" if is_tool_card else "模型行动",
             "title": title,
-            "summary": cls._sanitize_text(card.get("decision_preview") or card.get("prompt_preview") or "该代理暂无摘要", 180),
+            "summary": cls._sanitize_text(
+                card.get("decision_preview")
+                or card.get("prompt_preview")
+                or "该代理暂无摘要",
+                180,
+            ),
             "actor": lane_name,
             "kind": "agent_lane_card",
             "status": cls._sanitize_text(card.get("status"), 40) or "完成",
             "detail": {
-                "model_input_prompt": full_prompt if not is_tool_card else "该代理本次未记录独立模型输入",
-                "model_output_text": full_decision if not is_tool_card else "该代理本次未记录独立模型输出",
+                "model_input_prompt": (
+                    full_prompt if not is_tool_card else "该代理本次未记录独立模型输入"
+                ),
+                "model_output_text": (
+                    full_decision
+                    if not is_tool_card
+                    else "该代理本次未记录独立模型输出"
+                ),
                 "tool_call_inputs": full_prompt if is_tool_card else "本次未调用工具",
-                "tool_call_results": full_decision if is_tool_card else "本次未调用工具",
+                "tool_call_results": (
+                    full_decision if is_tool_card else "本次未调用工具"
+                ),
                 "tool_call_count": 1 if is_tool_card else 0,
                 "merge_strategy": "agent_lanes_fallback",
             },
@@ -718,7 +842,9 @@ class AdminSessionsService:
         }
 
     @classmethod
-    def _build_tool_observation_fallback_events(cls, *, turn_id: str, turn: dict[str, Any], start_index: int) -> list[dict[str, Any]]:
+    def _build_tool_observation_fallback_events(
+        cls, *, turn_id: str, turn: dict[str, Any], start_index: int
+    ) -> list[dict[str, Any]]:
         """没有 agent_lanes 卡片时，从 tool_observations 兜底生成事件。"""
         tool_observations = cls._as_list(turn.get("tool_observations"))
         events: list[dict[str, Any]] = []
@@ -729,14 +855,23 @@ class AdminSessionsService:
             events.append(
                 {
                     "event_id": cls._safe_event_id(turn_id, "tool_fallback", offset),
-                    "event_time": str(turn.get("finished_at") or turn.get("started_at") or ""),
+                    "event_time": str(
+                        turn.get("finished_at") or turn.get("started_at") or ""
+                    ),
                     "lane": lane_name,
                     "stage": "工具行动",
                     "title": f"{lane_name}工具行动",
-                    "summary": cls._sanitize_text(cls._summarize_tool_observation(row), 180) or "该次工具调用暂无输出",
+                    "summary": cls._sanitize_text(
+                        cls._summarize_tool_observation(row), 180
+                    )
+                    or "该次工具调用暂无输出",
                     "actor": lane_name,
                     "kind": "tool_fallback",
-                    "status": "失败" if cls._sanitize_text(result_obj.get("error"), 120) else "完成",
+                    "status": (
+                        "失败"
+                        if cls._sanitize_text(result_obj.get("error"), 120)
+                        else "完成"
+                    ),
                     "detail": {
                         "model_input_prompt": "该代理本次未记录独立模型输入",
                         "model_output_text": "该代理本次未记录独立模型输出",
@@ -751,7 +886,9 @@ class AdminSessionsService:
         return events
 
     @classmethod
-    def _build_agent_lanes_fallback_events(cls, turn: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_agent_lanes_fallback_events(
+        cls, turn: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """当独立 LLM 日志缺失时，从 turn 内嵌 agent_lanes 构建泳道事件。"""
         turn_id = str(turn.get("turn_id") or "")
         agent_lanes = cls._as_dict(turn.get("agent_lanes"))
@@ -767,13 +904,19 @@ class AdminSessionsService:
                     cls._build_agent_lane_card_event(
                         turn_id=turn_id,
                         turn=turn,
-                        lane_name=cls._allowed_flow_lane(card.get("lane_name") or lane_key),
+                        lane_name=cls._allowed_flow_lane(
+                            card.get("lane_name") or lane_key
+                        ),
                         card=card,
                         sequence_index=sequence_index,
                     )
                 )
         if not events:
-            events.extend(cls._build_tool_observation_fallback_events(turn_id=turn_id, turn=turn, start_index=1))
+            events.extend(
+                cls._build_tool_observation_fallback_events(
+                    turn_id=turn_id, turn=turn, start_index=1
+                )
+            )
         events.sort(
             key=lambda item: (
                 int(item.get("sequence_order") or 0),
@@ -811,24 +954,43 @@ class AdminSessionsService:
         bound_tool_rows = cls._bind_tool_logs(tool_observations, tool_rows)
 
         events: list[dict[str, Any]] = []
-        lane_event_indexes: dict[str, list[int]] = {"主控编排": [], "图谱代理": [], "检索代理": []}
-        pending_tool_anchor_indexes: dict[str, list[int]] = {"主控编排": [], "图谱代理": [], "检索代理": []}
+        lane_event_indexes: dict[str, list[int]] = {
+            "主控编排": [],
+            "图谱代理": [],
+            "检索代理": [],
+        }
+        pending_tool_anchor_indexes: dict[str, list[int]] = {
+            "主控编排": [],
+            "图谱代理": [],
+            "检索代理": [],
+        }
         for index, row in enumerate(llm_rows):
-            lane_name_raw, source_actor_role, lane_inference_reason = cls._resolve_llm_lane(
-                row if isinstance(row, dict) else {}
+            lane_name_raw, source_actor_role, lane_inference_reason = (
+                cls._resolve_llm_lane(row if isinstance(row, dict) else {})
             )
             if not lane_name_raw:
                 continue
             lane_name = cls._allowed_flow_lane(lane_name_raw)
-            response_text = str(row.get("response_compact") or row.get("error") or "").strip()
-            controller_action = cls._extract_controller_action(row.get("response_compact"))
+            response_text = str(
+                row.get("response_compact") or row.get("error") or ""
+            ).strip()
+            controller_action = cls._extract_controller_action(
+                row.get("response_compact")
+            )
             event: dict[str, Any] = {
                 "event_id": cls._safe_event_id(turn_id, "llm_action", index),
-                "event_time": str(row.get("ts") or turn.get("finished_at") or turn.get("started_at") or ""),
+                "event_time": str(
+                    row.get("ts")
+                    or turn.get("finished_at")
+                    or turn.get("started_at")
+                    or ""
+                ),
                 "lane": lane_name,
                 "stage": "模型行动",
                 "title": f"{lane_name}模型行动",
-                "summary": cls._sanitize_text(response_text or "该次模型调用暂无输出", 180),
+                "summary": cls._sanitize_text(
+                    response_text or "该次模型调用暂无输出", 180
+                ),
                 "actor": lane_name,
                 "kind": "llm_action",
                 "status": "失败" if str(row.get("error") or "").strip() else "完成",
@@ -865,13 +1027,19 @@ class AdminSessionsService:
             if pending_anchor_list:
                 preferred_anchor_index = pending_anchor_list.pop(0)
             matching_indexes = (
-                [idx for idx in candidate_indexes if str(events[idx].get("event_time") or "") <= tool_time]
+                [
+                    idx
+                    for idx in candidate_indexes
+                    if str(events[idx].get("event_time") or "") <= tool_time
+                ]
                 if tool_time
                 else []
             )
             is_history_observation = lane_name == "主控编排" and (
-                str(observation.get("action") or "").strip().lower() == "call_history_read"
-                or "history_read" in str(observation.get("tool_name") or "").strip().lower()
+                str(observation.get("action") or "").strip().lower()
+                == "call_history_read"
+                or "history_read"
+                in str(observation.get("tool_name") or "").strip().lower()
             )
             if preferred_anchor_index is not None and (
                 not candidate_indexes or is_history_observation
@@ -888,13 +1056,23 @@ class AdminSessionsService:
                 )
                 target_index = len(events) - 1
                 lane_event_indexes[lane_name].append(target_index)
-                base_sequence = int(events[preferred_anchor_index].get("sequence_order") or 0)
-                anchor_offsets[preferred_anchor_index] = int(anchor_offsets.get(preferred_anchor_index) or 0) + 1
-                events[target_index]["sequence_order"] = base_sequence + anchor_offsets[preferred_anchor_index]
+                base_sequence = int(
+                    events[preferred_anchor_index].get("sequence_order") or 0
+                )
+                anchor_offsets[preferred_anchor_index] = (
+                    int(anchor_offsets.get(preferred_anchor_index) or 0) + 1
+                )
+                events[target_index]["sequence_order"] = (
+                    base_sequence + anchor_offsets[preferred_anchor_index]
+                )
                 merge_strategy = "tool_only"
             elif candidate_indexes:
-                target_index = matching_indexes[-1] if matching_indexes else candidate_indexes[-1]
-                merge_strategy = "timestamp_merge" if matching_indexes else "sequential_merge"
+                target_index = (
+                    matching_indexes[-1] if matching_indexes else candidate_indexes[-1]
+                )
+                merge_strategy = (
+                    "timestamp_merge" if matching_indexes else "sequential_merge"
+                )
             else:
                 tool_only_sequence += 1
                 events.append(
@@ -908,10 +1086,16 @@ class AdminSessionsService:
                 )
                 target_index = len(events) - 1
                 lane_event_indexes[lane_name].append(target_index)
-                fallback_base = int(events[-2].get("sequence_order") or 0) if len(events) >= 2 else 0
+                fallback_base = (
+                    int(events[-2].get("sequence_order") or 0)
+                    if len(events) >= 2
+                    else 0
+                )
                 events[target_index]["sequence_order"] = fallback_base + 1
                 merge_strategy = "tool_only"
-            events[target_index]["_tool_entries"].append({**observation, "_merge_strategy": merge_strategy})
+            events[target_index]["_tool_entries"].append(
+                {**observation, "_merge_strategy": merge_strategy}
+            )
 
         for event in events:
             tool_entries = event.pop("_tool_entries", [])
@@ -936,10 +1120,16 @@ class AdminSessionsService:
             if tool_entries:
                 merge_strategy = (
                     "tool_only"
-                    if all(str(item.get("_merge_strategy") or "") == "tool_only" for item in tool_entries)
+                    if all(
+                        str(item.get("_merge_strategy") or "") == "tool_only"
+                        for item in tool_entries
+                    )
                     else (
                         "timestamp_merge"
-                        if all(str(item.get("_merge_strategy") or "") == "timestamp_merge" for item in tool_entries)
+                        if all(
+                            str(item.get("_merge_strategy") or "") == "timestamp_merge"
+                            for item in tool_entries
+                        )
                         else "sequential_merge"
                     )
                 )
@@ -950,10 +1140,16 @@ class AdminSessionsService:
                 event["summary"] = summary
             event_detail = cls._as_dict(event.get("detail"))
             event["detail"] = {
-                "model_input_prompt": str(event_detail.get("model_input_prompt") or "无"),
+                "model_input_prompt": str(
+                    event_detail.get("model_input_prompt") or "无"
+                ),
                 "model_output_text": str(event_detail.get("model_output_text") or "无"),
-                "tool_call_inputs": "\n\n".join(tool_inputs) if tool_inputs else "本次未调用工具",
-                "tool_call_results": "\n\n".join(tool_results) if tool_results else "本次未调用工具",
+                "tool_call_inputs": (
+                    "\n\n".join(tool_inputs) if tool_inputs else "本次未调用工具"
+                ),
+                "tool_call_results": (
+                    "\n\n".join(tool_results) if tool_results else "本次未调用工具"
+                ),
                 "tool_call_count": tool_count,
                 "merge_strategy": merge_strategy,
             }
@@ -969,7 +1165,9 @@ class AdminSessionsService:
         )
         return events
 
-    async def admin_get_sessions(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def admin_get_sessions(
+        self, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         """获取管理员会话列表。
 
         Args:
@@ -979,7 +1177,9 @@ class AdminSessionsService:
         Returns:
             dict[str, Any]: 会话列表和总数。
         """
-        sessions = await self._await_call(SessionManager.get_all_sessions, limit, offset)
+        sessions = await self._await_call(
+            SessionManager.get_all_sessions, limit, offset
+        )
         total = await self._await_call(SessionManager.get_total_sessions_count)
         return {"ok": True, "data": sessions, "total": total}
 
@@ -1021,20 +1221,29 @@ class AdminSessionsService:
             orchestrator_decision = self._as_dict(
                 merged_turn.get("orchestrator_decision")
             )
-            normalized_controller_mode = self._normalize_controller_mode(orchestrator_decision.get("controller_mode"))
+            normalized_controller_mode = self._normalize_controller_mode(
+                orchestrator_decision.get("controller_mode")
+            )
             normalized_decision = {
                 **orchestrator_decision,
                 "controller_mode": normalized_controller_mode,
-                "controller_mode_label": self._controller_mode_label(normalized_controller_mode),
+                "controller_mode_label": self._controller_mode_label(
+                    normalized_controller_mode
+                ),
             }
-            merged_for_events = {**merged_turn, "orchestrator_decision": normalized_decision}
+            merged_for_events = {
+                **merged_turn,
+                "orchestrator_decision": normalized_decision,
+            }
             normalized_turns.append(
                 {
                     "request_id": str(merged_turn.get("request_id") or ""),
                     "turn_id": str(merged_turn.get("turn_id") or ""),
                     "session_id": str(session_id or ""),
                     "user_message_id": int(merged_turn.get("user_message_id") or 0),
-                    "assistant_message_id": int(merged_turn.get("assistant_message_id") or 0),
+                    "assistant_message_id": int(
+                        merged_turn.get("assistant_message_id") or 0
+                    ),
                     "question": str(merged_turn.get("question") or ""),
                     "answer_digest": str(merged_turn.get("answer_digest") or ""),
                     "started_at": str(merged_turn.get("started_at") or ""),
@@ -1043,17 +1252,37 @@ class AdminSessionsService:
                     "duration_ms": float(merged_turn.get("duration_ms") or 0.0),
                     "llm_calls": int(merged_turn.get("llm_calls") or 0),
                     "total_tokens": int(merged_turn.get("total_tokens") or 0),
-                    "memory_before": merged_turn.get("memory_before") if isinstance(merged_turn.get("memory_before"), dict) else {},
+                    "memory_before": (
+                        merged_turn.get("memory_before")
+                        if isinstance(merged_turn.get("memory_before"), dict)
+                        else {}
+                    ),
                     "orchestrator_decision": normalized_decision,
-                    "tool_observations": merged_turn.get("tool_observations") if isinstance(merged_turn.get("tool_observations"), list) else [],
-                    "agent_lanes": merged_turn.get("agent_lanes") if isinstance(merged_turn.get("agent_lanes"), dict) else {},
+                    "tool_observations": (
+                        merged_turn.get("tool_observations")
+                        if isinstance(merged_turn.get("tool_observations"), list)
+                        else []
+                    ),
+                    "agent_lanes": (
+                        merged_turn.get("agent_lanes")
+                        if isinstance(merged_turn.get("agent_lanes"), dict)
+                        else {}
+                    ),
                     "flow_events": self._build_flow_events(
                         session_id=str(session_id or ""),
                         request_id=str(merged_turn.get("request_id") or ""),
                         turn=merged_for_events,
                     ),
-                    "memory_compression": merged_turn.get("memory_compression") if isinstance(merged_turn.get("memory_compression"), list) else [],
-                    "timeline": merged_turn.get("timeline") if isinstance(merged_turn.get("timeline"), list) else [],
+                    "memory_compression": (
+                        merged_turn.get("memory_compression")
+                        if isinstance(merged_turn.get("memory_compression"), list)
+                        else []
+                    ),
+                    "timeline": (
+                        merged_turn.get("timeline")
+                        if isinstance(merged_turn.get("timeline"), list)
+                        else []
+                    ),
                 }
             )
         return {"ok": True, "session": session, "turns": normalized_turns}
@@ -1070,7 +1299,9 @@ class AdminSessionsService:
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
-        snapshot = await self._await_call(self._get_session_memory_service().load_memory, session_id)
+        snapshot = await self._await_call(
+            self._get_session_memory_service().load_memory, session_id
+        )
         return {"ok": True, "data": snapshot}
 
     async def admin_rebuild_session_memory(self, session_id: str) -> dict[str, Any]:
@@ -1085,8 +1316,12 @@ class AdminSessionsService:
         session = await self._await_call(SessionManager.get_session, session_id)
         if not session:
             return {"ok": False, "error": "会话不存在"}
-        await self._await_call(self._get_session_memory_service().clear_memory, session_id)
-        snapshot = await self._await_call(self._get_session_memory_service().rebuild_from_messages, session_id)
+        await self._await_call(
+            self._get_session_memory_service().clear_memory, session_id
+        )
+        snapshot = await self._await_call(
+            self._get_session_memory_service().rebuild_from_messages, session_id
+        )
         return {"ok": True, "data": snapshot}
 
     async def admin_clear_session_messages(self, session_id: str) -> dict[str, Any]:
@@ -1102,7 +1337,9 @@ class AdminSessionsService:
         if not session:
             return {"ok": False, "error": "会话不存在"}
 
-        existing_messages = await self._await_call(MessageManager.get_messages, session_id)
+        existing_messages = await self._await_call(
+            MessageManager.get_messages, session_id
+        )
         removed_count = len(existing_messages)
         if removed_count > 0:
             await self._await_call(MessageManager.delete_messages, session_id)
@@ -1111,7 +1348,9 @@ class AdminSessionsService:
             f"session-artifacts:{session_id}",
             timeout=self._config.SESSION_ARTIFACT_LOCK_TIMEOUT_SECONDS,
         ):
-            log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
+            log_artifacts_deleted, log_artifacts_error_type = (
+                self._delete_session_log_artifacts(session_id)
+            )
         await self._await_call(SessionManager.update_session_time, session_id)
 
         response: dict[str, Any] = {
@@ -1143,7 +1382,9 @@ class AdminSessionsService:
                 f"session-artifacts:{session_id}",
                 timeout=self._config.SESSION_ARTIFACT_LOCK_TIMEOUT_SECONDS,
             ):
-                log_artifacts_deleted, log_artifacts_error_type = self._delete_session_log_artifacts(session_id)
+                log_artifacts_deleted, log_artifacts_error_type = (
+                    self._delete_session_log_artifacts(session_id)
+                )
             response: dict[str, Any] = {
                 "ok": True,
                 "message": "会话已删除",

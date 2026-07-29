@@ -57,7 +57,9 @@ class GraphPublicService:
         }
 
     @classmethod
-    def _select_balanced_relationship_rows(cls, rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    def _select_balanced_relationship_rows(
+        cls, rows: list[dict[str, Any]], limit: int
+    ) -> list[dict[str, Any]]:
         """按每节点关系上限逐轮扩容，均衡不同节点的展示关系数。
 
         Args:
@@ -68,7 +70,9 @@ class GraphPublicService:
             list[dict[str, Any]]: 经过节点关系数均衡筛选后的关系行。
         """
         safe_limit = max(0, int(limit or 0))
-        normalized_rows = [cls._normalize_graph_row(row) for row in rows if isinstance(row, dict)]
+        normalized_rows = [
+            cls._normalize_graph_row(row) for row in rows if isinstance(row, dict)
+        ]
         if safe_limit <= 0:
             return []
         if len(normalized_rows) <= safe_limit:
@@ -98,7 +102,10 @@ class GraphPublicService:
                 row_key = (source_id, target_id, rel_type)
                 if row_key in selected_keys:
                     continue
-                if node_counts.get(source_id, 0) >= cap or node_counts.get(target_id, 0) >= cap:
+                if (
+                    node_counts.get(source_id, 0) >= cap
+                    or node_counts.get(target_id, 0) >= cap
+                ):
                     continue
                 selected.append(row)
                 selected_keys.add(row_key)
@@ -126,7 +133,9 @@ class GraphPublicService:
 
         return selected[:safe_limit]
 
-    async def graph_visualization(self, keyword: str = "", limit: int = 200) -> dict[str, Any]:
+    async def graph_visualization(
+        self, keyword: str = "", limit: int = 200
+    ) -> dict[str, Any]:
         """查询图谱可视化节点与边数据。
 
         Args:
@@ -192,13 +201,37 @@ class GraphPublicService:
                     {"limit": query_limit},
                 )
         except RuntimeError as exc:
-            self._log_api_error("/graph/visualization", "neo4j_query", exc, keyword=q, limit=safe_limit)
-            return {"ok": False, "error": f"graph_query_error:{str(exc)}", "nodes": [], "links": []}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            self._log_api_error("/graph/visualization", "unknown", exc, keyword=q, limit=safe_limit)
-            return {"ok": False, "error": f"graph_unknown_error:{str(exc)}", "nodes": [], "links": []}
+            self._log_api_error(
+                "/graph/visualization", "neo4j_query", exc, keyword=q, limit=safe_limit
+            )
+            return {
+                "ok": False,
+                "error": f"graph_query_error:{str(exc)}",
+                "nodes": [],
+                "links": [],
+            }
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
+            self._log_api_error(
+                "/graph/visualization", "unknown", exc, keyword=q, limit=safe_limit
+            )
+            return {
+                "ok": False,
+                "error": f"graph_unknown_error:{str(exc)}",
+                "nodes": [],
+                "links": [],
+            }
 
-        selected_rows = self._select_balanced_relationship_rows(rows if isinstance(rows, list) else [], safe_limit)
+        selected_rows = self._select_balanced_relationship_rows(
+            rows if isinstance(rows, list) else [], safe_limit
+        )
         node_map: dict[str, dict[str, Any]] = {}
         links: list[dict[str, Any]] = []
         for row in selected_rows:
@@ -251,7 +284,12 @@ class GraphPublicService:
                 "properties": props,
             }
 
-        return {"ok": True, "nodes": list(node_map.values()), "links": links, "count": len(links)}
+        return {
+            "ok": True,
+            "nodes": list(node_map.values()),
+            "links": links,
+            "count": len(links),
+        }
 
     async def get_entity_detail(self, entity_id: str) -> dict[str, Any]:
         """获取实体详细信息和相邻关系。
@@ -264,7 +302,9 @@ class GraphPublicService:
         """
         try:
             if not str(entity_id or "").strip().isdigit():
-                raise ValueError(f"invalid literal for int() with base 10: {entity_id!r}")
+                raise ValueError(
+                    f"invalid literal for int() with base 10: {entity_id!r}"
+                )
             entity_result = await self._await_call(
                 self._neo4j_client.run_cypher,
                 """
@@ -346,8 +386,18 @@ class GraphPublicService:
             self._log_api_error("/graph/entity", "id_parse", exc, entity_id=entity_id)
             return {"ok": False, "error": f"invalid_entity_id:{str(exc)}"}
         except RuntimeError as exc:
-            self._log_api_error("/graph/entity", "neo4j_query", exc, entity_id=entity_id)
+            self._log_api_error(
+                "/graph/entity", "neo4j_query", exc, entity_id=entity_id
+            )
             return {"ok": False, "error": f"graph_query_error:{str(exc)}"}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error("/graph/entity", "unknown", exc, entity_id=entity_id)
             return {"ok": False, "error": f"graph_unknown_error:{str(exc)}"}

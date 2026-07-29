@@ -18,8 +18,13 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.backend.config import build_backend_config
-from app.backend.dependencies.guards import enforce_heavy_api_rate_limit, is_session_owner
-from app.backend.dependencies.request_context import get_trace_id as _resolve_trace_id_from_request
+from app.backend.dependencies.guards import (
+    enforce_heavy_api_rate_limit,
+    is_session_owner,
+)
+from app.backend.dependencies.request_context import (
+    get_trace_id as _resolve_trace_id_from_request,
+)
 from app.backend.infrastructure.errors import UnauthorizedError
 from app.backend.infrastructure.responses import unauthorized_response
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
@@ -50,7 +55,10 @@ from app.backend.services.readiness_service import ReadinessService
 from app.backend.services.session_stream_service import SessionStreamService
 from app.backend.services.session_turn_service import SessionTurnService
 from app.backend.services.sessions_history_service import SessionsHistoryService
-from app.backend.services.startup_runtime_service import StartupRuntimeBehavior, StartupRuntimeService
+from app.backend.services.startup_runtime_service import (
+    StartupRuntimeBehavior,
+    StartupRuntimeService,
+)
 from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 
 
@@ -58,7 +66,9 @@ from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLim
 class BackendAppTestOverrides:
     """测试场景下可选的应用装配覆盖项。"""
 
-    startup_behavior: StartupRuntimeBehavior = field(default_factory=StartupRuntimeBehavior)
+    startup_behavior: StartupRuntimeBehavior = field(
+        default_factory=StartupRuntimeBehavior
+    )
     neo4j_client: Any = None
     mcp_server: Any = None
     a2a_service: Any = None
@@ -86,7 +96,12 @@ class BackendAppTestOverrides:
 def _log_api_error(endpoint: str, stage: str, exc: Exception, **kwargs: Any) -> None:
     """记录 API 异常并输出结构化日志。"""
     logger = logging.getLogger(__name__)
-    payload = {"endpoint": endpoint, "stage": stage, "error_type": type(exc).__name__, "error": str(exc)}
+    payload = {
+        "endpoint": endpoint,
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+    }
     payload.update(kwargs)
     logger.exception("[api_error] %s", json.dumps(payload, ensure_ascii=False))
 
@@ -151,7 +166,9 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         neo4j_client=neo4j_client,
     )
 
-    rate_limiter = InMemorySlidingWindowRateLimiter(max_keys=backend_config.rate_limit_max_keys)
+    rate_limiter = InMemorySlidingWindowRateLimiter(
+        max_keys=backend_config.rate_limit_max_keys
+    )
     runtime_container.rate_limiter = rate_limiter
     rate_limit_window_seconds = backend_config.rate_limit_window_seconds
     heavy_endpoint_limits = backend_config.heavy_endpoint_limits
@@ -170,8 +187,11 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         log_api_error=_log_api_error,
     )
 
-    a2a_event_stream_service = overrides.a2a_event_stream_service or A2AEventStreamService(
-        get_a2a=a2a_runtime_service.get_a2a,
+    a2a_event_stream_service = (
+        overrides.a2a_event_stream_service
+        or A2AEventStreamService(
+            get_a2a=a2a_runtime_service.get_a2a,
+        )
     )
 
     agent_run_service = overrides.agent_run_service or AgentRunService(
@@ -192,13 +212,16 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         event_stream_service=a2a_event_stream_service,
     )
 
-    sessions_history_service = overrides.sessions_history_service or SessionsHistoryService(
-        await_call=_await_call,
-        is_session_owner=is_session_owner,
-        get_a2a=a2a_runtime_service.get_a2a,
-        get_session_memory_service=a2a_runtime_service.get_session_memory_service,
-        upload_dir=backend_config.upload_dir,
-        log_api_error=_log_api_error,
+    sessions_history_service = (
+        overrides.sessions_history_service
+        or SessionsHistoryService(
+            await_call=_await_call,
+            is_session_owner=is_session_owner,
+            get_a2a=a2a_runtime_service.get_a2a,
+            get_session_memory_service=a2a_runtime_service.get_session_memory_service,
+            upload_dir=backend_config.upload_dir,
+            log_api_error=_log_api_error,
+        )
     )
 
     admin_auth_service = overrides.admin_auth_service or AdminAuthService()
@@ -214,14 +237,18 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         get_session_memory_service=a2a_runtime_service.get_session_memory_service,
     )
 
-    admin_observability_service = overrides.admin_observability_service or AdminObservabilityService(
-        log_api_error=_log_api_error
+    admin_observability_service = (
+        overrides.admin_observability_service
+        or AdminObservabilityService(log_api_error=_log_api_error)
     )
 
-    admin_documents_service = overrides.admin_documents_service or AdminDocumentsService(
-        await_call=_await_call,
-        get_shared_vector_store=_get_shared_vector_store_lazy,
-        log_api_error=_log_api_error,
+    admin_documents_service = (
+        overrides.admin_documents_service
+        or AdminDocumentsService(
+            await_call=_await_call,
+            get_shared_vector_store=_get_shared_vector_store_lazy,
+            log_api_error=_log_api_error,
+        )
     )
 
     graph_admin_service = overrides.graph_admin_service or GraphAdminService(
@@ -252,7 +279,9 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     app.state.test_overrides = overrides
 
     @app.exception_handler(UnauthorizedError)
-    async def _handle_unauthorized_error(_: Request, exc: UnauthorizedError) -> JSONResponse:
+    async def _handle_unauthorized_error(
+        _: Request, exc: UnauthorizedError
+    ) -> JSONResponse:
         return unauthorized_response(str(exc) or "未登录")
 
     app.add_middleware(
@@ -308,7 +337,9 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     app.include_router(create_admin_auth_router(service=admin_auth_service))
     app.include_router(create_admin_runtime_router(service=admin_runtime_service))
     app.include_router(create_admin_sessions_router(service=admin_sessions_service))
-    app.include_router(create_admin_observability_router(service=admin_observability_service))
+    app.include_router(
+        create_admin_observability_router(service=admin_observability_service)
+    )
     app.include_router(create_admin_documents_router(service=admin_documents_service))
     app.include_router(create_admin_graph_router(service=graph_admin_service))
 

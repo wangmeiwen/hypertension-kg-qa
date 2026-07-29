@@ -60,7 +60,9 @@ class ReadinessService:
                 "name": "mysql",
                 "critical": True,
                 "ready": mysql_ready,
-                "detail": "数据库初始化成功" if mysql_ready else "数据库初始化失败或尚未完成",
+                "detail": (
+                    "数据库初始化成功" if mysql_ready else "数据库初始化失败或尚未完成"
+                ),
             },
             {
                 "name": "neo4j",
@@ -105,7 +107,9 @@ class ReadinessService:
                 or json.dumps(
                     {
                         "missing_required": mcp_detail.get("missing_required", []),
-                        "runtime_unavailable_required": mcp_detail.get("runtime_unavailable_required", []),
+                        "runtime_unavailable_required": mcp_detail.get(
+                            "runtime_unavailable_required", []
+                        ),
                     },
                     ensure_ascii=False,
                 ),
@@ -122,7 +126,11 @@ class ReadinessService:
         if mcp_error:
             optional_issues.append("mcp_server_unavailable")
 
-        critical_not_ready = [item["name"] for item in dependencies if item["critical"] and not item["ready"]]
+        critical_not_ready = [
+            item["name"]
+            for item in dependencies
+            if item["critical"] and not item["ready"]
+        ]
 
         level = "ready"
         if critical_not_ready:

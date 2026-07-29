@@ -56,14 +56,20 @@ def test_sessions_history_router_core_routes():
     assert sessions.status_code == 200
     assert sessions.json()["data"][0]["user_id"] == "u1"
 
-    rollback = client.post("/sessions/s1/rollback-to-question", json={"user_id": "u1", "message_id": 8})
+    rollback = client.post(
+        "/sessions/s1/rollback-to-question", json={"user_id": "u1", "message_id": 8}
+    )
     assert rollback.status_code == 200
     assert rollback.json()["data"]["message_id"] == 8
 
-    uploaded = client.post("/upload_file", files={"file": ("note.png", b"abc", "image/png")})
+    uploaded = client.post(
+        "/upload_file", files={"file": ("note.png", b"abc", "image/png")}
+    )
     assert uploaded.status_code == 200
     assert uploaded.json()["data"]["filename"] == "note.png"
 
-    cancelled = client.post("/qa/jobs/job-1/cancel", json={"user_id": "u1", "session_id": "s1"})
+    cancelled = client.post(
+        "/qa/jobs/job-1/cancel", json={"user_id": "u1", "session_id": "s1"}
+    )
     assert cancelled.status_code == 200
     assert cancelled.json()["data"]["job_id"] == "job-1"

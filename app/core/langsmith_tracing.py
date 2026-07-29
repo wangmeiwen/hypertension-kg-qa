@@ -4,6 +4,7 @@ LangSmith 链路追踪模块
 用于集成 LangSmith 平台，记录和追踪 LLM 调用、工具执行等操作。
 需要设置环境变量 LANGSMITH_TRACING=1 和 LANGSMITH_API_KEY 才能启用。
 """
+
 import logging
 import os
 from typing import Any, Callable, Dict, Optional
@@ -30,11 +31,21 @@ try:
     from langsmith import traceable as _langsmith_traceable
 
     _traceable_impl = _langsmith_traceable
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+except (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    OSError,
+    ImportError,
+):
     _traceable_impl = None
 
 
-def _noop_traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def _noop_traceable(
+    *args: Any, **kwargs: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """提供 LangSmith 不可用时的空装饰器工厂。"""
     _ = args, kwargs
 
@@ -44,7 +55,9 @@ def _noop_traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]],
     return _decorator
 
 
-def traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def traceable(
+    *args: Any, **kwargs: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：标记函数需要被 LangSmith 追踪。
 
     用法:
@@ -64,7 +77,9 @@ def traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Calla
     return _traceable_impl(*args, **kwargs)
 
 
-def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional[list[str]] = None) -> None:
+def set_trace_metadata(
+    metadata: Optional[Dict[str, Any]] = None, tags: Optional[list[str]] = None
+) -> None:
     """设置当前追踪运行的元数据和标签。
 
     Args:
@@ -83,6 +98,7 @@ def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional
     try:
         from langsmith import get_current_run_tree
         from langsmith.run_helpers import set_run_metadata
+
         payload: Dict[str, Any] = {}
         if metadata_obj:
             payload.update(metadata_obj)
@@ -93,6 +109,14 @@ def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional
             if get_current_run_tree() is None:
                 return
             set_run_metadata(**payload)
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OSError,
+        ImportError,
+    ) as e:
         logger.warning("设置 LangSmith 追踪元数据失败: %s", e)
         return

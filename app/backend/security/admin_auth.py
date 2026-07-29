@@ -28,7 +28,9 @@ DEFAULT_ADMIN = {
 
 SESSION_TTL_SECONDS = int(os.getenv("ADMIN_SESSION_TTL_SECONDS", "28800"))
 _admin_sessions: Dict[str, Dict[str, Any]] = {}
-_current_admin_token: ContextVar[Optional[str]] = ContextVar("current_admin_token", default=None)
+_current_admin_token: ContextVar[Optional[str]] = ContextVar(
+    "current_admin_token", default=None
+)
 
 
 def _purge_expired_sessions() -> None:
@@ -39,7 +41,11 @@ def _purge_expired_sessions() -> None:
         None
     """
     now = int(time.time())
-    expired = [token for token, session in _admin_sessions.items() if int(session.get("expires_at", 0)) <= now]
+    expired = [
+        token
+        for token, session in _admin_sessions.items()
+        if int(session.get("expires_at", 0)) <= now
+    ]
     for token in expired:
         _admin_sessions.pop(token, None)
 
@@ -145,5 +151,3 @@ def logout() -> bool:
     if not token:
         return False
     return _admin_sessions.pop(token, None) is not None
-
-

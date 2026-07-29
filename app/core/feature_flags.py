@@ -3,7 +3,6 @@
 从环境变量读取布尔型 feature flag，并提供诊断接口使用的开关快照。
 """
 
-
 from __future__ import annotations
 
 import os
@@ -57,6 +56,10 @@ def get_runtime_flag_snapshot() -> Dict[str, bool]:
         Dict[str, bool]: 以开关名为键、启用状态为值的字典。
     """
     return {
-        "ENABLE_HEAVY_API_RATE_LIMIT": get_feature_flag("ENABLE_HEAVY_API_RATE_LIMIT", True),
-        "ENABLE_MCP_TOOL_CIRCUIT_BREAKER": get_feature_flag("ENABLE_MCP_TOOL_CIRCUIT_BREAKER", True),
+        "ENABLE_HEAVY_API_RATE_LIMIT": get_feature_flag(
+            "ENABLE_HEAVY_API_RATE_LIMIT", True
+        ),
+        "ENABLE_MCP_TOOL_CIRCUIT_BREAKER": get_feature_flag(
+            "ENABLE_MCP_TOOL_CIRCUIT_BREAKER", True
+        ),
     }

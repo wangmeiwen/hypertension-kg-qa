@@ -22,6 +22,7 @@
 - igraph + leidenalg: Leiden 社区发现算法（可选）
 
 """
+
 import asyncio
 import hashlib
 import logging
@@ -47,8 +48,17 @@ logger = logging.getLogger(__name__)
 try:
     import igraph as ig  # type: ignore
     import leidenalg  # type: ignore
+
     _LEIDEN_AVAILABLE = True
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+except (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    OSError,
+    ImportError,
+) as exc:
     ig = None
     leidenalg = None
     _LEIDEN_AVAILABLE = False
@@ -103,12 +113,16 @@ class KgMilvusStore:
         with cls._EMBEDDER_LOCK:
             embedder = cls._EMBEDDER_CACHE.get(model_path)
             if embedder is None:
-                with log_duration("kg_milvus.load_embedding_model", model_path=model_path):
+                with log_duration(
+                    "kg_milvus.load_embedding_model", model_path=model_path
+                ):
                     embedder = SentenceTransformer(model_path)
                 cls._EMBEDDER_CACHE[model_path] = embedder
         return embedder
 
-    def __init__(self, conf: Optional[Config] = None, collection_name: Optional[str] = None):
+    def __init__(
+        self, conf: Optional[Config] = None, collection_name: Optional[str] = None
+    ):
         """
         初始化知识图谱 Milvus 存储。
 
@@ -120,7 +134,9 @@ class KgMilvusStore:
             None
         """
         self.conf = conf or Config()
-        self.collection_name = collection_name or os.getenv("KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection")
+        self.collection_name = collection_name or os.getenv(
+            "KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection"
+        )
         self.client = self._get_cached_client(
             str(self.conf.MILVUS_HOST),
             str(self.conf.MILVUS_PORT),
@@ -129,28 +145,46 @@ class KgMilvusStore:
 
         self.model_path = self.conf.EMBEDDING_MODEL_PATH
         if not self.model_path or not os.path.exists(self.model_path):
-            self.model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "model", "bge-m3")
+            self.model_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "model",
+                "bge-m3",
+            )
         self.embedder: Optional[SentenceTransformer] = None
         self.anns_field = "embedding"
-        self.metric_type = self._normalize_metric_type(os.getenv("KG_MILVUS_METRIC_TYPE", "COSINE"))
+        self.metric_type = self._normalize_metric_type(
+            os.getenv("KG_MILVUS_METRIC_TYPE", "COSINE")
+        )
         self.search_nprobe = int(self.conf.MILVUS_SEARCH_NPROBE)
         self.top_k_default = int(self.conf.KG_RETRIEVAL_TOP_K_DEFAULT)
         self.top_k_max = int(self.conf.KG_RETRIEVAL_TOP_K_MAX)
-        self.lexical_weight_default = float(self.conf.KG_RETRIEVAL_LEXICAL_WEIGHT_DEFAULT)
-        self.expansion_limit_default = int(self.conf.KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT)
+        self.lexical_weight_default = float(
+            self.conf.KG_RETRIEVAL_LEXICAL_WEIGHT_DEFAULT
+        )
+        self.expansion_limit_default = int(
+            self.conf.KG_RETRIEVAL_EXPANSION_LIMIT_DEFAULT
+        )
         self.expansion_limit_max = int(self.conf.KG_RETRIEVAL_EXPANSION_LIMIT_MAX)
         self.primary_limit_min = int(self.conf.KG_RETRIEVAL_PRIMARY_LIMIT_MIN)
-        self.primary_limit_multiplier = int(self.conf.KG_RETRIEVAL_PRIMARY_LIMIT_MULTIPLIER)
+        self.primary_limit_multiplier = int(
+            self.conf.KG_RETRIEVAL_PRIMARY_LIMIT_MULTIPLIER
+        )
         self.keyword_limit_min = int(self.conf.KG_RETRIEVAL_KEYWORD_LIMIT_MIN)
-        self.keyword_limit_multiplier = int(self.conf.KG_RETRIEVAL_KEYWORD_LIMIT_MULTIPLIER)
+        self.keyword_limit_multiplier = int(
+            self.conf.KG_RETRIEVAL_KEYWORD_LIMIT_MULTIPLIER
+        )
         self.vector_limit_max = int(self.conf.KG_RETRIEVAL_VECTOR_LIMIT_MAX)
         self.seed_entity_top_n = int(self.conf.KG_RETRIEVAL_SEED_ENTITY_TOP_N)
         self.neighbor_limit_min = int(self.conf.KG_RETRIEVAL_NEIGHBOR_LIMIT_MIN)
         self.neighbor_limit_max = int(self.conf.KG_RETRIEVAL_NEIGHBOR_LIMIT_MAX)
         self.community_top_k_default = int(self.conf.KG_COMMUNITY_TOP_K_DEFAULT)
         self.community_top_k_max = int(self.conf.KG_COMMUNITY_TOP_K_MAX)
-        self.disambiguation_margin_default = float(self.conf.KG_DISAMBIGUATION_MARGIN_DEFAULT)
-        self.disambiguation_llm_confidence_min = float(self.conf.KG_DISAMBIGUATION_LLM_CONFIDENCE_MIN)
+        self.disambiguation_margin_default = float(
+            self.conf.KG_DISAMBIGUATION_MARGIN_DEFAULT
+        )
+        self.disambiguation_llm_confidence_min = float(
+            self.conf.KG_DISAMBIGUATION_LLM_CONFIDENCE_MIN
+        )
 
         self._ensure_collection()
         self._refresh_vector_field()
@@ -269,25 +303,56 @@ class KgMilvusStore:
         如果集合不存在，则创建新的集合并定义 schema 和索引。
 
         """
-        with log_duration("kg_milvus.ensure_collection", collection=self.collection_name):
+        with log_duration(
+            "kg_milvus.ensure_collection", collection=self.collection_name
+        ):
             if self.client.has_collection(self.collection_name):
                 self.client.load_collection(self.collection_name)
                 return
 
             schema = self.client.create_schema(auto_id=True, enable_dynamic_field=False)
-            schema.add_field(field_name="pk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
-            schema.add_field(field_name="doc_id", datatype=DataType.VARCHAR, max_length=64)
-            schema.add_field(field_name="item_type", datatype=DataType.VARCHAR, max_length=32)
-            schema.add_field(field_name="name", datatype=DataType.VARCHAR, max_length=512)
-            schema.add_field(field_name="label", datatype=DataType.VARCHAR, max_length=128)
-            schema.add_field(field_name="source_name", datatype=DataType.VARCHAR, max_length=512)
-            schema.add_field(field_name="source_label", datatype=DataType.VARCHAR, max_length=128)
-            schema.add_field(field_name="relation_type", datatype=DataType.VARCHAR, max_length=128)
-            schema.add_field(field_name="target_name", datatype=DataType.VARCHAR, max_length=512)
-            schema.add_field(field_name="target_label", datatype=DataType.VARCHAR, max_length=128)
-            schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
-            schema.add_field(field_name="timestamp", datatype=DataType.VARCHAR, max_length=64)
-            schema.add_field(field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=1024)
+            schema.add_field(
+                field_name="pk_id",
+                datatype=DataType.INT64,
+                is_primary=True,
+                auto_id=True,
+            )
+            schema.add_field(
+                field_name="doc_id", datatype=DataType.VARCHAR, max_length=64
+            )
+            schema.add_field(
+                field_name="item_type", datatype=DataType.VARCHAR, max_length=32
+            )
+            schema.add_field(
+                field_name="name", datatype=DataType.VARCHAR, max_length=512
+            )
+            schema.add_field(
+                field_name="label", datatype=DataType.VARCHAR, max_length=128
+            )
+            schema.add_field(
+                field_name="source_name", datatype=DataType.VARCHAR, max_length=512
+            )
+            schema.add_field(
+                field_name="source_label", datatype=DataType.VARCHAR, max_length=128
+            )
+            schema.add_field(
+                field_name="relation_type", datatype=DataType.VARCHAR, max_length=128
+            )
+            schema.add_field(
+                field_name="target_name", datatype=DataType.VARCHAR, max_length=512
+            )
+            schema.add_field(
+                field_name="target_label", datatype=DataType.VARCHAR, max_length=128
+            )
+            schema.add_field(
+                field_name="text", datatype=DataType.VARCHAR, max_length=65535
+            )
+            schema.add_field(
+                field_name="timestamp", datatype=DataType.VARCHAR, max_length=64
+            )
+            schema.add_field(
+                field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=1024
+            )
 
             index_params = self.client.prepare_index_params()
             index_params.add_index(
@@ -316,10 +381,14 @@ class KgMilvusStore:
 
         """
         self.anns_field = "embedding"
-        self.metric_type = self._infer_metric_type_from_index(default_metric=self.metric_type)
+        self.metric_type = self._infer_metric_type_from_index(
+            default_metric=self.metric_type
+        )
 
     @staticmethod
-    def _normalize_metric_type(metric_type: Optional[str], default: str = "COSINE") -> str:
+    def _normalize_metric_type(
+        metric_type: Optional[str], default: str = "COSINE"
+    ) -> str:
         """
         规范化 metric_type，未知值回退为默认值。
 
@@ -335,7 +404,9 @@ class KgMilvusStore:
             return candidate
         return str(default or "COSINE").strip().upper() or "COSINE"
 
-    def _infer_metric_type_from_index(self, default_metric: Optional[str] = None) -> str:
+    def _infer_metric_type_from_index(
+        self, default_metric: Optional[str] = None
+    ) -> str:
         """
         从集合索引元数据推断向量检索的 metric_type。
 
@@ -345,10 +416,14 @@ class KgMilvusStore:
         Returns:
             str: 可用于检索的 metric_type
         """
-        fallback_metric = self._normalize_metric_type(default_metric, default=self.metric_type)
+        fallback_metric = self._normalize_metric_type(
+            default_metric, default=self.metric_type
+        )
         index_names: List[str] = []
         try:
-            index_names = self.client.list_indexes(collection_name=self.collection_name, field_name=self.anns_field)
+            index_names = self.client.list_indexes(
+                collection_name=self.collection_name, field_name=self.anns_field
+            )
         except TypeError as exc:
             # 兼容旧版 API（不支持 field_name 参数）
             logger.warning(
@@ -376,7 +451,9 @@ class KgMilvusStore:
             if not index_name:
                 continue
             try:
-                index_desc = self.client.describe_index(collection_name=self.collection_name, index_name=str(index_name))
+                index_desc = self.client.describe_index(
+                    collection_name=self.collection_name, index_name=str(index_name)
+                )
             except Exception as exc:
                 logger.debug(
                     "kg_milvus_describe_index_failed_skip: collection=%s index_name=%s error_type=%s error=%s",
@@ -395,7 +472,9 @@ class KgMilvusStore:
 
             metric_value = str(index_desc.get("metric_type") or "").strip()
             if metric_value:
-                return self._normalize_metric_type(metric_value, default=fallback_metric)
+                return self._normalize_metric_type(
+                    metric_value, default=fallback_metric
+                )
 
         return fallback_metric
 
@@ -411,13 +490,19 @@ class KgMilvusStore:
             Optional[str]: 解析出的 expected metric，无法解析时返回 None
         """
         text = str(error_text or "")
-        match = re.search(r"expected=([A-Za-z0-9_]+)\]\[actual=", text, flags=re.IGNORECASE)
+        match = re.search(
+            r"expected=([A-Za-z0-9_]+)\]\[actual=", text, flags=re.IGNORECASE
+        )
         if not match:
             return None
-        expected_metric = KgMilvusStore._normalize_metric_type(match.group(1), default="")
+        expected_metric = KgMilvusStore._normalize_metric_type(
+            match.group(1), default=""
+        )
         return expected_metric or None
 
-    def _search_with_params(self, search_kwargs: Dict[str, Any], search_params: Dict[str, Any]) -> List[List[dict]]:
+    def _search_with_params(
+        self, search_kwargs: Dict[str, Any], search_params: Dict[str, Any]
+    ) -> List[List[dict]]:
         """用当前 pymilvus 客户端参数格式执行向量检索。
 
         Args:
@@ -441,12 +526,16 @@ class KgMilvusStore:
         Returns:
             None
         """
-        with log_duration("kg_milvus.clear_collection", collection=self.collection_name):
+        with log_duration(
+            "kg_milvus.clear_collection", collection=self.collection_name
+        ):
             if self.client.has_collection(self.collection_name):
                 self.client.drop_collection(self.collection_name)
             self._ensure_collection()
 
-    async def _build_entity_rows(self, neo4j_client, labels: Optional[List[str]], timestamp: str) -> List[Dict[str, Any]]:
+    async def _build_entity_rows(
+        self, neo4j_client, labels: Optional[List[str]], timestamp: str
+    ) -> List[Dict[str, Any]]:
         """
         从 Neo4j 节点生成实体入库行数据。
 
@@ -482,7 +571,9 @@ class KgMilvusStore:
                 node_id = node_data["node_id"]
                 name = str(node.get("name") or f"{label}_{node_id}")
                 text = f"实体 {name}，类型 {label}。属性：{str(dict(node))}"
-                doc_id = hashlib.md5(f"entity_{label}_{node_id}_{name}".encode("utf-8")).hexdigest()
+                doc_id = hashlib.md5(
+                    f"entity_{label}_{node_id}_{name}".encode("utf-8")
+                ).hexdigest()
                 rows.append(
                     {
                         "doc_id": doc_id,
@@ -500,7 +591,9 @@ class KgMilvusStore:
                 )
         return rows
 
-    async def _build_relationship_rows(self, neo4j_client, timestamp: str) -> List[Dict[str, Any]]:
+    async def _build_relationship_rows(
+        self, neo4j_client, timestamp: str
+    ) -> List[Dict[str, Any]]:
         """
         从 Neo4j 边生成关系入库行数据。
 
@@ -531,7 +624,9 @@ class KgMilvusStore:
 
             text = f"关系 {from_name}({from_label}) -[{rel_type}]-> {to_name}({to_label})。属性：{str(rel_props)}"
             doc_id = hashlib.md5(
-                f"rel_{rel.get('from_id')}_{rel_type}_{rel.get('to_id')}".encode("utf-8")
+                f"rel_{rel.get('from_id')}_{rel_type}_{rel.get('to_id')}".encode(
+                    "utf-8"
+                )
             ).hexdigest()
             rows.append(
                 {
@@ -585,7 +680,9 @@ class KgMilvusStore:
                         "target_label": item["target_label"],
                         "text": item["text"],
                         "timestamp": item["timestamp"],
-                        "embedding": vec.tolist() if hasattr(vec, "tolist") else list(vec),
+                        "embedding": (
+                            vec.tolist() if hasattr(vec, "tolist") else list(vec)
+                        ),
                     }
                 )
 
@@ -645,7 +742,11 @@ class KgMilvusStore:
         Returns:
             Dict[str, Any]: 重建统计信息，包含实体数、关系数、总文档数和时间戳
         """
-        with log_duration("kg_milvus.rebuild_from_neo4j", collection=self.collection_name, batch_size=batch_size):
+        with log_duration(
+            "kg_milvus.rebuild_from_neo4j",
+            collection=self.collection_name,
+            batch_size=batch_size,
+        ):
             if progress_callback:
                 progress_callback("正在清理旧的 Milvus 集合")
             await asyncio.to_thread(self.clear_collection)
@@ -654,7 +755,9 @@ class KgMilvusStore:
             with log_duration("kg_milvus.build_entities"):
                 if progress_callback:
                     progress_callback("正在读取 Neo4j 实体数据")
-                entity_rows = await self._build_entity_rows(neo4j_client, labels, timestamp)
+                entity_rows = await self._build_entity_rows(
+                    neo4j_client, labels, timestamp
+                )
             with log_duration("kg_milvus.build_relationships"):
                 if progress_callback:
                     progress_callback("正在读取 Neo4j 关系数据")
@@ -663,11 +766,15 @@ class KgMilvusStore:
             with log_duration("kg_milvus.insert_entities", count=len(entity_rows)):
                 if progress_callback:
                     progress_callback("正在生成实体向量并写入 Milvus")
-                entity_inserted = await asyncio.to_thread(self._upsert_rows, entity_rows, batch_size)
+                entity_inserted = await asyncio.to_thread(
+                    self._upsert_rows, entity_rows, batch_size
+                )
             with log_duration("kg_milvus.insert_relationships", count=len(rel_rows)):
                 if progress_callback:
                     progress_callback("正在生成关系向量并写入 Milvus")
-                rel_inserted = await asyncio.to_thread(self._upsert_rows, rel_rows, batch_size)
+                rel_inserted = await asyncio.to_thread(
+                    self._upsert_rows, rel_rows, batch_size
+                )
 
             return {
                 "collection_name": self.collection_name,
@@ -742,7 +849,9 @@ class KgMilvusStore:
         matched = sum(1 for term in terms if str(term).lower() in haystack)
         return matched / max(1, len(terms))
 
-    async def _search_vector_rows(self, query_text: str, limit: int) -> List[Dict[str, Any]]:
+    async def _search_vector_rows(
+        self, query_text: str, limit: int
+    ) -> List[Dict[str, Any]]:
         """
         执行向量检索并转为统一行结构。
 
@@ -757,7 +866,10 @@ class KgMilvusStore:
         if not query_value:
             return []
 
-        vec_np = np.asarray(self._get_embedder().encode([query_value], normalize_embeddings=True)[0], dtype=np.float32)
+        vec_np = np.asarray(
+            self._get_embedder().encode([query_value], normalize_embeddings=True)[0],
+            dtype=np.float32,
+        )
         vec = vec_np.reshape(-1).tolist()
         search_kwargs = {
             "collection_name": self.collection_name,
@@ -786,7 +898,9 @@ class KgMilvusStore:
         retry_count = 0
         while True:
             try:
-                results = self._search_with_params(search_kwargs=search_kwargs, search_params=search_params)
+                results = self._search_with_params(
+                    search_kwargs=search_kwargs, search_params=search_params
+                )
                 break
             except Exception as exc:
                 error_text = str(exc)
@@ -803,7 +917,9 @@ class KgMilvusStore:
                 if "metric type not match" in error_text:
                     expected_metric = self._extract_expected_metric_type(error_text)
                     if not expected_metric:
-                        expected_metric = self._infer_metric_type_from_index(default_metric=self.metric_type)
+                        expected_metric = self._infer_metric_type_from_index(
+                            default_metric=self.metric_type
+                        )
                     if expected_metric and expected_metric != self.metric_type:
                         self.metric_type = expected_metric
                         search_params["metric_type"] = self.metric_type
@@ -829,7 +945,9 @@ class KgMilvusStore:
                     "target_label": row.get("target_label"),
                     "text": row.get("text"),
                     "timestamp": row.get("timestamp"),
-                    "vector_score": self._to_score(hit.get("distance") if isinstance(hit, dict) else 0.0),
+                    "vector_score": self._to_score(
+                        hit.get("distance") if isinstance(hit, dict) else 0.0
+                    ),
                 }
             )
         return rows
@@ -844,9 +962,11 @@ class KgMilvusStore:
         Returns:
             str: 转义后的字符串
         """
-        return str(value or "").replace("\\", "\\\\").replace("\"", "\\\"")
+        return str(value or "").replace("\\", "\\\\").replace('"', '\\"')
 
-    async def _query_relation_neighbors(self, entity_names: List[str], limit: int) -> List[Dict[str, Any]]:
+    async def _query_relation_neighbors(
+        self, entity_names: List[str], limit: int
+    ) -> List[Dict[str, Any]]:
         """
         按实体名扩展查询其相邻关系行。
 
@@ -924,7 +1044,11 @@ class KgMilvusStore:
                 return []
             if text.startswith("[") and text.endswith("]"):
                 text = text[1:-1]
-            parts = [item.strip().strip("'\"") for item in re.split(r"[,，;；|]", text) if item.strip()]
+            parts = [
+                item.strip().strip("'\"")
+                for item in re.split(r"[,，;；|]", text)
+                if item.strip()
+            ]
             return [item for item in parts if item]
         return []
 
@@ -983,7 +1107,9 @@ class KgMilvusStore:
         entities: List[Dict[str, Any]],
         relationships: List[Dict[str, Any]],
         margin: float,
-        resolver: Optional[Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]] = None,
+        resolver: Optional[
+            Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]
+        ] = None,
     ) -> Dict[str, Any]:
         """
         基于别名映射与可选 LLM 回退执行实体消歧。
@@ -1049,7 +1175,9 @@ class KgMilvusStore:
         llm_calls = 0
 
         for canonical, candidates in grouped.items():
-            ordered = sorted(candidates, key=lambda x: self._to_score(x.get("score")), reverse=True)
+            ordered = sorted(
+                candidates, key=lambda x: self._to_score(x.get("score")), reverse=True
+            )
             leader = dict(ordered[0])
             top1 = self._to_score(ordered[0].get("score"))
             top2 = self._to_score(ordered[1].get("score")) if len(ordered) > 1 else 0.0
@@ -1067,7 +1195,15 @@ class KgMilvusStore:
                 ]
                 try:
                     resolve_result = resolver(str(query or ""), candidate_rows, margin)
-                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+                except (
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    OSError,
+                    ImportError,
+                ) as exc:
                     logger.warning(
                         "kg_milvus_disambiguation_resolver_failed: query=%s margin=%s error_type=%s error=%s",
                         str(query or ""),
@@ -1079,12 +1215,24 @@ class KgMilvusStore:
                     resolve_result = {}
 
                 if isinstance(resolve_result, dict):
-                    self._merge_token_usage(token_usage, resolve_result.get("token_usage"))
+                    self._merge_token_usage(
+                        token_usage, resolve_result.get("token_usage")
+                    )
                     llm_calls += int(resolve_result.get("llm_calls") or 0)
 
-                resolved_name = str(resolve_result.get("canonical_name") or "").strip() if isinstance(resolve_result, dict) else ""
-                resolved_conf = self._to_score(resolve_result.get("confidence")) if isinstance(resolve_result, dict) else 0.0
-                if resolved_name and resolved_conf >= float(self.disambiguation_llm_confidence_min):
+                resolved_name = (
+                    str(resolve_result.get("canonical_name") or "").strip()
+                    if isinstance(resolve_result, dict)
+                    else ""
+                )
+                resolved_conf = (
+                    self._to_score(resolve_result.get("confidence"))
+                    if isinstance(resolve_result, dict)
+                    else 0.0
+                )
+                if resolved_name and resolved_conf >= float(
+                    self.disambiguation_llm_confidence_min
+                ):
                     for row in ordered:
                         if str(row.get("name") or "").strip() == resolved_name:
                             leader = dict(row)
@@ -1128,7 +1276,11 @@ class KgMilvusStore:
 
         forced_query = ""
         if ambiguous_entities:
-            seeds = [str(item.get("canonical_name") or "").strip() for item in ambiguous_entities[:3] if str(item.get("canonical_name") or "").strip()]
+            seeds = [
+                str(item.get("canonical_name") or "").strip()
+                for item in ambiguous_entities[:3]
+                if str(item.get("canonical_name") or "").strip()
+            ]
             if seeds:
                 forced_query = "；".join(seeds) + " 的差异诊断与关键监测指标"
 
@@ -1198,13 +1350,19 @@ class KgMilvusStore:
             return {
                 "communities": [],
                 "community_reports": [],
-                "community_detection": {"algorithm": "leiden", "community_count": 0, "top_community_score": 0.0},
+                "community_detection": {
+                    "algorithm": "leiden",
+                    "community_count": 0,
+                    "top_community_score": 0.0,
+                },
                 "token_usage": self._empty_token_usage(),
                 "llm_calls": 0,
             }
 
         if not _LEIDEN_AVAILABLE or ig is None or leidenalg is None:
-            raise RuntimeError("Leiden 依赖未安装，社区检测仅支持 Leiden，请安装 igraph 和 leidenalg")
+            raise RuntimeError(
+                "Leiden 依赖未安装，社区检测仅支持 Leiden，请安装 igraph 和 leidenalg"
+            )
 
         node_names = sorted([str(item) for item in graph.nodes()])
         index = {name: idx for idx, name in enumerate(node_names)}
@@ -1221,21 +1379,30 @@ class KgMilvusStore:
             weights=edge_weights if edge_weights else None,
             seed=42,
         )
-        raw_communities = [set(node_names[idx] for idx in community) for community in partition]
+        raw_communities = [
+            set(node_names[idx] for idx in community) for community in partition
+        ]
         communities: List[Dict[str, Any]] = []
 
         terms = [str(item).lower() for item in query_terms if str(item).strip()]
         for idx, members in enumerate(raw_communities, start=1):
             nodes = sorted([str(item) for item in members if str(item).strip()])
             subgraph = graph.subgraph(nodes)
-            density = float(nx.density(subgraph)) if subgraph.number_of_nodes() > 1 else 0.0
-            weights = [self._to_score(subgraph[u][v].get("weight")) for u, v in subgraph.edges()]
+            density = (
+                float(nx.density(subgraph)) if subgraph.number_of_nodes() > 1 else 0.0
+            )
+            weights = [
+                self._to_score(subgraph[u][v].get("weight"))
+                for u, v in subgraph.edges()
+            ]
             avg_weight = (sum(weights) / len(weights)) if weights else 0.0
             evidence_coverage = max(0.0, min(avg_weight, 1.0))
             joined = " ".join(nodes).lower()
             query_alignment = 0.0
             if terms:
-                query_alignment = sum(1 for token in terms if token in joined) / max(1, len(terms))
+                query_alignment = sum(1 for token in terms if token in joined) / max(
+                    1, len(terms)
+                )
             score = 0.5 * density + 0.3 * evidence_coverage + 0.2 * query_alignment
 
             communities.append(
@@ -1250,14 +1417,20 @@ class KgMilvusStore:
                 }
             )
 
-        communities.sort(key=lambda item: self._to_score(item.get("score")), reverse=True)
-        top_communities = communities[: max(1, min(top_k, int(self.community_top_k_max)))]
+        communities.sort(
+            key=lambda item: self._to_score(item.get("score")), reverse=True
+        )
+        top_communities = communities[
+            : max(1, min(top_k, int(self.community_top_k_max)))
+        ]
 
         reports: List[Dict[str, Any]] = []
         token_usage = self._empty_token_usage()
         llm_calls = 0
         for row in top_communities:
-            summary, summary_token_usage = self._generate_community_report_with_llm(query, row, relationships)
+            summary, summary_token_usage = self._generate_community_report_with_llm(
+                query, row, relationships
+            )
             self._merge_token_usage(token_usage, summary_token_usage)
             reports.append(
                 {
@@ -1268,7 +1441,9 @@ class KgMilvusStore:
                 }
             )
 
-        top_score = self._to_score(top_communities[0].get("score")) if top_communities else 0.0
+        top_score = (
+            self._to_score(top_communities[0].get("score")) if top_communities else 0.0
+        )
         return {
             "communities": communities,
             "community_reports": reports,
@@ -1291,7 +1466,9 @@ class KgMilvusStore:
         enable_community_detection: bool = True,
         community_top_k: Optional[int] = None,
         disambiguation_margin: Optional[float] = None,
-        disambiguation_resolver: Optional[Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]] = None,
+        disambiguation_resolver: Optional[
+            Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]
+        ] = None,
     ) -> Dict[str, Any]:
         """加读锁后执行图谱实体关系检索。
 
@@ -1313,7 +1490,9 @@ class KgMilvusStore:
             Dict[str, Any]: 图谱检索结果或重建中降级结果。
         """
         try:
-            async with concurrency_guard.reader_lock(f"kg-milvus:{self.collection_name}", timeout=2.0):
+            async with concurrency_guard.reader_lock(
+                f"kg-milvus:{self.collection_name}", timeout=2.0
+            ):
                 return await self._search_entity_relations_unlocked(
                     query=query,
                     top_k=top_k,
@@ -1359,7 +1538,9 @@ class KgMilvusStore:
         enable_community_detection: bool = True,
         community_top_k: Optional[int] = None,
         disambiguation_margin: Optional[float] = None,
-        disambiguation_resolver: Optional[Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]] = None,
+        disambiguation_resolver: Optional[
+            Callable[[str, List[Dict[str, Any]], float], Dict[str, Any]]
+        ] = None,
     ) -> Dict[str, Any]:
         """
         执行图谱混合检索、实体消歧与社区发现主流程。
@@ -1384,10 +1565,26 @@ class KgMilvusStore:
             return {"entities": [], "relationships": []}
 
         effective_top_k = int(top_k) if top_k is not None else int(self.top_k_default)
-        effective_lexical_weight = float(lexical_weight) if lexical_weight is not None else float(self.lexical_weight_default)
-        effective_expansion_limit = int(expansion_limit) if expansion_limit is not None else int(self.expansion_limit_default)
-        effective_community_top_k = int(community_top_k) if community_top_k is not None else int(self.community_top_k_default)
-        effective_disambiguation_margin = float(disambiguation_margin) if disambiguation_margin is not None else float(self.disambiguation_margin_default)
+        effective_lexical_weight = (
+            float(lexical_weight)
+            if lexical_weight is not None
+            else float(self.lexical_weight_default)
+        )
+        effective_expansion_limit = (
+            int(expansion_limit)
+            if expansion_limit is not None
+            else int(self.expansion_limit_default)
+        )
+        effective_community_top_k = (
+            int(community_top_k)
+            if community_top_k is not None
+            else int(self.community_top_k_default)
+        )
+        effective_disambiguation_margin = (
+            float(disambiguation_margin)
+            if disambiguation_margin is not None
+            else float(self.disambiguation_margin_default)
+        )
 
         safe_top_k = max(1, min(effective_top_k, int(self.top_k_max)))
         safe_lexical_weight = max(0.0, min(float(effective_lexical_weight), 1.0))
@@ -1395,7 +1592,10 @@ class KgMilvusStore:
 
         primary_rows = await self._search_vector_rows(
             query,
-            limit=max(int(self.primary_limit_min), safe_top_k * int(self.primary_limit_multiplier)),
+            limit=max(
+                int(self.primary_limit_min),
+                safe_top_k * int(self.primary_limit_multiplier),
+            ),
         )
         keyword_rows: List[Dict[str, Any]] = []
         if terms:
@@ -1403,7 +1603,10 @@ class KgMilvusStore:
             if keyword_query and keyword_query != query:
                 keyword_rows = await self._search_vector_rows(
                     keyword_query,
-                    limit=max(int(self.keyword_limit_min), safe_top_k * int(self.keyword_limit_multiplier)),
+                    limit=max(
+                        int(self.keyword_limit_min),
+                        safe_top_k * int(self.keyword_limit_multiplier),
+                    ),
                 )
 
         merged: Dict[str, Dict[str, Any]] = {}
@@ -1415,17 +1618,26 @@ class KgMilvusStore:
             if existing is None:
                 merged[doc_id] = dict(row)
                 continue
-            existing["vector_score"] = max(self._to_score(existing.get("vector_score")), self._to_score(row.get("vector_score")))
+            existing["vector_score"] = max(
+                self._to_score(existing.get("vector_score")),
+                self._to_score(row.get("vector_score")),
+            )
             if not existing.get("text") and row.get("text"):
                 existing["text"] = row.get("text")
 
         # 基于高分实体扩展关系，补齐图结构证据（参考RAGFlow的n-hop补边思路）。
         seed_entities = [
             str(item.get("name") or "").strip()
-            for item in sorted(merged.values(), key=lambda x: self._to_score(x.get("vector_score")), reverse=True)
+            for item in sorted(
+                merged.values(),
+                key=lambda x: self._to_score(x.get("vector_score")),
+                reverse=True,
+            )
             if str(item.get("item_type") or "") == "entity"
         ]
-        seed_entities = [name for name in seed_entities if name][: int(self.seed_entity_top_n)]
+        seed_entities = [name for name in seed_entities if name][
+            : int(self.seed_entity_top_n)
+        ]
         neighbor_rows: List[Dict[str, Any]] = []
         if seed_entities:
             neighbor_rows = await self._query_relation_neighbors(
@@ -1448,14 +1660,20 @@ class KgMilvusStore:
 
         ranked_rows: List[Dict[str, Any]] = []
         for row in merged.values():
-            lexical_score = self._lexical_overlap_score(str(row.get("text") or ""), terms)
+            lexical_score = self._lexical_overlap_score(
+                str(row.get("text") or ""), terms
+            )
             vector_score = self._to_score(row.get("vector_score"))
-            hybrid_score = (1.0 - safe_lexical_weight) * vector_score + safe_lexical_weight * lexical_score
+            hybrid_score = (
+                1.0 - safe_lexical_weight
+            ) * vector_score + safe_lexical_weight * lexical_score
             row["lexical_score"] = lexical_score
             row["hybrid_score"] = hybrid_score
             ranked_rows.append(row)
 
-        ranked_rows.sort(key=lambda item: self._to_score(item.get("hybrid_score")), reverse=True)
+        ranked_rows.sort(
+            key=lambda item: self._to_score(item.get("hybrid_score")), reverse=True
+        )
 
         entities: List[Dict[str, Any]] = []
         relationships: List[Dict[str, Any]] = []
@@ -1471,7 +1689,9 @@ class KgMilvusStore:
             }
 
             if item_type == "entity" and len(entities) < safe_top_k:
-                entities.append({**base, "name": row.get("name"), "label": row.get("label")})
+                entities.append(
+                    {**base, "name": row.get("name"), "label": row.get("label")}
+                )
             elif item_type == "relationship" and len(relationships) < safe_top_k:
                 relationships.append(
                     {
@@ -1559,8 +1779,12 @@ class KgMilvusStore:
                 "expanded_rows": len(neighbor_rows),
                 "merged_rows": len(merged),
                 "lexical_weight": safe_lexical_weight,
-                "force_supplement_required": bool(disambiguation_result.get("force_supplement_required")),
-                "forced_supplement_query": str(disambiguation_result.get("forced_supplement_query") or ""),
+                "force_supplement_required": bool(
+                    disambiguation_result.get("force_supplement_required")
+                ),
+                "forced_supplement_query": str(
+                    disambiguation_result.get("forced_supplement_query") or ""
+                ),
                 "disambiguation": disambiguation_result.get("disambiguation_meta", {}),
                 "community_detection": community_result.get("community_detection", {}),
                 "llm_calls": llm_calls,

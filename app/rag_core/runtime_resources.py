@@ -105,4 +105,3 @@ def get_shared_kg_milvus_store(conf: Optional[Config] = None) -> KgMilvusStore:
             )
             _KG_STORES[key] = store
     return store
-

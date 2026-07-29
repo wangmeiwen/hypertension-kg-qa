@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.backend.security.admin_auth import get_current_admin_user, is_logged_in, logout, verify_login
+from app.backend.security.admin_auth import (
+    get_current_admin_user,
+    is_logged_in,
+    logout,
+    verify_login,
+)
 
 
 class AdminAuthService:
@@ -32,7 +37,11 @@ class AdminAuthService:
         Returns:
             dict[str, Any]: 登录状态和当前管理员用户信息。
         """
-        return {"ok": True, "logged_in": is_logged_in(), "user": get_current_admin_user()}
+        return {
+            "ok": True,
+            "logged_in": is_logged_in(),
+            "user": get_current_admin_user(),
+        }
 
     async def admin_logout(self) -> dict[str, Any]:
         """退出当前管理员登录状态。

@@ -57,13 +57,17 @@ def test_append_jsonl_atomic_concurrent_writes_are_complete(tmp_path: Path) -> N
     def write_line(index: int) -> None:
         append_jsonl_atomic(target, {"index": index, "message": f"value-{index}"})
 
-    threads = [threading.Thread(target=write_line, args=(index,)) for index in range(25)]
+    threads = [
+        threading.Thread(target=write_line, args=(index,)) for index in range(25)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
 
-    rows = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    rows = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
     assert len(rows) == 25
     assert sorted(row["index"] for row in rows) == list(range(25))
 
@@ -88,7 +92,9 @@ def test_document_embedding_jobs_serialize_same_collection_writes() -> None:
         active = 0
         max_active = 0
 
-        def fake_blocking(file_bytes: bytes, filename: str, stage_callback: Any) -> dict[str, Any]:
+        def fake_blocking(
+            file_bytes: bytes, filename: str, stage_callback: Any
+        ) -> dict[str, Any]:
             nonlocal active, max_active
             _ = (file_bytes, stage_callback)
             active += 1
@@ -115,7 +121,9 @@ def test_graph_import_register_job_deduplicates_active_same_file() -> None:
     from tests.conftest import await_call, log_api_error
 
     class FakeNeo4j:
-        async def run_cypher(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        async def run_cypher(
+            self, query: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
             _ = (query, params)
             return []
 
@@ -135,8 +143,12 @@ def test_graph_import_register_job_deduplicates_active_same_file() -> None:
             "run_id": "run-1",
         }
 
-        first = await service._register_job(service.IMPORT_JOB_TYPE, seed=seed, dedupe_active=True)
-        second = await service._register_job(service.IMPORT_JOB_TYPE, seed=seed, dedupe_active=True)
+        first = await service._register_job(
+            service.IMPORT_JOB_TYPE, seed=seed, dedupe_active=True
+        )
+        second = await service._register_job(
+            service.IMPORT_JOB_TYPE, seed=seed, dedupe_active=True
+        )
 
         assert second["_deduplicated"] is True
         assert second["existing_job_id"] == first["job_id"]

@@ -3,7 +3,6 @@
 提供知识图谱子代理 LangGraph 的执行器封装。
 """
 
-
 from __future__ import annotations
 
 from typing import Any
@@ -39,16 +38,22 @@ class KgSubAgentExecutor:
         arguments_value = req.get("arguments")
         query_terms_value = req.get("query_terms")
         state: KgSubAgentState = {
-            "input_question": str(req.get("subquery") or req.get("question") or "").strip(),
+            "input_question": str(
+                req.get("subquery") or req.get("question") or ""
+            ).strip(),
             "subtask_id": int(req.get("subquery_id") or 1),
-            "constraints": constraints_value
-            if isinstance(constraints_value, dict)
-            else {"allow_extra_retrieval": False, "max_tool_calls": 3},
+            "constraints": (
+                constraints_value
+                if isinstance(constraints_value, dict)
+                else {"allow_extra_retrieval": False, "max_tool_calls": 3}
+            ),
             "tool_name": str(req.get("tool_name") or "kg_auto").strip(),
             "arguments": arguments_value if isinstance(arguments_value, dict) else {},
-            "query_terms": [str(item or "").strip() for item in query_terms_value]
-            if isinstance(query_terms_value, list)
-            else [],
+            "query_terms": (
+                [str(item or "").strip() for item in query_terms_value]
+                if isinstance(query_terms_value, list)
+                else []
+            ),
             "attempt_count": 0,
         }
         output = await run_kg_graph(self.graph, state)

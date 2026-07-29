@@ -44,7 +44,10 @@ def test_admin_documents_router_routes():
     service = DocumentsServiceStub()
     client = create_client(service)
 
-    uploaded = client.post("/admin/text-embedding/jobs/embed", files={"file": ("guide.pdf", b"hello", "application/pdf")})
+    uploaded = client.post(
+        "/admin/text-embedding/jobs/embed",
+        files={"file": ("guide.pdf", b"hello", "application/pdf")},
+    )
     assert uploaded.status_code == 200
     assert uploaded.json()["data"]["job_id"] == "text-job-1"
 

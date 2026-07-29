@@ -3,7 +3,6 @@
 提供知识图谱子代理 LangGraph 节点之间传递的状态类型定义。
 """
 
-
 from __future__ import annotations
 
 from typing import Any, TypedDict

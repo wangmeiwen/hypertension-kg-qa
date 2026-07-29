@@ -30,9 +30,15 @@ class IterativeAgent:
         """
         mcp = mcp_server if mcp_server is not None else get_mcp_server()
         self.conf = Config()
-        self.graph_subagent = graph_subagent if graph_subagent is not None else GraphSubAgent(mcp)
-        self.rag_subagent = rag_subagent if rag_subagent is not None else RagSubAgent(mcp)
-        self.subagent_client = SubAgentClientFactory(self.graph_subagent, self.rag_subagent)
+        self.graph_subagent = (
+            graph_subagent if graph_subagent is not None else GraphSubAgent(mcp)
+        )
+        self.rag_subagent = (
+            rag_subagent if rag_subagent is not None else RagSubAgent(mcp)
+        )
+        self.subagent_client = SubAgentClientFactory(
+            self.graph_subagent, self.rag_subagent
+        )
         self.executor = OrchestratorExecutor(self.subagent_client)
 
     async def aclose(self) -> None:

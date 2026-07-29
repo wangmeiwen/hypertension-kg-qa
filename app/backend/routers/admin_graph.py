@@ -25,9 +25,13 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
         return await service.get_graph_relationship_types()
 
     @router.get("/admin/graph/nodes")
-    async def get_graph_nodes(label: str = "", keyword: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def get_graph_nodes(
+        label: str = "", keyword: str = "", limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         """获取节点列表。"""
-        return await service.get_graph_nodes(label=label, keyword=keyword, limit=limit, offset=offset)
+        return await service.get_graph_nodes(
+            label=label, keyword=keyword, limit=limit, offset=offset
+        )
 
     @router.get("/admin/graph/nodes/{node_id}")
     async def get_graph_node(node_id: int) -> dict[str, Any]:
@@ -85,12 +89,16 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
         return await service.get_graph_job(job_id=job_id)
 
     @router.post("/admin/graph/embed-to-milvus")
-    async def embed_graph_to_milvus(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    async def embed_graph_to_milvus(
+        data: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """将知识图谱嵌入到 Milvus。"""
         return await service.embed_graph_to_milvus(data)
 
     @router.post("/admin/graph/jobs/embed-milvus")
-    async def submit_embed_milvus_job(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    async def submit_embed_milvus_job(
+        data: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """提交图谱嵌入后台任务。"""
         return await service.submit_graph_embed_milvus_job(data)
 

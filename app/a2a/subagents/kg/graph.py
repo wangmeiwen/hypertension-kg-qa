@@ -3,7 +3,6 @@
 提供知识图谱子代理 LangGraph 拓扑构建、编译和降级运行能力。
 """
 
-
 from __future__ import annotations
 
 import logging
@@ -29,7 +28,15 @@ try:
     _LANGGRAPH_END: Any = _IMPORTED_LANGGRAPH_END
     _state_graph_factory: Any = _ImportedLangGraphStateGraph
     _LANGGRAPH_AVAILABLE = True
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+except (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    OSError,
+    ImportError,
+) as exc:
     logger.warning(
         "LangGraph import failed for KG subagent, fallback runner enabled: error_type=%s error=%s",
         type(exc).__name__,

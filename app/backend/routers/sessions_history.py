@@ -49,7 +49,9 @@ def create_sessions_router(service: SessionsHistoryService) -> APIRouter:
         return await service.get_messages(session_id=session_id, user_id=user_id)
 
     @router.post("/sessions/{session_id}/rollback-to-question")
-    async def rollback_to_question(session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def rollback_to_question(
+        session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """回撤到指定用户问题。"""
         return await service.rollback_to_question(session_id=session_id, data=data)
 

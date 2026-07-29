@@ -11,7 +11,10 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 from app.backend.dependencies.request_context import resolve_api_identity
-from app.backend.security.admin_auth import reset_current_admin_token, set_current_admin_token
+from app.backend.security.admin_auth import (
+    reset_current_admin_token,
+    set_current_admin_token,
+)
 from app.core.langsmith_tracing import set_trace_metadata
 from app.core.perf_logger import log_duration
 from app.backend.observability.session_logger import (
@@ -85,7 +88,9 @@ async def request_timing_middleware(request: Request, call_next):
     logged = False
     is_streaming_response = False
     client_ip = request.client.host if request.client else ""
-    request_timer_ctx = log_duration("http_request", method=request.method, path=request.url.path)
+    request_timer_ctx = log_duration(
+        "http_request", method=request.method, path=request.url.path
+    )
     request_timer_ctx.__enter__()
     request_timer_closed = False
 

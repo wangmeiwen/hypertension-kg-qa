@@ -46,6 +46,7 @@ from app.core.config import Config
 from app.rag_core.vector_store import VectorStore
 
 import logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,12 @@ class DocumentEmbedder:
             self.vector_store = vector_store
         else:
             from app.rag_core.runtime_resources import get_shared_vector_store
+
             self.vector_store = get_shared_vector_store(self.conf)
 
-    def embed_docx_sub_chunks(self, sub_chunks: List[Dict], file_name: str = "") -> Dict:
+    def embed_docx_sub_chunks(
+        self, sub_chunks: List[Dict], file_name: str = ""
+    ) -> Dict:
         """
         嵌入 DOCX 子块结果。
 
@@ -93,10 +97,12 @@ class DocumentEmbedder:
             "success": True,
             "file_name": file_name,
             "sub_chunks_count": len(sub_chunks),
-            "message": f"DOCX 子块嵌入完成，共 {len(sub_chunks)} 个子块"
+            "message": f"DOCX 子块嵌入完成，共 {len(sub_chunks)} 个子块",
         }
 
-    def embed_docling_sub_chunks(self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument) -> Dict:
+    def embed_docling_sub_chunks(
+        self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument
+    ) -> Dict:
         """
         嵌入 Docling 子块结果。
 
@@ -108,7 +114,9 @@ class DocumentEmbedder:
         Returns:
             Dict: 嵌入结果摘要。
         """
-        documents = self._convert_docling_sub_chunks_to_documents(sub_chunks, file_name, parsed)
+        documents = self._convert_docling_sub_chunks_to_documents(
+            sub_chunks, file_name, parsed
+        )
         self.vector_store.add_documents(documents)
         return {
             "success": True,
@@ -118,10 +126,12 @@ class DocumentEmbedder:
             "tables": len(parsed.tables),
             "images": len(parsed.images),
             "sub_chunks_count": len(sub_chunks),
-            "message": f"Docling 子块嵌入完成，共 {len(sub_chunks)} 个子块"
+            "message": f"Docling 子块嵌入完成，共 {len(sub_chunks)} 个子块",
         }
 
-    def _convert_docx_chunks_to_documents(self, sub_chunks: List[Dict]) -> List[Document]:
+    def _convert_docx_chunks_to_documents(
+        self, sub_chunks: List[Dict]
+    ) -> List[Document]:
         """
         将 DOCX 子块转换为 LangChain Document 对象。
 
@@ -140,36 +150,35 @@ class DocumentEmbedder:
         for chunk in sub_chunks:
             # 生成唯一ID
             unique_str = f"{chunk['source_doc']}_{chunk['parent_index']}_{chunk['sub_index']}_{chunk['text']}"
-            chunk_id = hashlib.md5(unique_str.encode('utf-8')).hexdigest()
+            chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
 
             # 构建元数据，包含页码信息
             metadata = {
                 "parent_id": f"{chunk['source_doc']}_parent_{chunk['parent_index']}",
-                "parent_content": chunk['parent_text'],
-                "source": chunk['source_doc'],
+                "parent_content": chunk["parent_text"],
+                "source": chunk["source_doc"],
                 "timestamp": timestamp,
                 "chunk_id": chunk_id,
-                "parent_index": chunk['parent_index'],
-                "sub_index": chunk['sub_index']
+                "parent_index": chunk["parent_index"],
+                "sub_index": chunk["sub_index"],
             }
 
             # 添加页码信息（如果存在）
-            if chunk.get('page_num') is not None:
-                metadata["page_num"] = chunk['page_num']
-            if chunk.get('start_page') is not None:
-                metadata["start_page"] = chunk['start_page']
-            if chunk.get('end_page') is not None:
-                metadata["end_page"] = chunk['end_page']
+            if chunk.get("page_num") is not None:
+                metadata["page_num"] = chunk["page_num"]
+            if chunk.get("start_page") is not None:
+                metadata["start_page"] = chunk["start_page"]
+            if chunk.get("end_page") is not None:
+                metadata["end_page"] = chunk["end_page"]
 
-            doc = Document(
-                page_content=chunk['text'],
-                metadata=metadata
-            )
+            doc = Document(page_content=chunk["text"], metadata=metadata)
             documents.append(doc)
 
         return documents
 
-    def _convert_docling_sub_chunks_to_documents(self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument) -> List[Document]:
+    def _convert_docling_sub_chunks_to_documents(
+        self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument
+    ) -> List[Document]:
         """
         将 Docling 子块转换为 LangChain Document 对象。
 
@@ -189,7 +198,7 @@ class DocumentEmbedder:
 
         for i, chunk in enumerate(sub_chunks):
             unique_str = f"{file_name}_docling_{i}_{chunk['text']}"
-            chunk_id = hashlib.md5(unique_str.encode('utf-8')).hexdigest()
+            chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
 
             metadata = {
                 "source": file_name,
@@ -207,7 +216,7 @@ class DocumentEmbedder:
                 "parser": "docling",
                 "chunking_strategy": "hierarchical",
                 "parent_chunk_size": self.conf.PARENT_CHUNK_SIZE,
-                "sub_chunk_size": self.conf.SUB_CHUNK_SIZE
+                "sub_chunk_size": self.conf.SUB_CHUNK_SIZE,
             }
 
             documents.append(Document(page_content=chunk["text"], metadata=metadata))
@@ -231,14 +240,19 @@ class DocumentEmbedder:
             return {
                 "success": True,
                 "collection_name": self.vector_store.collection_name,
-                "row_count": stats.get("row_count", 0)
+                "row_count": stats.get("row_count", 0),
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as e:
             logger.error("获取集合统计信息失败: %s", e)
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
 
 # 便捷函数
@@ -258,17 +272,23 @@ def embed_docx_file(file_path: str, vector_store: Optional[VectorStore] = None) 
         parent_chunk_size=conf.PARENT_CHUNK_SIZE,
         sub_chunk_size=conf.SUB_CHUNK_SIZE,
         parent_chunk_overlap=conf.PARENT_CHUNK_OVERLAP,
-        sub_chunk_overlap=conf.SUB_CHUNK_OVERLAP
+        sub_chunk_overlap=conf.SUB_CHUNK_OVERLAP,
     )
     hierarchical_chunks = segmenter.parse(file_path)
     sub_chunks = segmenter.get_all_sub_chunks(hierarchical_chunks)
     embedder = DocumentEmbedder(vector_store)
-    embed_result = embedder.embed_docx_sub_chunks(sub_chunks, file_name=os.path.basename(file_path))
+    embed_result = embedder.embed_docx_sub_chunks(
+        sub_chunks, file_name=os.path.basename(file_path)
+    )
     embed_result["parent_chunks_count"] = len(hierarchical_chunks)
     return embed_result
 
 
-def embed_docx_bytes(file_bytes: bytes, file_name: str = "uploaded_doc.docx", vector_store: Optional[VectorStore] = None) -> Dict:
+def embed_docx_bytes(
+    file_bytes: bytes,
+    file_name: str = "uploaded_doc.docx",
+    vector_store: Optional[VectorStore] = None,
+) -> Dict:
     """
     便捷函数：DOCX 字节流分块并嵌入。
 
@@ -285,7 +305,7 @@ def embed_docx_bytes(file_bytes: bytes, file_name: str = "uploaded_doc.docx", ve
         parent_chunk_size=conf.PARENT_CHUNK_SIZE,
         sub_chunk_size=conf.SUB_CHUNK_SIZE,
         parent_chunk_overlap=conf.PARENT_CHUNK_OVERLAP,
-        sub_chunk_overlap=conf.SUB_CHUNK_OVERLAP
+        sub_chunk_overlap=conf.SUB_CHUNK_OVERLAP,
     )
     hierarchical_chunks = segmenter.parse_bytes(file_bytes, file_name)
     sub_chunks = segmenter.get_all_sub_chunks(hierarchical_chunks)
@@ -293,5 +313,3 @@ def embed_docx_bytes(file_bytes: bytes, file_name: str = "uploaded_doc.docx", ve
     embed_result = embedder.embed_docx_sub_chunks(sub_chunks, file_name=file_name)
     embed_result["parent_chunks_count"] = len(hierarchical_chunks)
     return embed_result
-
-
