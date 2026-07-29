@@ -19,6 +19,7 @@ from app.backend.services.graph_import_repository_mixin import (
     GraphImportRepositoryMixin,
 )
 from app.backend.services.graph_import_writer import GraphImportWriter
+from app.backend.services.graph_quality_service import GraphQualityService
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,11 @@ class GraphAdminService(
         self._config = Config()
         self._graph_llm_lane_configs = list(self._config.GRAPH_LLM_LANE_CONFIGS)
         self._graph_extraction_lane_pool = GraphExtractionLanePool()
+        self._graph_quality_service = GraphQualityService(
+            await_call=await_call,
+            neo4j_client=neo4j_client,
+            log_api_error=log_api_error,
+        )
         self._graph_import_parser = GraphImportParser(
             cache=self,
             chunk_limit=self.GRAPH_IMPORT_CHUNK_LIMIT,
@@ -98,6 +104,15 @@ class GraphAdminService(
             mark_chunk_failed=self._mark_graph_chunk_failed,
             set_run_status=self._set_graph_run_status,
             recompute_run_progress=self._recompute_graph_run_progress,
+        )
+
+    async def get_graph_quality_report(
+        self, *, max_nodes: int, max_relationships: int
+    ) -> dict[str, Any]:
+        """生成当前 Neo4j 全图质量快照。"""
+        return await self._graph_quality_service.get_quality_report(
+            max_nodes=max_nodes,
+            max_relationships=max_relationships,
         )
 
     @staticmethod

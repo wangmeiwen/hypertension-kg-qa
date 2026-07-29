@@ -230,6 +230,15 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
         assert cypher.status_code == 200
         assert cypher.json()["ok"] is True
 
+        quality_report = await client.get(
+            "/admin/graph/quality-report",
+            params={"max_nodes": 100000, "max_relationships": 200000},
+        )
+        assert quality_report.status_code == 200
+        assert quality_report.json()["ok"] is True
+        assert quality_report.json()["data"]["total_nodes"] >= 2
+        assert quality_report.json()["data"]["total_relationships"] >= 1
+
         deleted_rel = await client.delete(
             f"/admin/graph/relationships/{created_rel.json()['data']['rel_id']}"
         )

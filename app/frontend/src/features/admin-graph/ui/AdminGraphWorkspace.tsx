@@ -29,6 +29,7 @@ import {
   getGraphLabels,
   getGraphNode,
   getGraphNodes,
+  getGraphQualityReport,
   getGraphRelationshipTypes,
   getRecentGraphJobs,
   submitGraphEmbedMilvus,
@@ -50,6 +51,7 @@ import {
 } from "../../../shared/ui/primitives";
 
 const LIMIT_OPTIONS = [20, 50, 80, 100, 150];
+const formatRate = (value: number): string => `${(value * 100).toFixed(1)}%`;
 
 export default function AdminGraphWorkspace() {
   const { t } = useTranslation();
@@ -112,6 +114,10 @@ export default function AdminGraphWorkspace() {
   const embedStatusQuery = useQuery({
     queryKey: queryKeys.graph.embedStatus,
     queryFn: getGraphEmbedStatus,
+  });
+  const qualityReportQuery = useQuery({
+    queryKey: queryKeys.graph.qualityReport,
+    queryFn: getGraphQualityReport,
   });
 
   const createNodeMutation = useMutation({
@@ -295,6 +301,7 @@ export default function AdminGraphWorkspace() {
     [embedStatusQuery.data],
   );
   const jobs = jobsQuery.data || [];
+  const qualityReport = qualityReportQuery.data;
 
   return (
     <div className={styles.workspace}>
@@ -426,6 +433,67 @@ export default function AdminGraphWorkspace() {
         </div>
 
         <div className={styles.secondaryColumn}>
+          <Card
+            title="图谱质量"
+            action={
+              <Button tone="secondary" onClick={() => void qualityReportQuery.refetch()}>
+                {t("common.refresh")}
+              </Button>
+            }
+          >
+            {qualityReportQuery.error ? (
+              <InlineNotice tone="error">
+                {qualityReportQuery.error instanceof Error
+                  ? qualityReportQuery.error.message
+                  : String(qualityReportQuery.error)}
+              </InlineNotice>
+            ) : null}
+            {qualityReport ? (
+              <div className={styles.detailStack}>
+                <div className={styles.propertyRow}>
+                  <strong>图谱规模</strong>
+                  <span>
+                    {qualityReport.total_nodes.toLocaleString("zh-CN")} 个节点，
+                    {qualityReport.total_relationships.toLocaleString("zh-CN")} 条关系
+                  </span>
+                </div>
+                <div className={styles.propertyRow}>
+                  <strong>重复实体率</strong>
+                  <span>{formatRate(qualityReport.duplicate_entity_rate)}</span>
+                </div>
+                <div className={styles.propertyRow}>
+                  <strong>孤立节点率</strong>
+                  <span>{formatRate(qualityReport.isolated_node_rate)}</span>
+                </div>
+                <div className={styles.propertyRow}>
+                  <strong>最大连通分量</strong>
+                  <span>{formatRate(qualityReport.largest_connected_component_ratio)}</span>
+                </div>
+                <div className={styles.propertyRow}>
+                  <strong>关系来源覆盖率</strong>
+                  <span>{formatRate(qualityReport.relationship_source_coverage_rate)}</span>
+                </div>
+                <div className={styles.propertyRow}>
+                  <strong>关系置信度覆盖率</strong>
+                  <span>{formatRate(qualityReport.relationship_confidence_coverage_rate)}</span>
+                </div>
+                <div className={styles.propertyRow}>
+                  <strong>当前质量策略覆盖率</strong>
+                  <span>
+                    {formatRate(qualityReport.quality_policy_coverage_rate)}（v
+                    {qualityReport.quality_policy_version}）
+                  </span>
+                </div>
+                <div className="muted">
+                  只读快照时间：{qualityReport.captured_at}；一致性：
+                  {qualityReport.consistency}
+                </div>
+              </div>
+            ) : (
+              <div className="muted">正在计算全图质量快照。</div>
+            )}
+          </Card>
+
           <Card title={t("admin.graphWorkspace.nodeDetail")}>
             {selectedNode ? (
               <div className={styles.detailStack}>

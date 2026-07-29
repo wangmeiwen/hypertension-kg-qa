@@ -327,6 +327,24 @@ page/workspace
 - Python 类型检查：mypy 检查 140 个源文件，0 errors。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 
+第二批已完成：
+
+- 新增全图只读质量快照，基于 Neo4j 节点与关系投影计算重复实体、无名节点、孤立节点、最大连通分量、悬空关系、关系来源、关系置信度和当前质量策略覆盖率。
+- `/admin/graph/quality-report` 对节点与关系规模设置显式上限；超限时拒绝返回部分指标，避免将截断样本误报为全图质量。
+- 报告明确标记为 `best_effort_read`，不将多次只读查询包装成强一致事务快照。
+- 图谱管理页新增质量卡片，可查看并刷新核心指标与策略版本。
+- 真实 Neo4j 路由回归已验证质量查询的 Cypher 可执行，并覆盖至少两个节点和一条关系的快照。
+
+第二批质量门禁：
+
+- 新增 4 项全图快照算法/服务测试，并扩展管理路由与真实 Neo4j 回归。
+- 后端非数据库自动化测试：102 passed，3 deselected；真实 Neo4j 定向测试：1 passed。
+- Python 规范检查：Black 检查 168 个文件通过，Ruff 全部通过。
+- Python 类型检查：mypy 检查 142 个源文件，0 errors。
+- 前端测试：24 个测试文件、76 项测试通过。
+- 前端 TypeScript、ESLint、模块边界、Stylelint、目标文件 Prettier 和 Vite 生产构建通过。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
 后续验收：
 
 - 重复实体率

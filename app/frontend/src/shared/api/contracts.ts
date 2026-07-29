@@ -358,6 +358,30 @@ export const graphNodesResponseSchema = z.object({
   total: z.number().default(0),
 });
 
+export const graphQualityReportSchema = z.object({
+  captured_at: z.string(),
+  consistency: z.literal("best_effort_read"),
+  total_nodes: z.number().int().nonnegative(),
+  total_relationships: z.number().int().nonnegative(),
+  duplicate_entity_count: z.number().int().nonnegative(),
+  duplicate_entity_rate: z.number().min(0).max(1),
+  unnamed_node_count: z.number().int().nonnegative(),
+  unnamed_node_rate: z.number().min(0).max(1),
+  isolated_node_count: z.number().int().nonnegative(),
+  isolated_node_rate: z.number().min(0).max(1),
+  largest_connected_component_nodes: z.number().int().nonnegative(),
+  largest_connected_component_ratio: z.number().min(0).max(1),
+  dangling_relationship_count: z.number().int().nonnegative(),
+  dangling_relationship_rate: z.number().min(0).max(1),
+  relationship_source_covered_count: z.number().int().nonnegative(),
+  relationship_source_coverage_rate: z.number().min(0).max(1),
+  relationship_confidence_covered_count: z.number().int().nonnegative(),
+  relationship_confidence_coverage_rate: z.number().min(0).max(1),
+  quality_policy_covered_relationship_count: z.number().int().nonnegative(),
+  quality_policy_coverage_rate: z.number().min(0).max(1),
+  quality_policy_version: z.number().int().positive(),
+});
+
 export const graphLabelListSchema = z
   .object({
     data: z.array(z.string()).default([]),
@@ -409,6 +433,7 @@ export type GraphNode = z.infer<typeof graphNodeSchema>;
 export type GraphLink = z.infer<typeof graphLinkSchema>;
 export type GraphVisualization = z.infer<typeof graphVisualizationSchema>;
 export type GraphJob = z.infer<typeof graphJobSchema>;
+export type GraphQualityReport = z.infer<typeof graphQualityReportSchema>;
 export type GraphEntityDetail = z.infer<typeof graphEntityDetailSchema>;
 export type AdminGraphNodeDetail = z.infer<typeof adminGraphNodeDetailSchema>;
 export type AdminGraphRelationship = z.infer<typeof adminGraphRelationshipSchema>;

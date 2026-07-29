@@ -19,6 +19,10 @@ class GraphServiceStub:
         self.calls.append(("nodes", kwargs))
         return {"ok": True, "data": [{"id": 1}], "total": 1}
 
+    async def get_graph_quality_report(self, **kwargs):
+        self.calls.append(("quality_report", kwargs))
+        return {"ok": True, "data": {"total_nodes": 2}}
+
     async def create_graph_node(self, data):
         self.calls.append(("create_node", data))
         return {"ok": True, "data": {"id": 1}}
@@ -59,6 +63,13 @@ def test_admin_graph_router_core_routes():
     assert nodes.status_code == 200
     assert nodes.json()["total"] == 1
 
+    quality = client.get(
+        "/admin/graph/quality-report",
+        params={"max_nodes": 20, "max_relationships": 40},
+    )
+    assert quality.status_code == 200
+    assert quality.json()["data"]["total_nodes"] == 2
+
     created = client.post(
         "/admin/graph/nodes",
         json={"label": "Disease", "properties": {"name": "高血压"}},
@@ -81,4 +92,8 @@ def test_admin_graph_router_core_routes():
     assert job.json()["data"]["job_id"] == "graph-job-1"
 
     assert ("labels", None) in service.calls
+    assert (
+        "quality_report",
+        {"max_nodes": 20, "max_relationships": 40},
+    ) in service.calls
     assert ("job", "graph-job-1") in service.calls

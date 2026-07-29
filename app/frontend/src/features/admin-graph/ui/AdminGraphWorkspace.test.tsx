@@ -17,6 +17,7 @@ const graphClientMocks = vi.hoisted(() => ({
   getGraphLabels: vi.fn(),
   getGraphNode: vi.fn(),
   getGraphNodes: vi.fn(),
+  getGraphQualityReport: vi.fn(),
   getGraphRelationshipTypes: vi.fn(),
   getRecentGraphJobs: vi.fn(),
   submitGraphEmbedMilvus: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("../../../shared/api/graphClient", () => ({
   getGraphLabels: graphClientMocks.getGraphLabels,
   getGraphNode: graphClientMocks.getGraphNode,
   getGraphNodes: graphClientMocks.getGraphNodes,
+  getGraphQualityReport: graphClientMocks.getGraphQualityReport,
   getGraphRelationshipTypes: graphClientMocks.getGraphRelationshipTypes,
   getRecentGraphJobs: graphClientMocks.getRecentGraphJobs,
   submitGraphEmbedMilvus: graphClientMocks.submitGraphEmbedMilvus,
@@ -61,13 +63,40 @@ describe("AdminGraphWorkspace", () => {
       data: [{ id: 1, labels: ["Disease"], properties: { name: "高血压" } }],
       total: 1,
     });
+    graphClientMocks.getGraphQualityReport.mockResolvedValue({
+      captured_at: "2026-07-29T09:00:00+00:00",
+      consistency: "best_effort_read",
+      total_nodes: 10,
+      total_relationships: 12,
+      duplicate_entity_count: 1,
+      duplicate_entity_rate: 0.1,
+      unnamed_node_count: 0,
+      unnamed_node_rate: 0,
+      isolated_node_count: 2,
+      isolated_node_rate: 0.2,
+      largest_connected_component_nodes: 8,
+      largest_connected_component_ratio: 0.8,
+      dangling_relationship_count: 0,
+      dangling_relationship_rate: 0,
+      relationship_source_covered_count: 9,
+      relationship_source_coverage_rate: 0.75,
+      relationship_confidence_covered_count: 6,
+      relationship_confidence_coverage_rate: 0.5,
+      quality_policy_covered_relationship_count: 9,
+      quality_policy_coverage_rate: 0.75,
+      quality_policy_version: 1,
+    });
     graphClientMocks.getGraphNode.mockResolvedValue({
       node: { id: 1, labels: ["Disease"], properties: { name: "高血压" } },
       relationships: { incoming: [], outgoing: [] },
     });
     graphClientMocks.getRecentGraphJobs.mockResolvedValue([]);
     graphClientMocks.getGraphEmbedStatus.mockResolvedValue({ success: true });
-    graphClientMocks.createGraphNode.mockResolvedValue({ id: 2, labels: ["Disease"], properties: { name: "继发性高血压" } });
+    graphClientMocks.createGraphNode.mockResolvedValue({
+      id: 2,
+      labels: ["Disease"],
+      properties: { name: "继发性高血压" },
+    });
     graphClientMocks.createGraphRelationship.mockResolvedValue({ ok: true });
     graphClientMocks.deleteGraphNode.mockResolvedValue(undefined);
     graphClientMocks.deleteGraphRelationship.mockResolvedValue(undefined);
@@ -76,8 +105,14 @@ describe("AdminGraphWorkspace", () => {
       nodes: [{ id: 1, name: "高血压", label: "Disease" }],
       links: [],
     });
-    graphClientMocks.submitGraphEmbedMilvus.mockResolvedValue({ job_id: "job-2", status: "queued" });
-    graphClientMocks.submitGraphExtractImport.mockResolvedValue({ job_id: "job-3", status: "queued" });
+    graphClientMocks.submitGraphEmbedMilvus.mockResolvedValue({
+      job_id: "job-2",
+      status: "queued",
+    });
+    graphClientMocks.submitGraphExtractImport.mockResolvedValue({
+      job_id: "job-3",
+      status: "queued",
+    });
     graphClientMocks.updateGraphNode.mockResolvedValue(undefined);
   });
 
@@ -92,7 +127,19 @@ describe("AdminGraphWorkspace", () => {
     fireEvent.change(textarea, { target: { value: '{"name":"继发性高血压"}' } });
     await user.click(screen.getByRole("button", { name: "保存" }));
 
-    await waitFor(() => expect(graphClientMocks.createGraphNode).toHaveBeenCalledWith("Disease", { name: "继发性高血压" }));
+    await waitFor(() =>
+      expect(graphClientMocks.createGraphNode).toHaveBeenCalledWith("Disease", {
+        name: "继发性高血压",
+      }),
+    );
+  });
+
+  it("shows the global graph quality snapshot", async () => {
+    renderWithProviders(<AdminGraphWorkspace />);
+
+    expect(await screen.findByText("图谱质量")).toBeVisible();
+    expect(await screen.findByText("重复实体率")).toBeVisible();
+    expect(await screen.findByText("75.0%（v1）")).toBeVisible();
   });
 
   it("updates and deletes an existing node", async () => {
@@ -104,7 +151,9 @@ describe("AdminGraphWorkspace", () => {
     if (!textarea) throw new Error("textarea not found");
     fireEvent.change(textarea, { target: { value: '{"name":"高血压更新"}' } });
     await user.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(graphClientMocks.updateGraphNode).toHaveBeenCalledWith(1, { name: "高血压更新" }));
+    await waitFor(() =>
+      expect(graphClientMocks.updateGraphNode).toHaveBeenCalledWith(1, { name: "高血压更新" }),
+    );
 
     await user.click(await screen.findByRole("button", { name: "删除节点" }));
     await waitFor(() => expect(graphClientMocks.deleteGraphNode).toHaveBeenCalledWith(1));
@@ -121,11 +170,17 @@ describe("AdminGraphWorkspace", () => {
     await user.type(screen.getByPlaceholderText("目标节点 ID"), "2");
     await user.type(screen.getByPlaceholderText("关系类型"), "TREATS");
     await user.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(graphClientMocks.createGraphRelationship).toHaveBeenCalledWith(1, 2, "TREATS", {}));
+    await waitFor(() =>
+      expect(graphClientMocks.createGraphRelationship).toHaveBeenCalledWith(1, 2, "TREATS", {}),
+    );
 
     await user.click(screen.getByRole("button", { name: "执行 Cypher" }));
     await user.click(screen.getByRole("button", { name: "提交" }));
-    await waitFor(() => expect(graphClientMocks.executeCypherQuery).toHaveBeenCalledWith("MATCH (n) RETURN n LIMIT 20"));
+    await waitFor(() =>
+      expect(graphClientMocks.executeCypherQuery).toHaveBeenCalledWith(
+        "MATCH (n) RETURN n LIMIT 20",
+      ),
+    );
     expect((await screen.findAllByText(/高血压/))[0]).toBeVisible();
   });
 
@@ -138,9 +193,13 @@ describe("AdminGraphWorkspace", () => {
     const file = new File(["graph"], "graph.txt", { type: "text/plain" });
     await user.upload(fileInput, file);
     await user.click(await screen.findByRole("button", { name: "导入图谱" }));
-    await waitFor(() => expect(graphClientMocks.submitGraphExtractImport).toHaveBeenCalledWith(file));
+    await waitFor(() =>
+      expect(graphClientMocks.submitGraphExtractImport).toHaveBeenCalledWith(file),
+    );
 
     await user.click(screen.getByRole("button", { name: "图谱向量化" }));
-    await waitFor(() => expect(graphClientMocks.submitGraphEmbedMilvus).toHaveBeenCalledWith([], 100));
+    await waitFor(() =>
+      expect(graphClientMocks.submitGraphEmbedMilvus).toHaveBeenCalledWith([], 100),
+    );
   });
 });

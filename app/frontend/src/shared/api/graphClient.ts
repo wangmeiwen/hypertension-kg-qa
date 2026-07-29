@@ -8,12 +8,14 @@ import {
   graphLabelListSchema,
   graphNodeSchema,
   graphNodesResponseSchema,
+  graphQualityReportSchema,
   graphVisualizationSchema,
   graphEntityDetailSchema,
   type AdminGraphNodeDetail,
   type GraphEntityDetail,
   type GraphJob,
   type GraphNode,
+  type GraphQualityReport,
   type GraphVisualization,
 } from "./contracts";
 import { fetchJson } from "./http";
@@ -35,11 +37,21 @@ export async function fetchGraph(keyword = "", limit = 120): Promise<GraphVisual
 }
 
 export async function getEntityDetail(entityId: string | number): Promise<GraphEntityDetail> {
-  return fetchJson(`/graph/entity/${entityId}`, graphEntityDetailSchema, {}, { fallbackMessage: "加载实体详情失败" });
+  return fetchJson(
+    `/graph/entity/${entityId}`,
+    graphEntityDetailSchema,
+    {},
+    { fallbackMessage: "加载实体详情失败" },
+  );
 }
 
 export async function getGraphLabels(): Promise<string[]> {
-  const result = await fetchJson("/admin/graph/labels", graphLabelListSchema, {}, { auth: true, fallbackMessage: "加载标签失败" });
+  const result = await fetchJson(
+    "/admin/graph/labels",
+    graphLabelListSchema,
+    {},
+    { auth: true, fallbackMessage: "加载标签失败" },
+  );
   return result.data;
 }
 
@@ -53,21 +65,48 @@ export async function getGraphRelationshipTypes(): Promise<string[]> {
   return result.data;
 }
 
-export async function getGraphNodes(params: { label?: string; keyword?: string; limit?: number; offset?: number }) {
+export async function getGraphQualityReport(): Promise<GraphQualityReport> {
+  return fetchJson(
+    "/admin/graph/quality-report",
+    graphQualityReportSchema,
+    {},
+    { auth: true, fallbackMessage: "加载图谱质量报告失败" },
+  );
+}
+
+export async function getGraphNodes(params: {
+  label?: string;
+  keyword?: string;
+  limit?: number;
+  offset?: number;
+}) {
   // 后台节点列表支持标签、关键词和分页参数组合过滤。
   const search = new URLSearchParams();
   if (params.label) search.set("label", params.label);
   if (params.keyword) search.set("keyword", params.keyword);
   search.set("limit", String(params.limit ?? 20));
   search.set("offset", String(params.offset ?? 0));
-  return fetchJson(`/admin/graph/nodes?${search.toString()}`, graphNodesResponseSchema, {}, { auth: true, fallbackMessage: "加载图谱节点失败" });
+  return fetchJson(
+    `/admin/graph/nodes?${search.toString()}`,
+    graphNodesResponseSchema,
+    {},
+    { auth: true, fallbackMessage: "加载图谱节点失败" },
+  );
 }
 
 export async function getGraphNode(nodeId: string | number): Promise<AdminGraphNodeDetail> {
-  return fetchJson(`/admin/graph/nodes/${nodeId}`, adminGraphNodeDetailSchema, {}, { auth: true, fallbackMessage: "加载节点详情失败" });
+  return fetchJson(
+    `/admin/graph/nodes/${nodeId}`,
+    adminGraphNodeDetailSchema,
+    {},
+    { auth: true, fallbackMessage: "加载节点详情失败" },
+  );
 }
 
-export async function createGraphNode(label: string, properties: Record<string, unknown>): Promise<GraphNode> {
+export async function createGraphNode(
+  label: string,
+  properties: Record<string, unknown>,
+): Promise<GraphNode> {
   const result = await fetchJson(
     "/admin/graph/nodes",
     graphNodeSchema,
@@ -81,7 +120,10 @@ export async function createGraphNode(label: string, properties: Record<string, 
   return result;
 }
 
-export async function updateGraphNode(nodeId: string | number, properties: Record<string, unknown>): Promise<void> {
+export async function updateGraphNode(
+  nodeId: string | number,
+  properties: Record<string, unknown>,
+): Promise<void> {
   await fetchJson(
     `/admin/graph/nodes/${nodeId}`,
     z.record(z.string(), z.unknown()),
@@ -115,7 +157,12 @@ export async function createGraphRelationship(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_id: sourceId, target_id: targetId, rel_type: relType, properties }),
+      body: JSON.stringify({
+        source_id: sourceId,
+        target_id: targetId,
+        rel_type: relType,
+        properties,
+      }),
     },
     { auth: true, fallbackMessage: "创建关系失败" },
   );
@@ -146,18 +193,36 @@ export async function executeCypherQuery(query: string): Promise<Record<string, 
 export async function submitGraphExtractImport(file: File): Promise<GraphJob> {
   const formData = new FormData();
   formData.append("file", file);
-  return fetchJson("/admin/graph/jobs/extract-import", graphJobSchema, { method: "POST", body: formData }, { auth: true, fallbackMessage: "提交图谱导入任务失败" });
+  return fetchJson(
+    "/admin/graph/jobs/extract-import",
+    graphJobSchema,
+    { method: "POST", body: formData },
+    { auth: true, fallbackMessage: "提交图谱导入任务失败" },
+  );
 }
 
 export async function getGraphJobStatus(jobId: string): Promise<GraphJob> {
-  return fetchJson(`/admin/graph/jobs/${jobId}`, graphJobSchema, {}, { auth: true, fallbackMessage: "加载图谱任务失败" });
+  return fetchJson(
+    `/admin/graph/jobs/${jobId}`,
+    graphJobSchema,
+    {},
+    { auth: true, fallbackMessage: "加载图谱任务失败" },
+  );
 }
 
 export async function getRecentGraphJobs(limit = 10): Promise<GraphJob[]> {
-  return fetchJson(`/admin/graph/jobs?limit=${limit}`, z.array(graphJobSchema), {}, { auth: true, fallbackMessage: "加载最近图谱任务失败" });
+  return fetchJson(
+    `/admin/graph/jobs?limit=${limit}`,
+    z.array(graphJobSchema),
+    {},
+    { auth: true, fallbackMessage: "加载最近图谱任务失败" },
+  );
 }
 
-export async function submitGraphEmbedMilvus(labels: string[] | null = null, batchSize = 100): Promise<GraphJob> {
+export async function submitGraphEmbedMilvus(
+  labels: string[] | null = null,
+  batchSize = 100,
+): Promise<GraphJob> {
   // labels 为 null 时表示重建全部标签的图谱向量集合。
   const payload: Record<string, unknown> = { batch_size: batchSize };
   if (labels && labels.length > 0) payload.labels = labels;
@@ -174,23 +239,48 @@ export async function submitGraphEmbedMilvus(labels: string[] | null = null, bat
 }
 
 export async function getGraphEmbedStatus(): Promise<Record<string, unknown>> {
-  return fetchJson("/admin/graph/embed-status", z.record(z.string(), z.unknown()), {}, { auth: true, fallbackMessage: "加载图谱向量化状态失败" });
+  return fetchJson(
+    "/admin/graph/embed-status",
+    z.record(z.string(), z.unknown()),
+    {},
+    { auth: true, fallbackMessage: "加载图谱向量化状态失败" },
+  );
 }
 
 export async function submitTextEmbeddingJob(file: File): Promise<GraphJob> {
   const formData = new FormData();
   formData.append("file", file);
-  return fetchJson("/admin/text-embedding/jobs/embed", graphJobSchema, { method: "POST", body: formData }, { auth: true, fallbackMessage: "提交文档向量化任务失败" });
+  return fetchJson(
+    "/admin/text-embedding/jobs/embed",
+    graphJobSchema,
+    { method: "POST", body: formData },
+    { auth: true, fallbackMessage: "提交文档向量化任务失败" },
+  );
 }
 
 export async function getTextEmbeddingJobStatus(jobId: string): Promise<GraphJob> {
-  return fetchJson(`/admin/text-embedding/jobs/${jobId}`, graphJobSchema, {}, { auth: true, fallbackMessage: "加载文档任务失败" });
+  return fetchJson(
+    `/admin/text-embedding/jobs/${jobId}`,
+    graphJobSchema,
+    {},
+    { auth: true, fallbackMessage: "加载文档任务失败" },
+  );
 }
 
 export async function getRecentTextEmbeddingJobs(limit = 10): Promise<GraphJob[]> {
-  return fetchJson(`/admin/text-embedding/jobs?limit=${limit}`, z.array(graphJobSchema), {}, { auth: true, fallbackMessage: "加载最近文档任务失败" });
+  return fetchJson(
+    `/admin/text-embedding/jobs?limit=${limit}`,
+    z.array(graphJobSchema),
+    {},
+    { auth: true, fallbackMessage: "加载最近文档任务失败" },
+  );
 }
 
 export async function getDocumentStats(): Promise<Record<string, unknown>> {
-  return fetchJson("/admin/documents/stats", documentStatsSchema, {}, { auth: true, fallbackMessage: "加载文档统计失败" });
+  return fetchJson(
+    "/admin/documents/stats",
+    documentStatsSchema,
+    {},
+    { auth: true, fallbackMessage: "加载文档统计失败" },
+  );
 }

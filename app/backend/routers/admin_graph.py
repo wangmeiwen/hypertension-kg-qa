@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.backend.dependencies.admin_auth import require_admin_login
 from app.backend.services.graph_admin_service import GraphAdminService
@@ -23,6 +23,17 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
     async def get_graph_relationship_types() -> dict[str, Any]:
         """获取所有关系类型。"""
         return await service.get_graph_relationship_types()
+
+    @router.get("/admin/graph/quality-report")
+    async def get_graph_quality_report(
+        max_nodes: int = Query(default=50000, ge=1, le=100000),
+        max_relationships: int = Query(default=100000, ge=1, le=200000),
+    ) -> dict[str, Any]:
+        """生成规模受限的全图质量快照。"""
+        return await service.get_graph_quality_report(
+            max_nodes=max_nodes,
+            max_relationships=max_relationships,
+        )
 
     @router.get("/admin/graph/nodes")
     async def get_graph_nodes(
