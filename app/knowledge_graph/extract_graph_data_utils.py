@@ -20,7 +20,7 @@
 """
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from typing import Any, Dict, List, Optional, Tuple, Literal, Callable
 import json
 import logging
@@ -170,7 +170,7 @@ def create_graph_llm_bundle(
         Dict[str, Any]: 包含 LLM 实例、主抽取链、漏抽判定链和补抽链的 bundle。
     """
     llm = ChatOpenAI(
-        api_key=api_key,
+        api_key=SecretStr(api_key),
         base_url=base_url,
         model=model_name,
         timeout=timeout,

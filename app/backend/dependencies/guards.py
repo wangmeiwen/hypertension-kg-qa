@@ -8,7 +8,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from app.backend.dependencies.request_context import get_trace_id
-from app.backend.repositories.database import SessionManager
+from app.backend.repositories.session_manager import SessionManager
 from app.core.feature_flags import get_feature_flag
 from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 

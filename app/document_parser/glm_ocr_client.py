@@ -17,7 +17,7 @@ import math
 import threading
 from typing import Any, Dict, Optional
 
-from zhipuai import ZhipuAI
+from zhipuai import ZhipuAI  # type: ignore[import-untyped]
 
 from app.core.config import Config
 

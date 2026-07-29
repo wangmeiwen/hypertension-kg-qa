@@ -6,17 +6,17 @@
 import sys
 from pathlib import Path
 
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 from neo4j import GraphDatabase
+
+# 添加项目根目录到路径
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
 
 # 导入配置
 try:
-    from app.core.config import Config
+    from app.core.config import Config  # noqa: E402
 except ImportError:
-    from config.config import Config
+    from config.config import Config  # noqa: E402
 
 
 def get_neo4j_config():
@@ -135,7 +135,7 @@ def clear_database(driver, skip_confirm: bool = False) -> bool:
             # 删除所有节点和关系
             session.run("MATCH (n) DETACH DELETE n")
 
-            print(f"✅ 数据库已清空")
+            print("✅ 数据库已清空")
 
             # 验证
             verify_result = session.run("MATCH (n) RETURN count(n) as count")
@@ -232,7 +232,7 @@ def main():
             print("=" * 60)
 
             if stats['node_count'] > 0:
-                confirm = input(f"\n是否清空数据库? (yes/no): ")
+                confirm = input("\n是否清空数据库? (yes/no): ")
                 if confirm.lower() in ['yes', 'y']:
                     success = clear_database(driver, skip_confirm=True)
                     sys.exit(0 if success else 1)

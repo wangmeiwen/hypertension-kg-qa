@@ -64,8 +64,12 @@ flowchart LR
 ├─ tests/                   # 自动化测试、评估脚本和维护脚本
 ├─ .env.example             # 环境变量模板
 ├─ requirements.txt         # Python 依赖
+├─ project_retrospective.md # 项目演进、问题与经验复盘
+├─ refactoring.md           # 重构边界、已完成工作与后续路线
 └─ README.md
 ```
+
+项目演进和经验总结见 [project_retrospective.md](./project_retrospective.md)，复盘后的重构决策、当前边界和后续验收标准见 [refactoring.md](./refactoring.md)。
 
 ## 环境要求
 

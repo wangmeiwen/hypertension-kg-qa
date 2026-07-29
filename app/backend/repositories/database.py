@@ -36,7 +36,11 @@ def _build_async_mysql_url(database: str | None = None) -> URL:
         password=password,
         host=os.getenv("MYSQL_HOST", "localhost"),
         port=int(os.getenv("MYSQL_PORT", "3306")),
-        database=os.getenv("MYSQL_DATABASE", "hypertension_kg") if database is None else database,
+        database=(
+            os.getenv("MYSQL_DATABASE", "hypertension_kg")
+            if database is None
+            else database
+        ),
     )
 
 
@@ -46,7 +50,7 @@ _db_initialized = False
 
 
 def _get_engine() -> AsyncEngine:
-    """获取（或延迟创建）全局异步 Engine。 
+    """获取（或延迟创建）全局异步 Engine。
 
     Returns:
         AsyncEngine: 复用的 SQLAlchemy 异步引擎实例。
@@ -85,7 +89,9 @@ async def execute(statement: str, params: dict[str, Any] | None = None) -> int:
         return int(result.rowcount or 0)
 
 
-async def fetch_one(statement: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+async def fetch_one(
+    statement: str, params: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """查询单行记录。
 
     Args:
@@ -101,7 +107,9 @@ async def fetch_one(statement: str, params: dict[str, Any] | None = None) -> dic
         return dict(row) if row is not None else None
 
 
-async def fetch_all(statement: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+async def fetch_all(
+    statement: str, params: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     """查询多行记录。
 
     Args:
@@ -116,7 +124,9 @@ async def fetch_all(statement: str, params: dict[str, Any] | None = None) -> lis
         return [dict(row) for row in result.mappings().all()]
 
 
-async def insert_and_get_last_id(statement: str, params: dict[str, Any] | None = None) -> int:
+async def insert_and_get_last_id(
+    statement: str, params: dict[str, Any] | None = None
+) -> int:
     """执行插入 SQL 并返回 LAST_INSERT_ID。
 
     Args:
@@ -130,7 +140,9 @@ async def insert_and_get_last_id(statement: str, params: dict[str, Any] | None =
         await conn.execute(text(statement), params or {})
         last = await conn.execute(text("SELECT LAST_INSERT_ID() AS id"))
         row = last.mappings().first()
-        return int((row or {}).get("id") or 0)
+        if row is None:
+            raise RuntimeError("last_insert_id_missing")
+        return int(row["id"])
 
 
 async def init_db() -> None:
@@ -379,11 +391,7 @@ async def initialize_database(force: bool = False) -> bool:
         logger.info("MySQL 数据库初始化成功")
         return True
     except Exception as exc:
-        logger.exception("MySQL 数据库初始化失败: error_type=%s error=%s", type(exc).__name__, exc)
+        logger.exception(
+            "MySQL 数据库初始化失败: error_type=%s error=%s", type(exc).__name__, exc
+        )
         return False
-
-
-from app.backend.repositories.ocr_manager import OcrDocumentManager, OcrTokenUsageManager
-from app.backend.repositories.session_manager import MessageManager, SessionManager
-from app.backend.repositories.session_memory_manager import SessionMemoryManager
-from app.backend.repositories.token_usage_manager import TokenUsageManager

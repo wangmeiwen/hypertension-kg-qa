@@ -364,7 +364,6 @@ async def test_graph_admin_service_crud_and_readonly_cypher() -> None:
 
 
 async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) -> None:
-    import app.backend.services.graph_admin_service as module
     from app.backend.services.graph_admin_service import GraphAdminService
 
     class FakeNeo4j:

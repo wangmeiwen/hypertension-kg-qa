@@ -21,20 +21,23 @@ Milvus 向量存储与检索模块
 """
 
 # 导入 BGE-M3 嵌入函数，用于生成文档和查询的向量表示
+import logging
+import os
+import re
+import sys
+import uuid
+from threading import Lock
+
+import numpy as np
 import torch.cuda
-from milvus_model.hybrid import BGEM3EmbeddingFunction
+from milvus_model.hybrid import BGEM3EmbeddingFunction  # type: ignore[import-untyped]
 # 导入 Milvus 相关类，用于操作向量数据库
-from pymilvus import MilvusClient, DataType
+from pymilvus import DataType, MilvusClient  # type: ignore[import-untyped]
 # 导入 Document 类，用于创建文档对象
 from langchain_core.documents import Document
 # 导入 CrossEncoder，用于重排序和 NLI 判断
 from sentence_transformers import CrossEncoder
-import uuid
-import sys
-import os
-import re
-import numpy as np
-from threading import Lock
+
 # 获取当前文件所在目录的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -45,12 +48,11 @@ sys.path.insert(0, rag_qa_path)
 project_root = os.path.dirname(rag_qa_path)
 sys.path.insert(0, project_root)
 
-import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from app.core.perf_logger import log_duration
-from app.core.config import Config
+from app.core.config import Config  # noqa: E402
+from app.core.perf_logger import log_duration  # noqa: E402
 
 conf = Config()
 
@@ -283,7 +285,7 @@ class VectorStore:
         self.collection_fields = set()
         try:
             desc = self.client.describe_collection(collection_name=self.collection_name)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
             try:
                 desc = self.client.describe_collection(self.collection_name)
             except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e2:

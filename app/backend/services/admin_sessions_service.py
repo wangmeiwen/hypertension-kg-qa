@@ -8,7 +8,8 @@ import logging
 import shutil
 from typing import Any, Awaitable, Callable
 
-from app.backend.repositories.database import MessageManager, SessionManager
+from app.backend.repositories.session_manager import MessageManager, SessionManager
+from app.backend.services.session_log_repository import read_request_records, safe_log_id
 from app.core.concurrency import concurrency_guard
 from app.core.config import Config
 
@@ -59,14 +60,7 @@ class AdminSessionsService:
         Returns:
             str: 仅包含字母、数字、短横线和下划线的目录名片段。
         """
-        text = str(raw or "").strip()
-        if not text:
-            return fallback
-        allowed = []
-        for ch in text:
-            allowed.append(ch if (ch.isalnum() or ch in {"-", "_"}) else "_")
-        cleaned = "".join(allowed).strip("_")
-        return cleaned or fallback
+        return safe_log_id(raw, fallback)
 
     @staticmethod
     def _is_relative_to(child: Path, parent: Path) -> bool:
@@ -178,7 +172,7 @@ class AdminSessionsService:
     @classmethod
     def _derive_llm_metrics_from_agent_lanes(cls, turn: dict[str, Any]) -> dict[str, int]:
         """从内嵌 agent_lanes telemetry 中兜底提取 LLM 指标。"""
-        agent_lanes = turn.get("agent_lanes") if isinstance(turn.get("agent_lanes"), dict) else {}
+        agent_lanes = cls._as_dict(turn.get("agent_lanes"))
         total_tokens = 0
         llm_calls = 0
         for cards in agent_lanes.values():
@@ -232,14 +226,14 @@ class AdminSessionsService:
         )
         if not memory_update:
             return merged_turn
-        memory_compression = turn.get("memory_compression") if isinstance(turn.get("memory_compression"), list) else []
-        snapshot = memory_update.get("snapshot") if isinstance(memory_update.get("snapshot"), dict) else {}
+        memory_compression = cls._as_list(turn.get("memory_compression"))
+        snapshot = cls._as_dict(memory_update.get("snapshot"))
         updated_at = str(memory_update.get("updated_at") or "")
         merged_turn["llm_calls"] = max(cls._to_int_metric(merged_turn.get("llm_calls")), cls._to_int_metric(memory_update.get("llm_calls")))
         merged_turn["total_tokens"] = max(cls._to_int_metric(merged_turn.get("total_tokens")), cls._to_int_metric(memory_update.get("total_tokens")))
-        update_errors = memory_update.get("error_types") if isinstance(memory_update.get("error_types"), dict) else {}
+        update_errors = cls._as_dict(memory_update.get("error_types"))
         if update_errors:
-            base_errors = merged_turn.get("error_types") if isinstance(merged_turn.get("error_types"), dict) else {}
+            base_errors = cls._as_dict(merged_turn.get("error_types"))
             merged_turn["error_types"] = {
                 **base_errors,
                 **{str(key): int(value or 0) for key, value in update_errors.items()},
@@ -250,23 +244,34 @@ class AdminSessionsService:
             if str(row.get("stage_name") or "") not in {"压缩后记忆", "写回后记忆"}:
                 patched.append(row)
                 continue
-            qa_memory = snapshot.get("qa_memory") if isinstance(snapshot.get("qa_memory"), dict) else {}
-            retrieval_memory = snapshot.get("retrieval_memory") if isinstance(snapshot.get("retrieval_memory"), dict) else {}
-            qa_pairs = qa_memory.get("qa_pairs") if isinstance(qa_memory.get("qa_pairs"), list) else []
-            retrieval_questions = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []
+            qa_memory = cls._as_dict(snapshot.get("qa_memory"))
+            retrieval_memory = cls._as_dict(snapshot.get("retrieval_memory"))
+            qa_pairs = cls._as_list(qa_memory.get("qa_pairs"))
+            retrieval_questions = cls._as_list(retrieval_memory.get("questions"))
+            latest_qa = cls._as_dict(qa_pairs[-1]) if qa_pairs else {}
             patched.append(
                 {
                     **row,
                     "event_time": updated_at or str(row.get("event_time") or ""),
                     "content_lines": [
                         f"QA 条数：{len(qa_pairs)}",
-                        f"最近问题：{str((qa_pairs[-1] if qa_pairs else {}).get('user_question') or '无')}",
+                        f"最近问题：{str(latest_qa.get('user_question') or '无')}",
                         f"历史检索问题数：{len(retrieval_questions)}",
                     ],
                 }
             )
         merged_turn["memory_compression"] = patched
         return merged_turn
+
+    @staticmethod
+    def _as_dict(value: Any) -> dict[str, Any]:
+        """将外部日志值收敛为字典。"""
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _as_list(value: Any) -> list[Any]:
+        """将外部日志值收敛为列表。"""
+        return value if isinstance(value, list) else []
 
     @staticmethod
     def _sanitize_text(value: Any, limit: int = 240) -> str:
@@ -467,8 +472,8 @@ class AdminSessionsService:
         Returns:
             dict[str, Any]: 可直接加入泳道图的工具兜底事件。
         """
-        tool_log = observation.get("_tool_log") if isinstance(observation.get("_tool_log"), dict) else {}
-        result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        tool_log = cls._as_dict(observation.get("_tool_log"))
+        result_obj = cls._as_dict(observation.get("result"))
         event_time = str(tool_log.get("ts") or turn.get("finished_at") or turn.get("started_at") or "")
         summary = cls._sanitize_text(cls._summarize_tool_observation(observation), 180) or "该次工具调用暂无输出"
         return {
@@ -497,8 +502,8 @@ class AdminSessionsService:
     @classmethod
     def _summarize_tool_observation(cls, observation: dict[str, Any]) -> str:
         """提取工具观测摘要，用于泳道节点标题。"""
-        result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
-        payload = result_obj.get("result") if isinstance(result_obj.get("result"), dict) else {}
+        result_obj = cls._as_dict(observation.get("result"))
+        payload = cls._as_dict(result_obj.get("result"))
         return (
             cls._sanitize_text(payload.get("summary"), 240)
             or cls._sanitize_text(payload.get("message"), 240)
@@ -568,72 +573,26 @@ class AdminSessionsService:
     @classmethod
     def _read_session_llm_records(cls, session_id: str, request_id: str) -> list[dict[str, Any]]:
         """读取指定请求的 LLM 日志。"""
-        sid = cls._safe_log_id(session_id)
-        safe_request_id = str(request_id or "").strip()
-        if not safe_request_id:
-            return []
-        llm_dir = cls._project_root() / "logs" / "sessions" / sid / "llm"
-        if not llm_dir.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for file_path in sorted(llm_dir.glob("*.jsonl")):
-            try:
-                for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    if not line.strip():
-                        continue
-                    payload = json.loads(line)
-                    if not isinstance(payload, dict):
-                        continue
-                    if str(payload.get("request_id") or "") != safe_request_id:
-                        continue
-                    rows.append(payload)
-            except (OSError, ValueError, TypeError) as exc:
-                logger.warning(
-                    "admin_sessions_read_llm_records_skip_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
-                    sid,
-                    safe_request_id,
-                    str(file_path),
-                    type(exc).__name__,
-                    exc,
-                )
-                continue
-        rows.sort(key=lambda item: str(item.get("ts") or ""))
-        return rows
+        return read_request_records(
+            project_root=cls._project_root(),
+            session_id=session_id,
+            request_id=request_id,
+            category="llm",
+            logger=logger,
+            warning_event="admin_sessions_read_llm_records_skip_file",
+        )
 
     @classmethod
     def _read_session_tool_records(cls, session_id: str, request_id: str) -> list[dict[str, Any]]:
         """读取指定请求的工具日志。"""
-        sid = cls._safe_log_id(session_id)
-        safe_request_id = str(request_id or "").strip()
-        if not safe_request_id:
-            return []
-        tools_dir = cls._project_root() / "logs" / "sessions" / sid / "tools"
-        if not tools_dir.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for file_path in sorted(tools_dir.glob("*.jsonl")):
-            try:
-                for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    if not line.strip():
-                        continue
-                    payload = json.loads(line)
-                    if not isinstance(payload, dict):
-                        continue
-                    if str(payload.get("request_id") or "") != safe_request_id:
-                        continue
-                    rows.append(payload)
-            except (OSError, ValueError, TypeError) as exc:
-                logger.warning(
-                    "admin_sessions_read_tool_records_skip_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
-                    sid,
-                    safe_request_id,
-                    str(file_path),
-                    type(exc).__name__,
-                    exc,
-                )
-                continue
-        rows.sort(key=lambda item: str(item.get("ts") or ""))
-        return rows
+        return read_request_records(
+            project_root=cls._project_root(),
+            session_id=session_id,
+            request_id=request_id,
+            category="tools",
+            logger=logger,
+            warning_event="admin_sessions_read_tool_records_skip_file",
+        )
 
     @classmethod
     def _bind_tool_logs(
@@ -678,7 +637,7 @@ class AdminSessionsService:
             or "unknown_tool"
         ).strip()
         question = str(observation.get("subquery") or observation.get("question") or "").strip()
-        arguments = tool_row.get("arguments") if isinstance(tool_row.get("arguments"), dict) else {}
+        arguments = cls._as_dict(tool_row.get("arguments"))
         rows = [f"{index}. 工具：{tool_name}"]
         if question:
             rows.append(f"子问题：{cls._sanitize_text(question, 280)}")
@@ -689,7 +648,7 @@ class AdminSessionsService:
     @classmethod
     def _format_tool_result(cls, observation: dict[str, Any], index: int) -> str:
         """格式化工具调用结果文本。"""
-        result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        result_obj = cls._as_dict(observation.get("result"))
         payload = result_obj.get("result")
         payload_dict = payload if isinstance(payload, dict) else {}
         summary = cls._sanitize_text(
@@ -702,7 +661,7 @@ class AdminSessionsService:
             320,
         )
         error_text = cls._sanitize_text(result_obj.get("error") or "", 320)
-        query_records = observation.get("query_records") if isinstance(observation.get("query_records"), list) else []
+        query_records = cls._as_list(observation.get("query_records"))
         lines = [f"{index}. 状态：{'成功' if bool(result_obj.get('ok', True)) else '失败'}"]
         if summary:
             lines.append(f"摘要：{summary}")
@@ -761,12 +720,12 @@ class AdminSessionsService:
     @classmethod
     def _build_tool_observation_fallback_events(cls, *, turn_id: str, turn: dict[str, Any], start_index: int) -> list[dict[str, Any]]:
         """没有 agent_lanes 卡片时，从 tool_observations 兜底生成事件。"""
-        tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
+        tool_observations = cls._as_list(turn.get("tool_observations"))
         events: list[dict[str, Any]] = []
         for offset, observation in enumerate(tool_observations, start=start_index):
             row = observation if isinstance(observation, dict) else {}
             lane_name = cls._allowed_flow_lane(cls._infer_tool_lane(row))
-            result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
+            result_obj = cls._as_dict(row.get("result"))
             events.append(
                 {
                     "event_id": cls._safe_event_id(turn_id, "tool_fallback", offset),
@@ -795,11 +754,11 @@ class AdminSessionsService:
     def _build_agent_lanes_fallback_events(cls, turn: dict[str, Any]) -> list[dict[str, Any]]:
         """当独立 LLM 日志缺失时，从 turn 内嵌 agent_lanes 构建泳道事件。"""
         turn_id = str(turn.get("turn_id") or "")
-        agent_lanes = turn.get("agent_lanes") if isinstance(turn.get("agent_lanes"), dict) else {}
+        agent_lanes = cls._as_dict(turn.get("agent_lanes"))
         events: list[dict[str, Any]] = []
         sequence_index = 0
         for lane_key in ("主控编排", "图谱代理", "检索代理"):
-            cards = agent_lanes.get(lane_key) if isinstance(agent_lanes.get(lane_key), list) else []
+            cards = cls._as_list(agent_lanes.get(lane_key))
             for card in cards:
                 if not isinstance(card, dict):
                     continue
@@ -847,7 +806,7 @@ class AdminSessionsService:
         llm_rows = cls._read_session_llm_records(session_id, request_id)
         if not llm_rows:
             return cls._build_agent_lanes_fallback_events(turn)
-        tool_observations = turn.get("tool_observations") if isinstance(turn.get("tool_observations"), list) else []
+        tool_observations = cls._as_list(turn.get("tool_observations"))
         tool_rows = cls._read_session_tool_records(session_id, request_id)
         bound_tool_rows = cls._bind_tool_logs(tool_observations, tool_rows)
 
@@ -863,7 +822,7 @@ class AdminSessionsService:
             lane_name = cls._allowed_flow_lane(lane_name_raw)
             response_text = str(row.get("response_compact") or row.get("error") or "").strip()
             controller_action = cls._extract_controller_action(row.get("response_compact"))
-            event = {
+            event: dict[str, Any] = {
                 "event_id": cls._safe_event_id(turn_id, "llm_action", index),
                 "event_time": str(row.get("ts") or turn.get("finished_at") or turn.get("started_at") or ""),
                 "lane": lane_name,
@@ -899,7 +858,7 @@ class AdminSessionsService:
         for observation in bound_tool_rows:
             lane_name = cls._allowed_flow_lane(cls._infer_tool_lane(observation))
             candidate_indexes = lane_event_indexes.get(lane_name) or []
-            tool_log = observation.get("_tool_log") if isinstance(observation.get("_tool_log"), dict) else {}
+            tool_log = cls._as_dict(observation.get("_tool_log"))
             tool_time = str(tool_log.get("ts") or "").strip()
             preferred_anchor_index = None
             pending_anchor_list = pending_tool_anchor_indexes.get(lane_name) or []
@@ -914,10 +873,9 @@ class AdminSessionsService:
                 str(observation.get("action") or "").strip().lower() == "call_history_read"
                 or "history_read" in str(observation.get("tool_name") or "").strip().lower()
             )
-            should_create_tool_only = preferred_anchor_index is not None and (
+            if preferred_anchor_index is not None and (
                 not candidate_indexes or is_history_observation
-            )
-            if should_create_tool_only:
+            ):
                 tool_only_sequence += 1
                 events.append(
                     cls._build_tool_only_event(
@@ -961,7 +919,7 @@ class AdminSessionsService:
                 tool_entries = []
             tool_inputs = [
                 cls._format_tool_input(
-                    item.get("_tool_log") if isinstance(item.get("_tool_log"), dict) else {},
+                    cls._as_dict(item.get("_tool_log")),
                     item if isinstance(item, dict) else {},
                     index,
                 )
@@ -990,9 +948,10 @@ class AdminSessionsService:
                     180,
                 )
                 event["summary"] = summary
+            event_detail = cls._as_dict(event.get("detail"))
             event["detail"] = {
-                "model_input_prompt": str(event.get("detail", {}).get("model_input_prompt") or "无"),
-                "model_output_text": str(event.get("detail", {}).get("model_output_text") or "无"),
+                "model_input_prompt": str(event_detail.get("model_input_prompt") or "无"),
+                "model_output_text": str(event_detail.get("model_output_text") or "无"),
                 "tool_call_inputs": "\n\n".join(tool_inputs) if tool_inputs else "本次未调用工具",
                 "tool_call_results": "\n\n".join(tool_results) if tool_results else "本次未调用工具",
                 "tool_call_count": tool_count,
@@ -1055,9 +1014,12 @@ class AdminSessionsService:
         turns, memory_updates = self._read_session_turn_records(session_id)
         normalized_turns: list[dict[str, Any]] = []
         for turn in turns:
-            merged_turn = self._merge_turn_memory_update(turn, memory_updates.get(str(turn.get("turn_id") or "")) or {})
-            orchestrator_decision = (
-                merged_turn.get("orchestrator_decision") if isinstance(merged_turn.get("orchestrator_decision"), dict) else {}
+            memory_update = self._as_dict(
+                memory_updates.get(str(turn.get("turn_id") or ""))
+            )
+            merged_turn = self._merge_turn_memory_update(turn, memory_update)
+            orchestrator_decision = self._as_dict(
+                merged_turn.get("orchestrator_decision")
             )
             normalized_controller_mode = self._normalize_controller_mode(orchestrator_decision.get("controller_mode"))
             normalized_decision = {

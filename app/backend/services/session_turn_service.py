@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict
 
-from app.backend.repositories.database import MessageManager, SessionManager
+from app.backend.repositories.session_manager import MessageManager, SessionManager
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.langsmith_tracing import set_trace_metadata
 

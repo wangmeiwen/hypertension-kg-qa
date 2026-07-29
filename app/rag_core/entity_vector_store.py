@@ -14,7 +14,7 @@
 
 import hashlib
 
-from pymilvus import DataType
+from pymilvus import DataType  # type: ignore[import-untyped]
 
 from app.rag_core.vector_store import VectorStore, conf
 

@@ -99,7 +99,7 @@ class DocxParser:
             HanLP 分词器实例
         """
         if self._hanlp_tokenizer is None:
-            import hanlp
+            import hanlp  # type: ignore[import-untyped]
             # 使用HanLP的CTB9分词模型
             self._hanlp_tokenizer = hanlp.load(hanlp.pretrained.tok.CTB9_TOK_ELECTRA_BASE)
         return self._hanlp_tokenizer
@@ -778,4 +778,3 @@ def parse_docx_bytes(file_bytes: bytes,
     """
     parser = DocxParser(parent_chunk_size, sub_chunk_size)
     return parser.parse_bytes(file_bytes, source_doc)
-

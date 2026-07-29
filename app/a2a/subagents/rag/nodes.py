@@ -152,7 +152,8 @@ async def node_generate_query_statement(state: RagSubAgentState) -> RagSubAgentS
     query_terms = [str(item or "").strip() for item in query_terms_obj] if isinstance(query_terms_obj, list) else []
     query_terms = [item for item in query_terms if item]
 
-    constraints = state.get("constraints") if isinstance(state.get("constraints"), dict) else {}
+    constraints_obj = state.get("constraints")
+    constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
     max_tool_calls = max(1, min(int(constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS), MAX_SUBAGENT_TOOL_CALLS))
     tool_results_obj = state.get("tool_results")
     tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
@@ -227,10 +228,14 @@ async def node_normalize_results(state: RagSubAgentState) -> RagSubAgentState:
     state["evidence"] = evidence
     state["no_signal"] = len(evidence) == 0
     state["reason"] = "no_signal" if len(evidence) == 0 else "ok"
+    constraints_obj = state.get("constraints")
+    constraints = constraints_obj if isinstance(constraints_obj, dict) else {}
     state["telemetry"] = {
         "tool_calls": len(rows),
         "query_rounds": int(state.get("attempt_count") or 0),
-        "max_tool_calls": int((state.get("constraints") if isinstance(state.get("constraints"), dict) else {}).get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS),
+        "max_tool_calls": int(
+            constraints.get("max_tool_calls") or MAX_SUBAGENT_TOOL_CALLS
+        ),
         "signal_count": len(evidence),
         "ok_count": sum(1 for row in rows if isinstance(row, dict) and bool(row.get("ok"))),
     }

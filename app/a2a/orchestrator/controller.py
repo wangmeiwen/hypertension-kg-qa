@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 try:
-    import jieba  # type: ignore[import-not-found]
+    import jieba  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover - dependency is enforced at runtime
     jieba = None
 
@@ -537,9 +537,12 @@ class UnifiedOrchestratorController:
             current_retrieval_index_text = str(
                 compressed_sections.get("retrieval_question_index_text") or "当前暂无历史检索问题"
             )
+            compressed_tool_observations = compressed_sections.get(
+                "tool_observations"
+            )
             current_tool_observations = (
-                compressed_sections.get("tool_observations")
-                if isinstance(compressed_sections.get("tool_observations"), list)
+                compressed_tool_observations
+                if isinstance(compressed_tool_observations, list)
                 else []
             )
             messages = [
@@ -728,7 +731,9 @@ class UnifiedOrchestratorController:
         max_tool_calls: int,
     ) -> SubTask:
         """根据主控动作构建子代理任务对象。"""
-        target_agent = "kg" if str(action.get("action") or "") == "call_kg" else "rag"
+        target_agent: Literal["kg", "rag"] = (
+            "kg" if str(action.get("action") or "") == "call_kg" else "rag"
+        )
         question = _sanitize_text(action.get("question"), 300) or default_question
         return SubTask(
             subtask_id=1,

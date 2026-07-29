@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,8 @@ class AdminObservabilityService:
 
     def _derive_llm_metrics_from_agent_lanes(self, payload: dict[str, Any]) -> dict[str, int]:
         """独立 LLM 日志缺失时，从 turn.agent_lanes 的 telemetry 中兜底提取指标。"""
-        agent_lanes = payload.get("agent_lanes") if isinstance(payload.get("agent_lanes"), dict) else {}
+        agent_lanes_value = payload.get("agent_lanes")
+        agent_lanes = agent_lanes_value if isinstance(agent_lanes_value, dict) else {}
         total_tokens = 0
         llm_calls = 0
         for cards in agent_lanes.values():
@@ -145,9 +146,11 @@ class AdminObservabilityService:
             ),
         }
         if memory_update:
+            payload_error_types = payload.get("error_types")
+            memory_error_types = memory_update.get("error_types")
             merged["error_types"] = {
-                **(payload.get("error_types") if isinstance(payload.get("error_types"), dict) else {}),
-                **(memory_update.get("error_types") if isinstance(memory_update.get("error_types"), dict) else {}),
+                **(payload_error_types if isinstance(payload_error_types, dict) else {}),
+                **(memory_error_types if isinstance(memory_error_types, dict) else {}),
             }
         return merged
 
@@ -189,7 +192,10 @@ class AdminObservabilityService:
                 self._log_api_error("_read_turn_logs", "read_file", exc, path=str(turn_file))
                 continue
         for turn_id, payload in turn_rows.items():
-            memory_update = memory_updates.get(turn_id) if isinstance(memory_updates.get(turn_id), dict) else {}
+            memory_update_value = memory_updates.get(turn_id)
+            memory_update = (
+                memory_update_value if isinstance(memory_update_value, dict) else {}
+            )
             rows.append(self._merge_turn_metrics(payload, memory_update))
         rows.sort(key=lambda item: str(item.get("finished_at") or item.get("timestamp") or ""), reverse=True)
         return rows[:limit]

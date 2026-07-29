@@ -7,17 +7,17 @@ import os
 import sys
 from pathlib import Path
 
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+from pymilvus import DataType, MilvusClient
 
-from pymilvus import MilvusClient, DataType
+# 添加项目根目录到路径
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
 
 # 导入配置
 try:
-    from app.core.config import Config
+    from app.core.config import Config  # noqa: E402
 except ImportError:
-    from config.config import Config
+    from config.config import Config  # noqa: E402
 
 
 def get_kg_milvus_config():
@@ -108,8 +108,8 @@ def create_kg_collection_with_schema(
 
         print(f"✅ 已创建知识图谱集合: {collection_name}")
         print(f"   - 向量维度: {embedding_dim}")
-        print(f"   - 字段: pk_id, doc_id, item_type, name, label, source_name, source_label,")
-        print(f"           relation_type, target_name, target_label, text, timestamp, embedding")
+        print("   - 字段: pk_id, doc_id, item_type, name, label, source_name, source_label,")
+        print("           relation_type, target_name, target_label, text, timestamp, embedding")
         return True
 
     except Exception as e:
@@ -160,7 +160,7 @@ def recreate_kg_collection(embedding_dim: int = 1024, skip_confirm: bool = False
         if create_kg_collection_with_schema(client, collection_name, embedding_dim):
             # 加载集合
             client.load_collection(collection_name)
-            print(f"✅ 集合已加载到内存")
+            print("✅ 集合已加载到内存")
             print("\n📝 提示: 现在可以重新从 Neo4j 重建知识图谱嵌入")
             return True
         else:

@@ -24,7 +24,6 @@ import requests  # type: ignore[import-untyped]
 from app.core.config import Config
 
 from app.core.langsmith_tracing import set_trace_metadata, traceable
-from app.core.feature_flags import get_feature_flag
 
 from app.backend.observability.session_logger import get_request_id, get_session_id, log_llm_call
 
@@ -289,8 +288,9 @@ class LLMClient:
         async with self._async_client_lock:
             client = self._async_client
             if client is None or self._is_async_client_closed(client):
-                self._async_client = httpx.AsyncClient()
-            return self._async_client
+                client = httpx.AsyncClient()
+                self._async_client = client
+            return client
 
     async def aclose(self) -> None:
         """关闭底层 HTTP 连接池，后续调用会按需重新创建。"""

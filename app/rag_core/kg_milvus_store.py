@@ -32,9 +32,9 @@ from datetime import datetime
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional
 
-import networkx as nx
+import networkx as nx  # type: ignore[import-untyped]
 import numpy as np
-from pymilvus import DataType, MilvusClient
+from pymilvus import DataType, MilvusClient  # type: ignore[import-untyped]
 from sentence_transformers import SentenceTransformer
 
 from app.core.concurrency import LockAcquireTimeout, concurrency_guard
@@ -196,7 +196,7 @@ class KgMilvusStore:
         """使用本地规则生成社区摘要，避免额外 LLM 开销。"""
 
         node_set = set(community.get("nodes") or [])
-        related_rels = []
+        related_rels: List[Dict[str, Any]] = []
         for rel in relationships:
             src = str(rel.get("source_name") or "").strip()
             dst = str(rel.get("target_name") or "").strip()
@@ -1457,8 +1457,8 @@ class KgMilvusStore:
 
         ranked_rows.sort(key=lambda item: self._to_score(item.get("hybrid_score")), reverse=True)
 
-        entities = []
-        relationships = []
+        entities: List[Dict[str, Any]] = []
+        relationships: List[Dict[str, Any]] = []
         for row in ranked_rows:
             item_type = str(row.get("item_type") or "").strip()
             base = {
@@ -1487,7 +1487,7 @@ class KgMilvusStore:
             if len(entities) >= safe_top_k and len(relationships) >= safe_top_k:
                 break
 
-        disambiguation_result = {
+        disambiguation_result: Dict[str, Any] = {
             "entities": entities,
             "relationships": relationships,
             "ambiguous_entities": [],
@@ -1514,7 +1514,7 @@ class KgMilvusStore:
                 resolver=disambiguation_resolver,
             )
 
-        community_result = {
+        community_result: Dict[str, Any] = {
             "communities": [],
             "community_reports": [],
             "community_detection": {

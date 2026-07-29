@@ -3,14 +3,19 @@
 提供会话和消息表的异步数据访问能力。
 """
 
-
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from app.backend.repositories.database import fetch_all, fetch_one, execute, insert_and_get_last_id
+from app.backend.repositories.database import (
+    fetch_all,
+    fetch_one,
+    execute,
+    insert_and_get_last_id,
+)
+from app.backend.repositories.row_utils import to_iso_timestamp
 
 
 class SessionManager:
@@ -36,12 +41,14 @@ class SessionManager:
             "SELECT id, user_id, title, created_at, updated_at FROM sessions WHERE id=:id",
             {"id": session_id},
         )
+        if row is None:
+            raise RuntimeError("session_insert_readback_failed")
         return {
             "id": row["id"],
             "user_id": row["user_id"],
             "title": row["title"],
-            "created_at": row["created_at"].isoformat() if row and row.get("created_at") else None,
-            "updated_at": row["updated_at"].isoformat() if row and row.get("updated_at") else None,
+            "created_at": to_iso_timestamp(row.get("created_at")),
+            "updated_at": to_iso_timestamp(row.get("updated_at")),
         }
 
     @staticmethod
@@ -70,8 +77,12 @@ class SessionManager:
                 "id": row["id"],
                 "user_id": row["user_id"],
                 "title": row["title"],
-                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-                "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+                "created_at": (
+                    row["created_at"].isoformat() if row.get("created_at") else None
+                ),
+                "updated_at": (
+                    row["updated_at"].isoformat() if row.get("updated_at") else None
+                ),
             }
             for row in rows
         ]
@@ -96,8 +107,12 @@ class SessionManager:
             "id": row["id"],
             "user_id": row["user_id"],
             "title": row["title"],
-            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-            "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+            "created_at": (
+                row["created_at"].isoformat() if row.get("created_at") else None
+            ),
+            "updated_at": (
+                row["updated_at"].isoformat() if row.get("updated_at") else None
+            ),
         }
 
     @staticmethod
@@ -127,7 +142,9 @@ class SessionManager:
         Returns:
             bool: 删除成功返回 True。
         """
-        affected = await execute("DELETE FROM sessions WHERE id=:id", {"id": session_id})
+        affected = await execute(
+            "DELETE FROM sessions WHERE id=:id", {"id": session_id}
+        )
         return affected > 0
 
     @staticmethod
@@ -173,8 +190,12 @@ class SessionManager:
                 "id": row["id"],
                 "user_id": row["user_id"],
                 "title": row["title"],
-                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-                "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+                "created_at": (
+                    row["created_at"].isoformat() if row.get("created_at") else None
+                ),
+                "updated_at": (
+                    row["updated_at"].isoformat() if row.get("updated_at") else None
+                ),
                 "message_count": row.get("message_count") or 0,
             }
             for row in rows
@@ -195,7 +216,9 @@ class MessageManager:
     """封装会话消息的写入、查询与回滚操作。"""
 
     @staticmethod
-    async def add_message(session_id: str, role: str, content: str, think_content: str = "") -> dict:
+    async def add_message(
+        session_id: str, role: str, content: str, think_content: str = ""
+    ) -> dict:
         """向会话追加一条消息并更新时间。
 
         Args:
@@ -253,7 +276,9 @@ class MessageManager:
                 "role": row["role"],
                 "content": row["content"],
                 "think_content": row.get("think_content") or "",
-                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+                "created_at": (
+                    row["created_at"].isoformat() if row.get("created_at") else None
+                ),
             }
             for row in rows
         ]
@@ -277,7 +302,10 @@ class MessageManager:
         Returns:
             bool: 删除成功返回 True。
         """
-        affected = await execute("DELETE FROM messages WHERE session_id=:session_id", {"session_id": session_id})
+        affected = await execute(
+            "DELETE FROM messages WHERE session_id=:session_id",
+            {"session_id": session_id},
+        )
         return affected > 0
 
     @staticmethod
@@ -311,7 +339,11 @@ class MessageManager:
             {"session_id": session_id, "last_user_id": last_user_id},
         )
         await SessionManager.update_session_time(session_id)
-        return {"ok": removed > 0, "removed_count": int(removed or 0), "question": question}
+        return {
+            "ok": removed > 0,
+            "removed_count": int(removed or 0),
+            "question": question,
+        }
 
     @staticmethod
     async def rollback_to_question(session_id: str, question_message_id: int) -> dict:

@@ -174,12 +174,12 @@ def generate_api_baseline_report(days: int = 1, target_paths: List[str] | None =
         path = str(row.get("path") or "").strip()
         if not path:
             continue
+        stream_total_ms = row.get("stream_total_ms")
+        duration_value = (
+            stream_total_ms if stream_total_ms is not None else row.get("duration_ms")
+        )
         try:
-            duration_ms = float(
-                row.get("stream_total_ms")
-                if row.get("stream_total_ms") is not None
-                else (row.get("duration_ms") if row.get("duration_ms") is not None else 0.0)
-            )
+            duration_ms = float(duration_value) if duration_value is not None else 0.0
         except (ValueError, TypeError):
             duration_ms = 0.0
         status_code = int(row.get("status_code") or 0)
@@ -220,5 +220,4 @@ def generate_api_baseline_report(days: int = 1, target_paths: List[str] | None =
             for path, avg_ms, count in top_slowest_paths[:20]
         ],
     }
-
 

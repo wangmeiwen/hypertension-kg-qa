@@ -16,10 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.backend.app_factory import BackendAppTestOverrides, create_app
-from app.backend.dependencies.admin_auth import require_admin_login
-from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
-from app.backend.testing.deterministic_support import build_deterministic_test_overrides
+from app.backend.app_factory import BackendAppTestOverrides, create_app  # noqa: E402
+from app.backend.dependencies.admin_auth import require_admin_login  # noqa: E402
+from app.backend.services.startup_runtime_service import StartupRuntimeBehavior  # noqa: E402
+from app.backend.testing.deterministic_support import (  # noqa: E402
+    build_deterministic_test_overrides,
+)
 
 
 async def await_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

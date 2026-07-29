@@ -10,7 +10,7 @@ import uuid
 from fastapi import UploadFile
 import httpx
 
-from app.backend.repositories.database import MessageManager, SessionManager
+from app.backend.repositories.session_manager import MessageManager, SessionManager
 from app.core.config import Config
 
 

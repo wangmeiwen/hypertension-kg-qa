@@ -68,6 +68,7 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache
+/tmp/
 /app/frontend/runtime_cache/
 /runtime_cache/defense_ppt/
 /docs/

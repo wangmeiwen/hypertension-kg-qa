@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-import time
 from collections import defaultdict
 from typing import Any, AsyncIterator, Iterator
 from uuid import uuid4

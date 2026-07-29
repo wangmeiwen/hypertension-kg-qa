@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
+from app.backend.domain.job_status import BackgroundJobStatus
 from app.core.concurrency import concurrency_guard
 from app.core.config import Config
 
@@ -21,11 +22,11 @@ logger = logging.getLogger(__name__)
 class AdminDocumentsService:
     """封装管理员文本嵌入业务。"""
 
-    JOB_STATUS_QUEUED = "queued"
-    JOB_STATUS_RUNNING = "running"
-    JOB_STATUS_SUCCEEDED = "succeeded"
-    JOB_STATUS_FAILED = "failed"
-    JOB_STATUS_CANCELLED = "cancelled"
+    JOB_STATUS_QUEUED = BackgroundJobStatus.QUEUED.value
+    JOB_STATUS_RUNNING = BackgroundJobStatus.RUNNING.value
+    JOB_STATUS_SUCCEEDED = BackgroundJobStatus.SUCCEEDED.value
+    JOB_STATUS_FAILED = BackgroundJobStatus.FAILED.value
+    JOB_STATUS_CANCELLED = BackgroundJobStatus.CANCELLED.value
 
     TEXT_EMBED_JOB_TYPE = "text_vector_embed"
     SOFT_TIMEOUT_SECONDS = 300
@@ -102,7 +103,7 @@ class AdminDocumentsService:
         """
         async with self._job_lock:
             job_id = f"text-embed-job-{uuid4().hex}"
-            job = {
+            job: dict[str, Any] = {
                 "job_id": job_id,
                 "job_type": job_type,
                 "status": self.JOB_STATUS_QUEUED,

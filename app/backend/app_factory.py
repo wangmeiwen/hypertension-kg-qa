@@ -67,20 +67,20 @@ class BackendAppTestOverrides:
     session_memory_service: Any = None
     get_shared_vector_store: Callable[[], Any] | None = None
     get_shared_kg_milvus_store: Callable[[], Any] | None = None
-    readiness_service: ReadinessService | None = None
+    readiness_service: Any = None
     a2a_dispatch_service: A2ADispatchService | None = None
-    a2a_event_stream_service: A2AEventStreamService | None = None
+    a2a_event_stream_service: Any = None
     agent_run_service: AgentRunService | None = None
-    session_turn_service: SessionTurnService | None = None
-    session_stream_service: SessionStreamService | None = None
-    sessions_history_service: SessionsHistoryService | None = None
+    session_turn_service: Any = None
+    session_stream_service: Any = None
+    sessions_history_service: Any = None
     admin_auth_service: AdminAuthService | None = None
-    admin_runtime_service: AdminRuntimeService | None = None
-    admin_sessions_service: AdminSessionsService | None = None
-    admin_observability_service: AdminObservabilityService | None = None
-    admin_documents_service: AdminDocumentsService | None = None
-    graph_admin_service: GraphAdminService | None = None
-    graph_public_service: GraphPublicService | None = None
+    admin_runtime_service: Any = None
+    admin_sessions_service: Any = None
+    admin_observability_service: Any = None
+    admin_documents_service: Any = None
+    graph_admin_service: Any = None
+    graph_public_service: Any = None
 
 
 def _log_api_error(endpoint: str, stage: str, exc: Exception, **kwargs: Any) -> None:

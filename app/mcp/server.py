@@ -428,7 +428,10 @@ class MCPServer:
             try:
                 row = await self._invoke_once(tool, payload if isinstance(payload, dict) else {})
                 await self._circuit_reset(canonical_name)
-                row_meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+                row_meta_value = row.get("meta")
+                row_meta = (
+                    dict(row_meta_value) if isinstance(row_meta_value, dict) else {}
+                )
                 row_meta.update(
                     {
                         "attempt": attempt,

@@ -19,7 +19,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 import logging
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,12 @@ async def put_reply_content(queue_key: str, put_content: str) -> None:
     await asyncio.sleep(0.1)
 
 
-async def put_done_content(queue_key: str, final_output: str = "", traces: Optional[list] = None, status: str = "") -> None:
+async def put_done_content(
+    queue_key: str,
+    final_output: str = "",
+    traces: Optional[list[Any]] = None,
+    status: str = "",
+) -> None:
     """
     结束流时传入最终回复内容。
 
@@ -212,7 +217,7 @@ async def put_done_content(queue_key: str, final_output: str = "", traces: Optio
     Returns:
         None: 无返回值。
     """
-    message = {"type": "done", "msg": final_output or ""}
+    message: dict[str, Any] = {"type": "done", "msg": final_output}
     if traces is not None:
         message["traces"] = traces
     if status:

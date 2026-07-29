@@ -1,10 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import styles from "./AdminGraphWorkspace.module.css";
+import {
+  getGraphNodeName,
+  GraphJobCard,
+  GraphPropertyRows,
+  GraphRelationshipRows,
+  parseGraphProperties,
+  stringifyGraphProperties,
+} from "./graph_workspace_helpers";
+import {
+  CypherQueryModal,
+  NodeEditorModal,
+  RelationshipEditorModal,
+} from "./graph_workspace_modals";
 import KnowledgeGraphCanvas from "../../../entities/graph/ui/KnowledgeGraphCanvas";
-import type { AdminGraphRelationship, GraphJob, GraphNode } from "../../../shared/api/contracts";
+import type { GraphJob } from "../../../shared/api/contracts";
 import {
   createGraphNode,
   createGraphRelationship,
@@ -22,82 +35,21 @@ import {
   submitGraphExtractImport,
   updateGraphNode,
 } from "../../../shared/api/graphClient";
-import { formatDateTime, truncateText } from "../../../shared/lib/format";
+import { truncateText } from "../../../shared/lib/format";
 import { reportFrontendError } from "../../../shared/lib/observability";
 import { queryKeys } from "../../../shared/queries/queryKeys";
-import { Badge, Button, Card, DataTable, InlineNotice, Input, Modal, Select, Textarea, VirtualList } from "../../../shared/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  DataTable,
+  InlineNotice,
+  Input,
+  Select,
+  VirtualList,
+} from "../../../shared/ui/primitives";
 
 const LIMIT_OPTIONS = [20, 50, 80, 100, 150];
-
-function parseProperties(text: string): Record<string, unknown> {
-  // 节点和关系属性只接受 JSON 对象，避免数组或标量写入图谱属性面板。
-  const trimmed = text.trim();
-  if (!trimmed) return {};
-  const value = JSON.parse(trimmed) as unknown;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("属性必须是 JSON 对象。");
-  }
-  return value as Record<string, unknown>;
-}
-
-function stringifyProperties(value: Record<string, unknown> | undefined): string {
-  return JSON.stringify(value || {}, null, 2);
-}
-
-function getNodeName(node: GraphNode): string {
-  const props = node.properties || {};
-  return String(node.name || props.name || props.title || node.id);
-}
-
-function renderPropertyRows(value: Record<string, unknown> | undefined): ReactNode {
-  const entries = Object.entries(value || {});
-  if (!entries.length) return <div className="muted">-</div>;
-  return (
-    <div className={styles.properties}>
-      {entries.map(([key, propertyValue]) => (
-        <div key={key} className={styles.propertyRow}>
-          <strong>{key}</strong>
-          <span>{typeof propertyValue === "string" ? propertyValue : JSON.stringify(propertyValue)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function renderRelationshipRows(relationships: AdminGraphRelationship[], onDelete: (relId: string | number) => void): ReactNode {
-  // 入边和出边共用同一渲染逻辑，删除动作由调用方注入。
-  if (!relationships.length) return <div className="muted">-</div>;
-  return (
-    <div className={styles.relationshipList}>
-      {relationships.map((relationship, index) => {
-        const relId = relationship.rel_id;
-        const neighborName = relationship.source_name || relationship.target_name || "-";
-        return (
-          <div key={`${relId || index}`} className={styles.relationshipItem}>
-            <div className={styles.relationshipMeta}>
-              <strong>{relationship.rel_type}</strong>
-              <span className="muted">{neighborName}</span>
-            </div>
-            <div className={styles.relationshipActions}>
-              <div className={styles.mono}>{JSON.stringify(relationship.rel_props || {}, null, 2)}</div>
-              {relId != null ? (
-                <Button tone="ghost" onClick={() => onDelete(relId)}>
-                  删除关系
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function getStatusTone(status: string): "default" | "danger" | "success" {
-  if (status === "failed" || status === "cancelled") return "danger";
-  if (status === "succeeded") return "success";
-  return "default";
-}
 
 export default function AdminGraphWorkspace() {
   const { t } = useTranslation();
@@ -109,7 +61,10 @@ export default function AdminGraphWorkspace() {
   const [page, setPage] = useState(1);
   const [selectedNodeId, setSelectedNodeId] = useState<string | number | null>(null);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("");
-  const [nodeModal, setNodeModal] = useState<{ mode: "create" | "edit"; open: boolean }>({ mode: "create", open: false });
+  const [nodeModal, setNodeModal] = useState<{ mode: "create" | "edit"; open: boolean }>({
+    mode: "create",
+    open: false,
+  });
   const [nodeLabel, setNodeLabel] = useState("");
   const [nodePropertiesText, setNodePropertiesText] = useState('{\n  "name": ""\n}');
   const [relationshipOpen, setRelationshipOpen] = useState(false);
@@ -126,7 +81,10 @@ export default function AdminGraphWorkspace() {
   const [feedback, setFeedback] = useState("");
 
   const labelsQuery = useQuery({ queryKey: queryKeys.graph.labels, queryFn: getGraphLabels });
-  const relationTypesQuery = useQuery({ queryKey: queryKeys.graph.relationTypes, queryFn: getGraphRelationshipTypes });
+  const relationTypesQuery = useQuery({
+    queryKey: queryKeys.graph.relationTypes,
+    queryFn: getGraphRelationshipTypes,
+  });
   const nodesQuery = useQuery({
     queryKey: queryKeys.graph.nodes(label, keyword, page, limit),
     queryFn: () => getGraphNodes({ label, keyword, limit, offset: (page - 1) * limit }),
@@ -145,7 +103,11 @@ export default function AdminGraphWorkspace() {
     queryFn: () => getRecentGraphJobs(10),
     // 图谱导入/向量化任务运行中时轮询，避免后台任务完成后页面停留旧状态。
     refetchInterval: (query) =>
-      (query.state.data as GraphJob[] | undefined)?.some((job) => job.status === "queued" || job.status === "running") ? 2500 : false,
+      (query.state.data as GraphJob[] | undefined)?.some(
+        (job) => job.status === "queued" || job.status === "running",
+      )
+        ? 2500
+        : false,
   });
   const embedStatusQuery = useQuery({
     queryKey: queryKeys.graph.embedStatus,
@@ -153,14 +115,18 @@ export default function AdminGraphWorkspace() {
   });
 
   const createNodeMutation = useMutation({
-    mutationFn: () => createGraphNode(nodeLabel.trim(), parseProperties(nodePropertiesText)),
+    mutationFn: () => createGraphNode(nodeLabel.trim(), parseGraphProperties(nodePropertiesText)),
     onSuccess: async (node) => {
       // 创建后选中新节点并刷新当前分页，便于继续编辑或检查关系。
       setFeedback(t("admin.graphWorkspace.createSuccess"));
       setNodeModal({ mode: "create", open: false });
       setSelectedNodeId(node.id);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.nodes(label, keyword, page, limit) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.nodes(label, keyword, page, limit),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.visualization(keyword, limit),
+      });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_create_node");
@@ -169,13 +135,18 @@ export default function AdminGraphWorkspace() {
   });
 
   const updateNodeMutation = useMutation({
-    mutationFn: () => updateGraphNode(selectedNodeId as string | number, parseProperties(nodePropertiesText)),
+    mutationFn: () =>
+      updateGraphNode(selectedNodeId as string | number, parseGraphProperties(nodePropertiesText)),
     onSuccess: async () => {
       setFeedback(t("admin.graphWorkspace.updateSuccess"));
       setNodeModal({ mode: "edit", open: false });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.nodes(label, keyword, page, limit) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.nodes(label, keyword, page, limit),
+      });
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.node(selectedNodeId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.visualization(keyword, limit),
+      });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_update_node");
@@ -189,8 +160,12 @@ export default function AdminGraphWorkspace() {
       setFeedback(t("admin.graphWorkspace.deleteSuccess"));
       setSelectedNodeId(null);
       setSelectedGraphNodeId("");
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.nodes(label, keyword, page, limit) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.nodes(label, keyword, page, limit),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.visualization(keyword, limit),
+      });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_delete_node");
@@ -204,13 +179,15 @@ export default function AdminGraphWorkspace() {
         Number(sourceNodeId),
         Number(targetNodeId),
         relationshipType.trim(),
-        parseProperties(relationshipPropertiesText),
+        parseGraphProperties(relationshipPropertiesText),
       ),
     onSuccess: async () => {
       setFeedback(t("admin.graphWorkspace.relationshipSuccess"));
       setRelationshipOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.node(selectedNodeId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.visualization(keyword, limit),
+      });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_create_relationship");
@@ -223,7 +200,9 @@ export default function AdminGraphWorkspace() {
     onSuccess: async () => {
       setFeedback(t("admin.graphWorkspace.deleteRelationshipSuccess"));
       await queryClient.invalidateQueries({ queryKey: queryKeys.graph.node(selectedNodeId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.graph.visualization(keyword, limit) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.graph.visualization(keyword, limit),
+      });
     },
     onError: (error) => {
       reportFrontendError(error, "graph_delete_relationship");
@@ -277,7 +256,7 @@ export default function AdminGraphWorkspace() {
     // DataTable 接收二维 ReactNode 数组，操作列内联绑定查看、编辑、删除。
     nodesQuery.data?.data.map((node) => [
       String(node.id),
-      truncateText(getNodeName(node), 30),
+      truncateText(getGraphNodeName(node), 30),
       Array.isArray(node.labels) ? node.labels.join(", ") : "-",
       <div key={`actions-${node.id}`} className={styles.inlineActions}>
         <Button tone="secondary" onClick={() => setSelectedNodeId(node.id)}>
@@ -288,7 +267,7 @@ export default function AdminGraphWorkspace() {
           onClick={() => {
             setSelectedNodeId(node.id);
             setNodeLabel((node.labels || [node.label || ""]).join(","));
-            setNodePropertiesText(stringifyProperties(node.properties));
+            setNodePropertiesText(stringifyGraphProperties(node.properties));
             setNodeModal({ mode: "edit", open: true });
           }}
         >
@@ -311,21 +290,11 @@ export default function AdminGraphWorkspace() {
   // 派生分页、向量状态和任务列表展示数据，避免 JSX 中重复格式化。
   const graphPreview = graphPreviewQuery.data ?? { nodes: [], links: [] };
   const totalPages = Math.max(1, Math.ceil((nodesQuery.data?.total || 0) / limit));
-  const embedStatusText = useMemo(() => JSON.stringify(embedStatusQuery.data || {}, null, 2), [embedStatusQuery.data]);
-  const jobs = jobsQuery.data || [];
-  const renderJob = (job: GraphJob) => (
-    <div className={styles.jobCard}>
-      <div className={styles.jobHeader}>
-        <strong>{job.job_type || job.job_id}</strong>
-        <Badge tone={getStatusTone(String(job.status))}>{String(job.status)}</Badge>
-      </div>
-      <div className="muted">{job.progress_text || job.message || "-"}</div>
-      <div className={styles.jobMeta}>
-        <span>{formatDateTime(job.created_at)}</span>
-        <span>{job.stage || "-"}</span>
-      </div>
-    </div>
+  const embedStatusText = useMemo(
+    () => JSON.stringify(embedStatusQuery.data || {}, null, 2),
+    [embedStatusQuery.data],
   );
+  const jobs = jobsQuery.data || [];
 
   return (
     <div className={styles.workspace}>
@@ -337,7 +306,12 @@ export default function AdminGraphWorkspace() {
             title={t("admin.graphWorkspace.graphPreview")}
             action={
               <div className={`${styles.inlineActions} ${styles.graphPreviewActions}`}>
-                <Badge>{t("graph.nodesLoaded", { nodes: graphPreview.nodes.length, links: graphPreview.links.length })}</Badge>
+                <Badge>
+                  {t("graph.nodesLoaded", {
+                    nodes: graphPreview.nodes.length,
+                    links: graphPreview.links.length,
+                  })}
+                </Badge>
                 <Button tone="secondary" onClick={() => void graphPreviewQuery.refetch()}>
                   {t("common.refresh")}
                 </Button>
@@ -346,7 +320,9 @@ export default function AdminGraphWorkspace() {
           >
             {graphPreviewQuery.error ? (
               <InlineNotice tone="error">
-                {graphPreviewQuery.error instanceof Error ? graphPreviewQuery.error.message : String(graphPreviewQuery.error)}
+                {graphPreviewQuery.error instanceof Error
+                  ? graphPreviewQuery.error.message
+                  : String(graphPreviewQuery.error)}
               </InlineNotice>
             ) : null}
             <KnowledgeGraphCanvas
@@ -430,10 +406,18 @@ export default function AdminGraphWorkspace() {
                 第 {page} / {totalPages} 页，共 {nodesQuery.data?.total || 0} 条
               </span>
               <div className={styles.inlineActions}>
-                <Button tone="secondary" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                <Button
+                  tone="secondary"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
                   上一页
                 </Button>
-                <Button tone="secondary" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
+                <Button
+                  tone="secondary"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                >
                   下一页
                 </Button>
               </div>
@@ -451,7 +435,7 @@ export default function AdminGraphWorkspace() {
                 </div>
                 <div className={styles.propertyRow}>
                   <strong>名称</strong>
-                  <span>{getNodeName(selectedNode)}</span>
+                  <span>{getGraphNodeName(selectedNode)}</span>
                 </div>
                 <div className={styles.propertyRow}>
                   <strong>标签</strong>
@@ -459,23 +443,29 @@ export default function AdminGraphWorkspace() {
                 </div>
                 <div>
                   <strong>{t("graph.entityProperties")}</strong>
-                  {renderPropertyRows(selectedNode.properties)}
+                  <GraphPropertyRows value={selectedNode.properties} />
                 </div>
                 <div>
                   <strong>{t("graph.entityIncoming")}</strong>
-                  {renderRelationshipRows(nodeDetailQuery.data?.relationships.incoming || [], (relId) => {
-                    if (window.confirm(t("admin.graphWorkspace.confirmDeleteRelationship"))) {
-                      void deleteRelationshipMutation.mutateAsync(relId);
-                    }
-                  })}
+                  <GraphRelationshipRows
+                    relationships={nodeDetailQuery.data?.relationships.incoming || []}
+                    onDelete={(relId) => {
+                      if (window.confirm(t("admin.graphWorkspace.confirmDeleteRelationship"))) {
+                        void deleteRelationshipMutation.mutateAsync(relId);
+                      }
+                    }}
+                  />
                 </div>
                 <div>
                   <strong>{t("graph.entityOutgoing")}</strong>
-                  {renderRelationshipRows(nodeDetailQuery.data?.relationships.outgoing || [], (relId) => {
-                    if (window.confirm(t("admin.graphWorkspace.confirmDeleteRelationship"))) {
-                      void deleteRelationshipMutation.mutateAsync(relId);
-                    }
-                  })}
+                  <GraphRelationshipRows
+                    relationships={nodeDetailQuery.data?.relationships.outgoing || []}
+                    onDelete={(relId) => {
+                      if (window.confirm(t("admin.graphWorkspace.confirmDeleteRelationship"))) {
+                        void deleteRelationshipMutation.mutateAsync(relId);
+                      }
+                    }}
+                  />
                 </div>
               </div>
             ) : (
@@ -485,9 +475,15 @@ export default function AdminGraphWorkspace() {
 
           <Card title={t("admin.graphWorkspace.importFile")}>
             <div className={styles.detailStack}>
-              <Input type="file" onChange={(event) => setSelectedImportFile(event.target.files?.[0] || null)} />
+              <Input
+                type="file"
+                onChange={(event) => setSelectedImportFile(event.target.files?.[0] || null)}
+              />
               {selectedImportFile ? <div className="muted">{selectedImportFile.name}</div> : null}
-              <Button onClick={() => selectedImportFile && void importMutation.mutateAsync()} disabled={!selectedImportFile}>
+              <Button
+                onClick={() => selectedImportFile && void importMutation.mutateAsync()}
+                disabled={!selectedImportFile}
+              >
                 {t("admin.graphActions.importGraph")}
               </Button>
             </div>
@@ -495,9 +491,18 @@ export default function AdminGraphWorkspace() {
 
           <Card title={t("admin.graphActions.embedGraph")}>
             <div className={styles.detailStack}>
-              <Input value={embedLabels} onChange={(event) => setEmbedLabels(event.target.value)} placeholder="Disease,Drug" />
-              <Input value={embedBatchSize} onChange={(event) => setEmbedBatchSize(event.target.value)} />
-              <Button onClick={() => void embedMutation.mutateAsync()}>{t("admin.graphActions.embedGraph")}</Button>
+              <Input
+                value={embedLabels}
+                onChange={(event) => setEmbedLabels(event.target.value)}
+                placeholder="Disease,Drug"
+              />
+              <Input
+                value={embedBatchSize}
+                onChange={(event) => setEmbedBatchSize(event.target.value)}
+              />
+              <Button onClick={() => void embedMutation.mutateAsync()}>
+                {t("admin.graphActions.embedGraph")}
+              </Button>
               <div className={styles.mono}>{embedStatusText}</div>
             </div>
           </Card>
@@ -512,7 +517,7 @@ export default function AdminGraphWorkspace() {
                   threshold={100}
                   maxHeight={560}
                   getKey={(job) => job.job_id}
-                  renderItem={renderJob}
+                  renderItem={(job) => <GraphJobCard job={job} />}
                 />
               ) : (
                 <div className="muted">{t("admin.graphWorkspace.noJobs")}</div>
@@ -522,66 +527,45 @@ export default function AdminGraphWorkspace() {
         </div>
       </div>
 
-      <Modal open={nodeModal.open} onClose={() => setNodeModal((current) => ({ ...current, open: false }))}>
-        <div className={styles.modalStack}>
-          <h2>{t(nodeModal.mode === "create" ? "admin.graphActions.createNode" : "admin.graphActions.editNode")}</h2>
-          {nodeModal.mode === "create" ? (
-            <Input value={nodeLabel} onChange={(event) => setNodeLabel(event.target.value)} placeholder={t("admin.graphWorkspace.nodeLabel")} />
-          ) : null}
-          <Textarea value={nodePropertiesText} onChange={(event) => setNodePropertiesText(event.target.value)} />
-          <div className="muted">{t("admin.graphWorkspace.jsonHint")}</div>
-          <div className={styles.inlineActions}>
-            <Button tone="secondary" onClick={() => setNodeModal((current) => ({ ...current, open: false }))}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={() => void (nodeModal.mode === "create" ? createNodeMutation.mutateAsync() : updateNodeMutation.mutateAsync())}>
-              {t("common.save")}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={relationshipOpen} onClose={() => setRelationshipOpen(false)}>
-        <div className={styles.modalStack}>
-          <h2>{t("admin.graphActions.createRelationship")}</h2>
-          <Input value={sourceNodeId} onChange={(event) => setSourceNodeId(event.target.value)} placeholder={t("admin.graphWorkspace.sourceNodeId")} />
-          <Input value={targetNodeId} onChange={(event) => setTargetNodeId(event.target.value)} placeholder={t("admin.graphWorkspace.targetNodeId")} />
-          <Input
-            value={relationshipType}
-            onChange={(event) => setRelationshipType(event.target.value)}
-            placeholder={t("admin.graphWorkspace.relationshipType")}
-            list="relationship-types"
-          />
-          <datalist id="relationship-types">
-            {(relationTypesQuery.data || []).map((item) => (
-              <option key={item} value={item} />
-            ))}
-          </datalist>
-          <Textarea value={relationshipPropertiesText} onChange={(event) => setRelationshipPropertiesText(event.target.value)} />
-          <div className={styles.inlineActions}>
-            <Button tone="secondary" onClick={() => setRelationshipOpen(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={() => void createRelationshipMutation.mutateAsync()}>{t("common.save")}</Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={cypherOpen} onClose={() => setCypherOpen(false)}>
-        <div className={styles.modalStack}>
-          <h2>{t("admin.graphActions.runCypher")}</h2>
-          <Textarea value={cypher} onChange={(event) => setCypher(event.target.value)} />
-          <div className={styles.inlineActions}>
-            <Button tone="secondary" onClick={() => setCypherOpen(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={() => void cypherMutation.mutateAsync()}>{t("common.submit")}</Button>
-          </div>
-          <Card title={t("admin.graphWorkspace.cypherResult")}>
-            <div className={styles.mono}>{JSON.stringify(cypherRows, null, 2)}</div>
-          </Card>
-        </div>
-      </Modal>
+      <NodeEditorModal
+        open={nodeModal.open}
+        mode={nodeModal.mode}
+        label={nodeLabel}
+        propertiesText={nodePropertiesText}
+        t={t}
+        onClose={() => setNodeModal((current) => ({ ...current, open: false }))}
+        onLabelChange={setNodeLabel}
+        onPropertiesChange={setNodePropertiesText}
+        onSubmit={() =>
+          void (nodeModal.mode === "create"
+            ? createNodeMutation.mutateAsync()
+            : updateNodeMutation.mutateAsync())
+        }
+      />
+      <RelationshipEditorModal
+        open={relationshipOpen}
+        sourceNodeId={sourceNodeId}
+        targetNodeId={targetNodeId}
+        relationshipType={relationshipType}
+        propertiesText={relationshipPropertiesText}
+        relationshipTypes={relationTypesQuery.data || []}
+        t={t}
+        onClose={() => setRelationshipOpen(false)}
+        onSourceNodeIdChange={setSourceNodeId}
+        onTargetNodeIdChange={setTargetNodeId}
+        onRelationshipTypeChange={setRelationshipType}
+        onPropertiesChange={setRelationshipPropertiesText}
+        onSubmit={() => void createRelationshipMutation.mutateAsync()}
+      />
+      <CypherQueryModal
+        open={cypherOpen}
+        query={cypher}
+        rows={cypherRows}
+        t={t}
+        onClose={() => setCypherOpen(false)}
+        onQueryChange={setCypher}
+        onSubmit={() => void cypherMutation.mutateAsync()}
+      />
     </div>
   );
 }

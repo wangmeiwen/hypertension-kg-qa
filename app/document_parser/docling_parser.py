@@ -22,12 +22,9 @@ import logging
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Callable
-from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
-
 from docling.document_converter import (
     DocumentConverter,
     ImageFormatOption,
@@ -37,6 +34,8 @@ from docling.datamodel.base_models import ConversionStatus, InputFormat
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
 from langchain_docling import DoclingLoader
+
+logger = logging.getLogger(__name__)
 
 # GLM-OCR 客户端按需加载
 
@@ -399,7 +398,7 @@ class DoclingParser:
         Returns:
             ParsedDocument: 合并 Docling 成功页和 PyMuPDF 降级页后的文档。
         """
-        import fitz
+        import fitz  # type: ignore[import-untyped]
 
         pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
         try:
@@ -651,8 +650,8 @@ class DoclingParser:
         """
         page = doc[page_no - 1]
         page_text = page.get_text("text") or ""
-        page_images = []
-        ocr_texts = []
+        page_images: List[Dict[str, Any]] = []
+        ocr_texts: List[str] = []
         seen_xrefs: set[int] = set()
         raw_images = page.get_images(full=True)
 
@@ -661,7 +660,7 @@ class DoclingParser:
             if xref in seen_xrefs:
                 continue
             seen_xrefs.add(xref)
-            image_info = {
+            image_info: Dict[str, Any] = {
                 "page_no": page_no,
                 "image_index": index,
                 "xref": xref,

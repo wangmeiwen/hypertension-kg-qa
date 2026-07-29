@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from app.a2a import A2AService, all_agent_cards
 from app.backend.services.a2a_dispatch_service import A2ADispatchService

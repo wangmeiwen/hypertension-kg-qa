@@ -3,21 +3,20 @@
 用于解决 schema 不匹配问题或更新集合结构
 """
 
-import os
 import sys
 from pathlib import Path
 
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+from pymilvus import DataType, MilvusClient
 
-from pymilvus import MilvusClient, DataType
+# 添加项目根目录到路径
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
 
 # 导入配置
 try:
-    from app.core.config import Config
+    from app.core.config import Config  # noqa: E402
 except ImportError:
-    from config.config import Config
+    from config.config import Config  # noqa: E402
 
 
 def get_milvus_config():
@@ -114,7 +113,7 @@ def create_collection_with_schema(
 
         print(f"✅ 已创建集合: {collection_name}")
         print(f"   - 稠密向量维度: {dense_dim}")
-        print(f"   - 字段: id, text, dense_vector, sparse_vector, parent_id, parent_content, source, timestamp, page_num, start_page, end_page")
+        print("   - 字段: id, text, dense_vector, sparse_vector, parent_id, parent_content, source, timestamp, page_num, start_page, end_page")
         return True
 
     except Exception as e:
@@ -165,7 +164,7 @@ def recreate_collection(dense_dim: int = 1024, skip_confirm: bool = False):
         if create_collection_with_schema(client, collection_name, dense_dim):
             # 加载集合
             client.load_collection(collection_name)
-            print(f"✅ 集合已加载到内存")
+            print("✅ 集合已加载到内存")
             print("\n📝 提示: 现在可以重新上传文档进行嵌入")
             return True
         else:

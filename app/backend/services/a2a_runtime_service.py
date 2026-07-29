@@ -5,16 +5,11 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.feature_flags import get_runtime_flag_snapshot
-
-if TYPE_CHECKING:
-    from app.a2a import A2AService
-    from app.a2a.agent import GraphSubAgent, RagSubAgent
-
 
 _CYPHER_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 

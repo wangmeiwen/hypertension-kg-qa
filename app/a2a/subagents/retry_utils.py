@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -99,7 +100,7 @@ def query_variant_for_attempt(variants: list[str], attempt_index: int) -> str:
     return variants[index]
 
 
-def should_continue_querying(state: dict[str, Any]) -> bool:
+def should_continue_querying(state: Mapping[str, Any]) -> bool:
     """判断子代理是否还应继续下一次检索。"""
     constraints_obj = state.get("constraints")
     constraints = constraints_obj if isinstance(constraints_obj, dict) else {}

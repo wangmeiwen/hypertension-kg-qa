@@ -678,21 +678,21 @@ class A2AService:
 
             if method == "tasks/get":
                 task_id = str(params.get("taskId") or "").strip()
-                task = await self.aget_task(task_id)
-                if not task:
+                stored_task = await self.aget_task(task_id)
+                if not stored_task:
                     return self._rpc_error(rpc_id, -32004, "task_not_found", {"taskId": task_id})
-                return self._rpc_ok(rpc_id, {"task": task})
+                return self._rpc_ok(rpc_id, {"task": stored_task})
 
             if method == "tasks/resubscribe":
                 task_id = str(params.get("taskId") or "").strip()
                 cursor = int(params.get("cursor") or 0)
-                task = await self.aget_task(task_id)
-                if not task:
+                stored_task = await self.aget_task(task_id)
+                if not stored_task:
                     return self._rpc_error(rpc_id, -32004, "task_not_found", {"taskId": task_id})
                 return self._rpc_ok(
                     rpc_id,
                     {
-                        "task": task,
+                        "task": stored_task,
                         "stream": self._build_stream_info(task_id, cursor=cursor),
                     },
                 )

@@ -35,13 +35,20 @@ class KgSubAgentExecutor:
             图谱子代理最终标准化结果。
         """
         req = request if isinstance(request, dict) else {}
+        constraints_value = req.get("constraints")
+        arguments_value = req.get("arguments")
+        query_terms_value = req.get("query_terms")
         state: KgSubAgentState = {
             "input_question": str(req.get("subquery") or req.get("question") or "").strip(),
             "subtask_id": int(req.get("subquery_id") or 1),
-            "constraints": req.get("constraints") if isinstance(req.get("constraints"), dict) else {"allow_extra_retrieval": False, "max_tool_calls": 3},
+            "constraints": constraints_value
+            if isinstance(constraints_value, dict)
+            else {"allow_extra_retrieval": False, "max_tool_calls": 3},
             "tool_name": str(req.get("tool_name") or "kg_auto").strip(),
-            "arguments": req.get("arguments") if isinstance(req.get("arguments"), dict) else {},
-            "query_terms": [str(item or "").strip() for item in req.get("query_terms")] if isinstance(req.get("query_terms"), list) else [],
+            "arguments": arguments_value if isinstance(arguments_value, dict) else {},
+            "query_terms": [str(item or "").strip() for item in query_terms_value]
+            if isinstance(query_terms_value, list)
+            else [],
             "attempt_count": 0,
         }
         output = await run_kg_graph(self.graph, state)

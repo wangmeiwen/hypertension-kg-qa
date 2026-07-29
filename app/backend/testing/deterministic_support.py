@@ -110,7 +110,8 @@ def _session_title(text: Any) -> str:
 
 def _node_name(node: dict[str, Any]) -> str:
     """从测试图节点中提取展示名称。"""
-    props = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+    properties_value = node.get("properties")
+    props = properties_value if isinstance(properties_value, dict) else {}
     return str(props.get("name") or node.get("id") or "")
 
 
@@ -676,7 +677,8 @@ class DeterministicA2AService:
         _ = request_id
         task_id = f"task-{next(self._counter)}"
         session_id = str(message.get("contextId") or "session-1")
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        metadata_value = message.get("metadata")
+        metadata = metadata_value if isinstance(metadata_value, dict) else {}
         user_id = str(message.get("userId") or metadata.get("user_id") or "user-test")
         parts = message.get("parts") if isinstance(message.get("parts"), list) else []
         question = str(parts[0].get("text") if parts and isinstance(parts[0], dict) else "")
@@ -909,8 +911,12 @@ class DeterministicGraphAdminService:
     async def create_graph_relationship(self, data: dict[str, Any]) -> dict[str, Any]:
         """在内存态图谱中创建关系。"""
         try:
-            source_id = int(data.get("source_id"))
-            target_id = int(data.get("target_id"))
+            source_id_value = data.get("source_id")
+            target_id_value = data.get("target_id")
+            if source_id_value is None or target_id_value is None:
+                raise ValueError("missing_node_id")
+            source_id = int(source_id_value)
+            target_id = int(target_id_value)
         except (TypeError, ValueError):
             return {"ok": False, "error": "节点 ID 必须为整数"}
         rel_id = self._state.next_rel_id

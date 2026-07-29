@@ -26,7 +26,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from app.core.concurrency import concurrency_guard
 

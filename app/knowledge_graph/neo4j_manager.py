@@ -205,8 +205,16 @@ class Neo4jClient:
             return False
 
 
+def _require_env(name: str) -> str:
+    """读取必需环境变量，缺失时在启动阶段快速失败。"""
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        raise RuntimeError(f"环境变量 {name} 未设置")
+    return value
+
+
 neo4j_client = Neo4jClient(
-    os.getenv("NEO4J_URI"),
-    os.getenv("NEO4J_USER"),
-    os.getenv("NEO4J_PASSWORD"),
+    _require_env("NEO4J_URI"),
+    _require_env("NEO4J_USER"),
+    _require_env("NEO4J_PASSWORD"),
 )

@@ -11,8 +11,9 @@ import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from app.backend.repositories.database import MessageManager
+from app.backend.repositories.session_manager import MessageManager
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
+from app.backend.services.session_log_repository import read_request_records, safe_log_id
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.perf_logger import log_perf_event
 from app.backend.observability.session_logger import (
@@ -364,14 +365,7 @@ def _safe_session_log_id(raw: Any, fallback: str = "unknown") -> str:
     Returns:
         str: 仅包含字母、数字、短横线和下划线的目录名片段。
     """
-    text = str(raw or "").strip()
-    if not text:
-        return fallback
-    allowed = []
-    for ch in text:
-        allowed.append(ch if (ch.isalnum() or ch in {"-", "_"}) else "_")
-    cleaned = "".join(allowed).strip("_")
-    return cleaned or fallback
+    return safe_log_id(raw, fallback)
 
 
 def _iso_now() -> str:
@@ -484,36 +478,14 @@ def _read_session_llm_records(session_id: str, request_id: str) -> list[dict[str
     Returns:
         list[dict[str, Any]]: 按时间排序的 LLM 日志记录。
     """
-    sid = _safe_session_log_id(session_id)
-    if not request_id:
-        return []
-    llm_dir = _project_root() / "logs" / "sessions" / sid / "llm"
-    if not llm_dir.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for file_path in sorted(llm_dir.glob("*.jsonl")):
-        try:
-            for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                if not line.strip():
-                    continue
-                payload = json.loads(line)
-                if str(payload.get("request_id") or "") != str(request_id):
-                    continue
-                if not isinstance(payload, dict):
-                    continue
-                rows.append(payload)
-        except (OSError, ValueError, TypeError) as exc:
-            logger.warning(
-                "session_stream_skip_invalid_llm_log_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
-                sid,
-                str(request_id or ""),
-                str(file_path),
-                type(exc).__name__,
-                exc,
-            )
-            continue
-    rows.sort(key=lambda item: str(item.get("ts") or ""))
-    return rows
+    return read_request_records(
+        project_root=_project_root(),
+        session_id=session_id,
+        request_id=request_id,
+        category="llm",
+        logger=logger,
+        warning_event="session_stream_skip_invalid_llm_log_file",
+    )
 
 
 def _build_lane_card_from_tool_observation(
@@ -541,7 +513,8 @@ def _build_lane_card_from_tool_observation(
         lane_name = "主控编排"
     else:
         lane_name = "主控编排"
-    result_payload = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+    result_value = observation.get("result")
+    result_payload = result_value if isinstance(result_value, dict) else {}
     return {
         "lane_name": lane_name,
         "title": "执行工具调用",
@@ -649,16 +622,21 @@ def _build_memory_compression_stages(
     Returns:
         list[Dict[str, Any]]: 管理端可展示的记忆阶段列表。
     """
-    qa_before = memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []
+    qa_before_value = memory_context.get("qa_pairs")
+    qa_before = qa_before_value if isinstance(qa_before_value, list) else []
+    retrieval_before_value = memory_context.get("retrieval_question_index")
     retrieval_before = (
-        memory_context.get("retrieval_question_index")
-        if isinstance(memory_context.get("retrieval_question_index"), list)
-        else []
+        retrieval_before_value if isinstance(retrieval_before_value, list) else []
     )
-    qa_after = ((post_memory or {}).get("qa_memory") if isinstance((post_memory or {}).get("qa_memory"), dict) else {}).get("qa_pairs")
-    retrieval_after = (
-        ((post_memory or {}).get("retrieval_memory") if isinstance((post_memory or {}).get("retrieval_memory"), dict) else {}).get("questions")
+    post_memory_value = post_memory if isinstance(post_memory, dict) else {}
+    qa_memory_value = post_memory_value.get("qa_memory")
+    qa_memory = qa_memory_value if isinstance(qa_memory_value, dict) else {}
+    retrieval_memory_value = post_memory_value.get("retrieval_memory")
+    retrieval_memory = (
+        retrieval_memory_value if isinstance(retrieval_memory_value, dict) else {}
     )
+    qa_after = qa_memory.get("qa_pairs")
+    retrieval_after = retrieval_memory.get("questions")
     qa_after_rows = qa_after if isinstance(qa_after, list) else []
     retrieval_after_rows = retrieval_after if isinstance(retrieval_after, list) else []
     return [
@@ -736,9 +714,14 @@ def _build_turn_memory_projection(
             continue
         raw_records = observation.get("query_records")
         if not isinstance(raw_records, list):
-            result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
-            payload = result_obj.get("result") if isinstance(result_obj.get("result"), dict) else {}
-            raw_records = payload.get("query_records") if isinstance(payload.get("query_records"), list) else []
+            result_value = observation.get("result")
+            result_obj = result_value if isinstance(result_value, dict) else {}
+            payload_value = result_obj.get("result")
+            payload = payload_value if isinstance(payload_value, dict) else {}
+            query_records_value = payload.get("query_records")
+            raw_records = (
+                query_records_value if isinstance(query_records_value, list) else []
+            )
         for item in raw_records if isinstance(raw_records, list) else []:
             if not isinstance(item, dict) or not bool(item.get("has_signal")):
                 continue
@@ -850,7 +833,8 @@ def _derive_tool_metrics(tool_observations: List[Dict[str, Any]]) -> Dict[str, A
             strategy_error_types[key] = int(strategy_error_types.get(key) or 0) + 1
             continue
         tool_calls += 1
-        result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
+        result_value = row.get("result")
+        result_obj = result_value if isinstance(result_value, dict) else {}
         ok = bool(result_obj.get("ok", True))
         if ok:
             success_count += 1
@@ -918,14 +902,15 @@ def _build_turn_observability_payload(
     """
     llm_metrics = _merge_llm_metrics_with_telemetry(_collect_request_llm_metrics(session_id, request_id), telemetry)
     tool_metrics = _derive_tool_metrics(tool_observations)
-    llm_rows = llm_metrics.get("llm_rows") if isinstance(llm_metrics.get("llm_rows"), list) else []
+    llm_rows_value = llm_metrics.get("llm_rows")
+    llm_rows = llm_rows_value if isinstance(llm_rows_value, list) else []
+    qa_pairs_value = memory_context.get("qa_pairs")
+    retrieval_index_value = memory_context.get("retrieval_question_index")
 
     memory_before = {
-        "qa_pair_count": len(memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []),
+        "qa_pair_count": len(qa_pairs_value if isinstance(qa_pairs_value, list) else []),
         "retrieval_question_count": len(
-            memory_context.get("retrieval_question_index")
-            if isinstance(memory_context.get("retrieval_question_index"), list)
-            else []
+            retrieval_index_value if isinstance(retrieval_index_value, list) else []
         ),
         "qa_memory_text": str(memory_context.get("qa_memory_text") or ""),
         "retrieval_question_index_text": str(memory_context.get("retrieval_question_index_text") or ""),
@@ -942,7 +927,7 @@ def _build_turn_observability_payload(
         "aborted_for_prompt_budget": bool(telemetry.get("aborted_for_prompt_budget")),
     }
 
-    agent_lanes = {
+    agent_lanes: dict[str, list[dict[str, Any]]] = {
         "主控编排": _build_orchestrator_cards(input_text, memory_context, telemetry, llm_rows, started_at, finished_at),
         "图谱代理": [],
         "检索代理": [],
@@ -950,8 +935,7 @@ def _build_turn_observability_payload(
     for observation in tool_observations:
         card = _build_lane_card_from_tool_observation(observation, finished_at)
         lane_name = str(card.get("lane_name") or "")
-        agent_lanes[lane_name] = agent_lanes.get(lane_name) if isinstance(agent_lanes.get(lane_name), list) else []
-        agent_lanes[lane_name].append(card)
+        agent_lanes.setdefault(lane_name, []).append(card)
 
     return {
         "record_type": "turn_observability",
@@ -1394,12 +1378,21 @@ class SessionStreamService:
                             if persisted_id > 0:
                                 for index, row in enumerate(done_tool_observations, start=1):
                                     tool_name = str(row.get("tool_name") or row.get("requested_tool_name") or "")
-                                    result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
+                                    arguments_value = row.get("arguments")
+                                    arguments = (
+                                        arguments_value
+                                        if isinstance(arguments_value, dict)
+                                        else {}
+                                    )
+                                    result_value = row.get("result")
+                                    result_obj = (
+                                        result_value if isinstance(result_value, dict) else {}
+                                    )
                                     log_tool_event(
                                         session_id=str(session_id or ""),
                                         turn=int(user_message_id or index),
                                         tool_name=tool_name or "unknown_tool",
-                                        arguments=row.get("arguments") if isinstance(row.get("arguments"), dict) else {},
+                                        arguments=arguments,
                                         result_ok=bool(result_obj.get("ok", True)),
                                         has_signal=bool(result_obj.get("result")),
                                         duration_ms=0.0,
