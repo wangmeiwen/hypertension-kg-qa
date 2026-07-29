@@ -365,6 +365,9 @@ async def test_graph_admin_service_crud_and_readonly_cypher() -> None:
 
 async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) -> None:
     from app.backend.services.graph_admin_service import GraphAdminService
+    from app.backend.services.graph_extraction_lane_pool import (
+        GraphExtractionLanePool,
+    )
 
     class FakeNeo4j:
         async def run_cypher(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -405,10 +408,19 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
     assert service._format_resume_message(3)
     assert "Unauthorized" in service._summarize_pause_error("DashScope 401 Unauthorized")
     assert service._is_timeout_error("read timeout") is True
-    assert service._classify_lane_error("403 forbidden") == "permanent"
-    assert service._count_active_lanes([{"status": "ready"}, {"status": "failed"}]) == 1
-    assert service._count_viable_lanes([{"status": "backoff"}, {"status": "failed"}]) == 1
-    assert service._format_lane_label({"lane_id": 1, "model_name": "m", "source": "s"}) == "lane1:m (s)"
+    assert GraphExtractionLanePool.classify_lane_error("403 forbidden") == "permanent"
+    assert GraphExtractionLanePool.count_active_lanes(
+        [{"status": "ready"}, {"status": "failed"}]
+    ) == 1
+    assert GraphExtractionLanePool.count_viable_lanes(
+        [{"status": "backoff"}, {"status": "failed"}]
+    ) == 1
+    assert (
+        GraphExtractionLanePool.format_lane_label(
+            {"lane_id": 1, "model_name": "m", "source": "s"}
+        )
+        == "lane1:m (s)"
+    )
 
     paused = service._build_paused_job_result(
         message="paused",

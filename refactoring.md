@@ -52,6 +52,44 @@
 - 前端测试：24 个测试文件、72 项测试通过。
 - 前端 Vite 生产构建通过，PWA 产物生成成功。
 
+## 已完成的第三阶段
+
+### 图谱导入解析边界
+
+- 新增 `graph_import_parser.py`，独立承担上传文件校验、Docling 与内置回退解析、按句分块和解析缓存读写。
+- `graph_admin_service.py` 改为通过解析组件编排导入，不再保留文档解析的双实现，规模由约 1970 行降至约 1780 行。
+- 为纯文本分块、无标点硬切和缓存复用增加独立回归测试。
+- 修复图谱抽取 lane 状态列表位于异常分支之后、正常任务会引用未初始化变量的问题，并为 lane 初始状态增加契约测试。
+
+### 后台任务运行时边界
+
+- 新增 `background_job_runtime.py`，统一管理任务注册与去重、状态快照、阶段 trace、心跳、软超时、查询和异步 runner 生命周期。
+- 主服务只初始化并调用后台任务运行时，上传协议处理、图谱抽取和 Milvus 嵌入入口保持不变。
+- `graph_admin_service.py` 进一步降至约 1130 行。
+- 新增同资源活跃任务去重、成功 runner 状态收口和软超时仅告警测试。
+
+### 图谱导入写入边界
+
+- 新增 `graph_import_writer.py`，负责单块抽取结果的节点/关系顺序写入、块状态落库、run 失败收口和持久化进度重算。
+- lane 队列仍决定块顺序，写入组件不参与并发调度，避免并发状态和数据库状态相互耦合。
+- `graph_admin_service.py` 降至约 1090 行。
+- 新增节点先于关系、批次数统计和 Neo4j 写入失败同步标记 chunk/run 的测试。
+
+### 图谱抽取 lane 边界
+
+- 新增 `graph_extraction_lane_pool.py`，迁移 lane 状态模型、错误分类、状态更新、阶段回调包装和单块 LLM 图谱抽取。
+- 401/403/404 被归类为永久错误，429、超时和网络错误被归类为可重试错误；lane 活跃/可恢复计数由同一组件维护。
+- `graph_admin_service.py` 降至约 940 行。
+- 新增 lane 初始化、退避状态迁移和错误分类测试；并发队列调度循环仍留在主服务，下一步继续迁移。
+
+### 本阶段质量门禁
+
+- 后端非数据库自动化测试：70 passed，3 deselected。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 138 个源文件，0 errors。
+- 新解析组件、后台任务运行时、图谱写入器、lane 组件与对应测试通过 Black 检查。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
 ## 当前架构边界
 
 ```text
@@ -92,14 +130,12 @@ page/workspace
 
 把当前 `graph_admin_service.py` 剩余职责拆为：
 
-- `graph_import_parser`
-- `graph_extraction_lane_pool`
-- `graph_import_writer`
-- `background_job_runtime`
+- `graph_extraction_lane_pool` 的并发队列调度循环
 
 验收：
 
 - Service 文件控制在 500 行左右。
+- `graph_import_parser`、`background_job_runtime`、`graph_import_writer` 已完成；`graph_extraction_lane_pool` 已完成无共享队列状态部分，后续继续迁移调度循环。
 - lane 退避、块状态迁移和顺序写入分别有独立单元测试。
 - 进程重启、429、超时、401/403/404 和单块失败的状态可预测。
 
