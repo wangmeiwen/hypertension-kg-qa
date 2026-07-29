@@ -77,14 +77,16 @@
 
 ### 图谱抽取 lane 边界
 
-- 新增 `graph_extraction_lane_pool.py`，迁移 lane 状态模型、错误分类、状态更新、阶段回调包装和单块 LLM 图谱抽取。
+- 新增 `graph_extraction_lane_pool.py`，迁移 lane 状态模型、错误分类、状态更新、阶段回调包装、单块 LLM 图谱抽取和并发队列调度循环。
 - 401/403/404 被归类为永久错误，429、超时和网络错误被归类为可重试错误；lane 活跃/可恢复计数由同一组件维护。
-- `graph_admin_service.py` 降至约 940 行。
-- 新增 lane 初始化、退避状态迁移和错误分类测试；并发队列调度循环仍留在主服务，下一步继续迁移。
+- lane pool 负责 worker 重试/退避、结果缓冲和按块序调用写入器，主服务只准备续跑上下文并消费汇总结果。
+- 删除仅由测试调用、已无生产调用方的暂停错误归一和暂停结果构造私有方法。
+- `graph_admin_service.py` 降至约 455 行，达到约 500 行的阶段目标。
+- 新增 lane 初始化、退避状态迁移、错误分类和两块文本按序调度测试。
 
 ### 本阶段质量门禁
 
-- 后端非数据库自动化测试：70 passed，3 deselected。
+- 后端非数据库自动化测试：71 passed，3 deselected。
 - Python 规范检查：`ruff check app tests` 通过。
 - Python 类型检查：`mypy app` 检查 138 个源文件，0 errors。
 - 新解析组件、后台任务运行时、图谱写入器、lane 组件与对应测试通过 Black 检查。
@@ -126,18 +128,24 @@ page/workspace
 - 任一答案引用可追溯到文档页码或图谱来源。
 - 同一检索结果不再在 Agent、MCP、服务和前端中重复转换为不同字典结构。
 
-### P0：继续拆分图谱任务执行器
+### P0：图谱任务执行器收口（已完成）
 
-把当前 `graph_admin_service.py` 剩余职责拆为：
+已完成以下组件拆分：
 
-- `graph_extraction_lane_pool` 的并发队列调度循环
+- `graph_import_parser`
+- `background_job_runtime`
+- `graph_import_writer`
+- `graph_extraction_lane_pool`
 
-验收：
+完成情况：
 
-- Service 文件控制在 500 行左右。
-- `graph_import_parser`、`background_job_runtime`、`graph_import_writer` 已完成；`graph_extraction_lane_pool` 已完成无共享队列状态部分，后续继续迁移调度循环。
-- lane 退避、块状态迁移和顺序写入分别有独立单元测试。
-- 进程重启、429、超时、401/403/404 和单块失败的状态可预测。
+- `graph_admin_service.py` 已控制在约 455 行，只保留依赖装配、任务入口、续跑编排和 Milvus 嵌入入口。
+- lane 状态、分块解析、后台任务运行时和顺序写入均已有独立组件与单元测试。
+
+后续测试增强：
+
+- 为 lane 永久失败、429 退避后恢复和最大重试耗尽增加更多调度级参数化测试。
+- 增加进程重启后的真实数据库续跑集成测试。
 
 ### P1：统一 Python 格式基线
 

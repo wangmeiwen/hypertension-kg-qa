@@ -404,10 +404,8 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
 
     assert service._json_loads('{"a":1}', {}) == {"a": 1}
     assert service._json_loads("bad", {"fallback": True}) == {"fallback": True}
-    assert service._normalize_chunk_status("unknown") == "pending"
+    assert GraphExtractionLanePool.normalize_chunk_status("unknown") == "pending"
     assert service._format_resume_message(3)
-    assert "Unauthorized" in service._summarize_pause_error("DashScope 401 Unauthorized")
-    assert service._is_timeout_error("read timeout") is True
     assert GraphExtractionLanePool.classify_lane_error("403 forbidden") == "permanent"
     assert GraphExtractionLanePool.count_active_lanes(
         [{"status": "ready"}, {"status": "failed"}]
@@ -421,22 +419,6 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
         )
         == "lane1:m (s)"
     )
-
-    paused = service._build_paused_job_result(
-        message="paused",
-        pause_reason="timeout",
-        file_name="guide.txt",
-        file_hash=file_hash,
-        run_id="run-1",
-        resumed_from_chunk=2,
-        prepared={**prepared, "is_resumed": True, "cache_used": True},
-        entity_count=1,
-        relation_count=2,
-        processed_chars=3,
-        completed_chunks=4,
-    )
-    assert paused["_job_status"] == "paused"
-    assert paused["relation_count"] == 2
 
     job = await service._register_job("graph_extract_import", seed={"progress_text": "queued", "total_chunks": 2})
     job_id = job["job_id"]

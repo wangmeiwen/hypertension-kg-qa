@@ -142,6 +142,72 @@ class _GraphWriterRuntimeStub:
         return self.progress
 
 
+class _LanePoolRuntimeStub:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def _update_job_parallel_state(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("parallel", args, kwargs))
+
+    async def _mark_graph_chunk_running(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("running", args, kwargs))
+
+    async def _mark_graph_chunk_failed(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("failed", args, kwargs))
+
+    async def _set_graph_run_status(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("run_status", args, kwargs))
+
+    async def _heartbeat_job_stage(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("heartbeat", args, kwargs))
+
+    async def _add_job_warning(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("warning", args, kwargs))
+
+
+class _LanePoolWriterStub:
+    def __init__(self) -> None:
+        self.chunk_indexes: list[int] = []
+        self.processed_chars = 0
+
+    async def write_chunk(self, **kwargs: Any) -> dict[str, int]:
+        chunk_index = int(kwargs["chunk_index"])
+        self.chunk_indexes.append(chunk_index)
+        self.processed_chars += int(kwargs["chunk_chars"])
+        return {
+            "processed_chars": self.processed_chars,
+            "completed_chunks": len(self.chunk_indexes),
+            "entity_count": len(self.chunk_indexes),
+            "relation_count": len(self.chunk_indexes),
+            "node_batches": 1,
+            "relation_batches": 1,
+        }
+
+
 def _create_graph_import_writer(
     neo4j: _GraphWriterNeo4jStub,
     runtime: _GraphWriterRuntimeStub,
@@ -327,6 +393,72 @@ def test_graph_lane_pool_classifies_and_updates_lane_state() -> None:
     assert GraphExtractionLanePool.count_viable_lanes(statuses) == 1
     assert statuses[0]["status"] == "backoff"
     assert statuses[0]["current_chunk_index"] == 2
+
+
+def test_graph_lane_pool_schedules_chunks_and_writes_in_order(monkeypatch) -> None:
+    pool = GraphExtractionLanePool()
+    runtime = _LanePoolRuntimeStub()
+    writer = _LanePoolWriterStub()
+
+    monkeypatch.setattr(
+        "app.knowledge_graph.extract_graph_data_utils.create_graph_llm_bundle",
+        lambda **kwargs: kwargs,
+    )
+    monkeypatch.setattr(
+        pool,
+        "extract_single_chunk_blocking",
+        lambda chunk, chunk_index, *_args: {
+            "chunk_index": chunk_index,
+            "chunk_chars": len(chunk),
+            "node_queries": [f"node-{chunk_index}"],
+            "relation_queries": [f"relation-{chunk_index}"],
+            "stats": {"entities": 1, "relations": 1},
+        },
+    )
+
+    def stage_callback(*_args: Any, **_kwargs: Any) -> None:
+        return
+
+    result = asyncio.run(
+        pool.run(
+            runtime=runtime,
+            writer=writer,
+            run_id="run-1",
+            job_id="job-1",
+            chunks=["first", "second"],
+            chunk_map={},
+            prepared={"parsed_text_length": 11},
+            progress={
+                "processed_chars": 0,
+                "completed_chunks": 0,
+                "entity_count": 0,
+                "relation_count": 0,
+                "node_batches": 0,
+                "relation_batches": 0,
+            },
+            stage_callback=stage_callback,
+            lane_configs=[
+                {
+                    "lane_id": 1,
+                    "api_key": "key",
+                    "base_url": "https://example.test",
+                    "model_name": "graph-model",
+                    "source": "primary",
+                }
+            ],
+            max_parallelism=1,
+            request_timeout_seconds=10,
+            max_attempts=3,
+            transient_backoff_seconds=0,
+        )
+    )
+
+    assert writer.chunk_indexes == [1, 2]
+    assert result["completed_chunks"] == 2
+    assert result["entity_count"] == 2
+    assert result["node_batches"] == 2
+    assert result["current_attempt"] == 1
+    assert result["lane_statuses"][0]["status"] == "ready"
 
 
 def test_background_job_runtime_deduplicates_active_resources() -> None:
