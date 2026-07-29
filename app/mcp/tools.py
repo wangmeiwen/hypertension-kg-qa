@@ -37,7 +37,6 @@ from app.rag_core.runtime_resources import (
     get_shared_vector_store,
 )
 
-
 current_dir = Path(__file__).resolve().parent
 src_dir = current_dir.parent
 project_root = src_dir.parent

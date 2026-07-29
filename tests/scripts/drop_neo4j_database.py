@@ -52,27 +52,23 @@ def get_database_stats(driver) -> dict:
         rel_count = rel_result.single()["rel_count"]
 
         # 标签统计
-        label_result = session.run(
-            """
+        label_result = session.run("""
             MATCH (n)
             UNWIND labels(n) AS label
             RETURN DISTINCT label, count(n) as count
             ORDER BY count DESC
-        """
-        )
+        """)
         labels = [
             {"label": record["label"], "count": record["count"]}
             for record in label_result
         ]
 
         # 关系类型统计
-        rel_type_result = session.run(
-            """
+        rel_type_result = session.run("""
             MATCH ()-[r]->()
             RETURN DISTINCT type(r) as rel_type, count(r) as count
             ORDER BY count DESC
-        """
-        )
+        """)
         rel_types = [
             {"rel_type": record["rel_type"], "count": record["count"]}
             for record in rel_type_result

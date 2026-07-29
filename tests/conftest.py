@@ -209,15 +209,15 @@ def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
     """返回按测试前缀清理 MySQL 会话数据的异步函数。"""
 
     async def _cleanup(prefix: str) -> None:
-        import asyncmy
+        import aiomysql
 
         like_prefix = f"{prefix}%"
-        conn = await asyncmy.connect(
+        conn = await aiomysql.connect(
             host=os.getenv("MYSQL_HOST", "127.0.0.1"),
             port=int(os.getenv("MYSQL_PORT", "3306")),
             user=os.getenv("MYSQL_USER", "root"),
             password=os.getenv("MYSQL_PASSWORD", ""),
-            database=os.getenv("MYSQL_DATABASE", "hypertension_kg"),
+            db=os.getenv("MYSQL_DATABASE", "hypertension_kg"),
             autocommit=True,
         )
         try:

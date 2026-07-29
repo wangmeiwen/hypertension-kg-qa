@@ -7,7 +7,6 @@ import unicodedata
 from collections import defaultdict
 from typing import Any, TypedDict
 
-
 RETRIEVAL_ABLATION_MODES = (
     "kg",
     "dense",

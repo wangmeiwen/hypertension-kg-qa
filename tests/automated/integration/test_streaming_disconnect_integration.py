@@ -6,7 +6,6 @@ import pytest
 
 from app.backend.infrastructure.responses import ndjson_streaming_response
 
-
 pytestmark = pytest.mark.integration
 
 

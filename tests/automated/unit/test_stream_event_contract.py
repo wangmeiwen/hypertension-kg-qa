@@ -14,7 +14,6 @@ from app.backend.domain.stream_events import (
     validate_stream_event,
 )
 
-
 pytestmark = pytest.mark.unit
 
 

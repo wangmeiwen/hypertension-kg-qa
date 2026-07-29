@@ -20,7 +20,6 @@ from app.backend.domain.stream_events import (
 )
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
 
-
 MEDICAL_DISCLAIMER = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
 
 
@@ -1083,6 +1082,44 @@ class DeterministicGraphAdminService:
     def __init__(self, state: DeterministicGraphState) -> None:
         """注入内存态图谱状态。"""
         self._state = state
+
+    async def get_graph_quality_report(
+        self, *, max_nodes: int, max_relationships: int
+    ) -> dict[str, Any]:
+        """返回符合生产接口契约的固定图谱质量报告。"""
+        _ = (max_nodes, max_relationships)
+        total_nodes = len(self._state.nodes)
+        total_relationships = len(self._state.relationships)
+        return {
+            "ok": True,
+            "data": {
+                "captured_at": "2026-07-29T09:00:00+00:00",
+                "consistency": "best_effort_read",
+                "total_nodes": total_nodes,
+                "total_relationships": total_relationships,
+                "duplicate_entity_count": 0,
+                "duplicate_entity_rate": 0.0,
+                "unnamed_node_count": 0,
+                "unnamed_node_rate": 0.0,
+                "isolated_node_count": 0,
+                "isolated_node_rate": 0.0,
+                "largest_connected_component_nodes": total_nodes,
+                "largest_connected_component_ratio": 1.0 if total_nodes else 0.0,
+                "dangling_relationship_count": 0,
+                "dangling_relationship_rate": 0.0,
+                "relationship_source_covered_count": total_relationships,
+                "relationship_source_coverage_rate": (
+                    1.0 if total_relationships else 0.0
+                ),
+                "relationship_confidence_covered_count": total_relationships,
+                "relationship_confidence_coverage_rate": (
+                    1.0 if total_relationships else 0.0
+                ),
+                "quality_policy_covered_relationship_count": total_relationships,
+                "quality_policy_coverage_rate": (1.0 if total_relationships else 0.0),
+                "quality_policy_version": 1,
+            },
+        }
 
     async def get_graph_labels(self) -> dict[str, Any]:
         """返回测试图谱节点标签。"""

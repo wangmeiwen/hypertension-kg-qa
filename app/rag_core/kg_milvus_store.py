@@ -574,22 +574,18 @@ class KgMilvusStore:
         rows: List[Dict[str, Any]] = []
         target_labels = labels
         if not target_labels:
-            result = await neo4j_client.run_cypher(
-                """
+            result = await neo4j_client.run_cypher("""
                 MATCH (n)
                 UNWIND labels(n) AS label
                 RETURN DISTINCT label
-                """
-            )
+                """)
             target_labels = [record["label"] for record in result]
 
         for label in target_labels:
-            nodes = await neo4j_client.run_cypher(
-                f"""
+            nodes = await neo4j_client.run_cypher(f"""
                 MATCH (n:{label})
                 RETURN n, id(n) AS node_id
-                """
-            )
+                """)
             for node_data in nodes:
                 node = node_data["n"]
                 node_id = node_data["node_id"]
@@ -629,14 +625,12 @@ class KgMilvusStore:
             List[Dict[str, Any]]: 关系行数据列表
         """
         rows: List[Dict[str, Any]] = []
-        rels = await neo4j_client.run_cypher(
-            """
+        rels = await neo4j_client.run_cypher("""
             MATCH (a)-[r]->(b)
             RETURN id(a) AS from_id, labels(a) AS from_labels, a.name AS from_name,
                    type(r) AS rel_type, properties(r) AS rel_props,
                    id(b) AS to_id, labels(b) AS to_labels, b.name AS to_name
-            """
-        )
+            """)
 
         for rel in rels:
             from_name = str(rel.get("from_name") or f"node_{rel.get('from_id')}")

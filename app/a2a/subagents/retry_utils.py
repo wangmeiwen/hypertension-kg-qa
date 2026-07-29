@@ -6,7 +6,6 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-
 MAX_SUBAGENT_TOOL_CALLS = 3
 
 _STOP_WORDS = (

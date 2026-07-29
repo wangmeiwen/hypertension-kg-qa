@@ -824,7 +824,7 @@ def merge_extraction_results(
 # 构建 Neo4j 节点查询
 #
 def build_node_queries(
-    entity_map: Dict[Tuple[str, str], dict]
+    entity_map: Dict[Tuple[str, str], dict],
 ) -> List[Tuple[str, dict]]:
     """
     将实体映射按标签分组，生成批量写入 Neo4j 的节点查询语句。

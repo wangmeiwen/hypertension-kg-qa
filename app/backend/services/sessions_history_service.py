@@ -14,7 +14,6 @@ from app.backend.repositories.session_manager import MessageManager, SessionMana
 from app.backend.security.upload_policy import inspect_upload
 from app.core.config import Config
 
-
 CHAT_FILE_API_EXTENSIONS = {
     ".txt",
     ".docx",
@@ -69,7 +68,7 @@ class SessionsHistoryService:
 
     @staticmethod
     def _strip_runtime_message_fields(
-        messages: list[dict[str, Any]]
+        messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """移除普通聊天历史不需要返回给浏览器的大字段。
 

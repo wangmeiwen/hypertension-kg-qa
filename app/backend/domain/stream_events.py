@@ -7,7 +7,6 @@ from typing import Annotated, Any, Literal, Mapping, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-
 STREAM_EVENT_SCHEMA_VERSION = "1.0.0"
 
 

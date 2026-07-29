@@ -8,7 +8,6 @@ import json
 from pathlib import Path, PurePosixPath
 import zipfile
 
-
 DEFAULT_MAX_ARCHIVE_ENTRIES = 5000
 DEFAULT_MAX_EXPANDED_BYTES = 250 * 1024 * 1024
 DEFAULT_MAX_COMPRESSION_RATIO = 200

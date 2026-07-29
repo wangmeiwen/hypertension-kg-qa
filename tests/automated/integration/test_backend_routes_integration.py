@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.infrastructure.errors import UnauthorizedError
 
-
 pytestmark = pytest.mark.integration
 
 

@@ -17,12 +17,13 @@ import math
 import threading
 from typing import Any, Dict, Optional
 
-from zhipuai import ZhipuAI  # type: ignore[import-untyped]
+from openai import OpenAI
 
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
 
+ZHIPU_OPENAI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4/"
 OCR_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 OCR_MIN_IMAGE_SIDE = 768
 OCR_RESIZE_FACTOR = 0.85
@@ -37,7 +38,7 @@ class GlmOcrClient:
 
     Attributes:
         model_name: 使用的模型名称
-        client: ZhipuAI 客户端实例
+        client: OpenAI 兼容客户端实例
     """
 
     def __init__(self, api_key: str, model_name: str = "glm-4.6v"):
@@ -52,7 +53,7 @@ class GlmOcrClient:
             None: 无返回值。
         """
         self.model_name = model_name
-        self.client = ZhipuAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=ZHIPU_OPENAI_BASE_URL)
 
     def _recognize_single_pass(self, image_bytes: bytes, prompt: str) -> Dict[str, Any]:
         # 按官方 GLM-4.6V 示例执行单次视觉识别。

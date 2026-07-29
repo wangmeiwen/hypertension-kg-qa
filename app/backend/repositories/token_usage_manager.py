@@ -190,8 +190,7 @@ class TokenUsageManager:
         Returns:
             dict: 总请求数、总 token、会话数、用户数等指标。
         """
-        row = await fetch_one(
-            """
+        row = await fetch_one("""
             SELECT
                 COUNT(*) as total_requests,
                 SUM(prompt_tokens) as total_prompt_tokens,
@@ -201,8 +200,7 @@ class TokenUsageManager:
                 COUNT(DISTINCT user_id) as total_users,
                 COUNT(DISTINCT DATE(created_at)) as total_days
             FROM token_usage
-            """
-        )
+            """)
         return {
             "total_requests": int((row or {}).get("total_requests") or 0),
             "total_prompt_tokens": int((row or {}).get("total_prompt_tokens") or 0),

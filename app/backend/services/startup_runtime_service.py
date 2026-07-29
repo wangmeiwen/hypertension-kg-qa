@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
 from app.backend.migrations.neo4j import apply_neo4j_migrations
-from app.backend.repositories.database import initialize_database
+from app.backend.repositories.database import close_database, initialize_database
 from app.backend.infrastructure.database_health import check_databases
 from app.core.feature_flags import get_runtime_flag_snapshot
 from app.core.perf_logger import log_duration
@@ -42,6 +42,7 @@ class StartupRuntimeService:
         *,
         behavior: StartupRuntimeBehavior | None = None,
         database_initializer: Callable[..., Any] = initialize_database,
+        database_closer: Callable[..., Any] = close_database,
         database_checker: Callable[..., Any] = check_databases,
         neo4j_schema_initializer: Callable[..., Any] = apply_neo4j_migrations,
         get_shared_vector_store: Callable[[], Any] | None = None,
@@ -56,6 +57,7 @@ class StartupRuntimeService:
             log_api_error: 统一记录生命周期错误的回调。
             behavior: 可选启动/关闭行为开关，主要用于测试隔离。
             database_initializer: MySQL 初始化函数。
+            database_closer: MySQL 异步连接池释放函数。
             database_checker: 数据库健康检查函数。
             neo4j_schema_initializer: Neo4j schema 迁移函数。
             get_shared_vector_store: 可选文本向量库预热工厂。
@@ -70,6 +72,7 @@ class StartupRuntimeService:
         self._log_api_error = log_api_error
         self._behavior = behavior or StartupRuntimeBehavior()
         self._database_initializer = database_initializer
+        self._database_closer = database_closer
         self._database_checker = database_checker
         self._neo4j_schema_initializer = neo4j_schema_initializer
         self._get_shared_vector_store = get_shared_vector_store
@@ -217,9 +220,13 @@ class StartupRuntimeService:
         logger.info("%s", "=" * 50)
 
     async def shutdown(self) -> None:
-        """执行应用关闭流程，释放 A2A、LLM、MCP 和 Neo4j 资源。"""
+        """执行应用关闭流程，释放 A2A、LLM、MCP、MySQL 和 Neo4j 资源。"""
         await self._a2a_runtime.shutdown_all()
         await self._close_llm_runtime_resources()
+        try:
+            await self._database_closer()
+        except Exception as exc:  # pragma: no cover - defensive shutdown path
+            self._log_api_error("shutdown", "mysql_close", exc)
         if not self._behavior.close_neo4j_on_shutdown:
             return
         try:

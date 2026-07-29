@@ -298,16 +298,14 @@ async def _column_exists(
     patch: MySQLColumnPatch,
 ) -> bool:
     result = await conn.execute(
-        text(
-            """
+        text("""
             SELECT 1
             FROM information_schema.columns
             WHERE table_schema = :table_schema
               AND table_name = :table_name
               AND column_name = :column_name
             LIMIT 1
-            """
-        ),
+            """),
         {
             "table_schema": database_name,
             "table_name": patch.table_name,
@@ -342,12 +340,10 @@ async def apply_mysql_migrations(
             ):
                 await conn.execute(text(patch.ddl))
         await conn.execute(
-            text(
-                """
+            text("""
                 INSERT INTO schema_migrations (version, name, checksum)
                 VALUES (:version, :name, :checksum)
-                """
-            ),
+                """),
             {
                 "version": migration.version,
                 "name": migration.name,

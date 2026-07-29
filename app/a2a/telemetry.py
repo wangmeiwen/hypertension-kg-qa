@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 TOKEN_USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 

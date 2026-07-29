@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import json
 import logging
 
-
 logger = logging.getLogger("admin_audit")
 ADMIN_AUDIT_SCHEMA_VERSION = "admin_audit.v1"
 

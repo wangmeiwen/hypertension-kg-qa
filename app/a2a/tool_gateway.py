@@ -7,7 +7,6 @@ from typing import Any
 from app.a2a.models import ToolCallResult
 from app.mcp.tools import get_mcp_server
 
-
 _AGENT_TOOL_WHITELIST: dict[str, set[str]] = {
     "kg": {"kg_query", "kg_entity_relation_search"},
     "rag": {"rag_search"},

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-
 DOCUMENT_PARSER_VERSION = 1
 DOCUMENT_CHUNK_STRATEGY_VERSION = 1
 DOCUMENT_EMBEDDING_PIPELINE_VERSION = 1

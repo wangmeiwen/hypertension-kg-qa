@@ -472,7 +472,7 @@ class GraphImportRepositoryMixin:
 
     @staticmethod
     def _build_graph_run_progress_text(
-        run_row: dict[str, Any]
+        run_row: dict[str, Any],
     ) -> str:  # pragma: no cover - graph import persistence adapter
         """将持久化 run 转换为最近任务摘要。"""
         status = str(run_row.get("status") or "")

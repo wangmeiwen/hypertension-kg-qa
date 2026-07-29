@@ -387,8 +387,7 @@ class OcrTokenUsageManager:
         Returns:
             dict: 全局汇总统计结果。
         """
-        row = await fetch_one(
-            """
+        row = await fetch_one("""
             SELECT
                 COUNT(*) as total_documents,
                 SUM(prompt_tokens) as total_prompt_tokens,
@@ -398,8 +397,7 @@ class OcrTokenUsageManager:
                 COUNT(DISTINCT user_id) as total_users,
                 COUNT(DISTINCT DATE(created_at)) as total_days
             FROM ocr_token_usage
-            """
-        )
+            """)
         return {
             "total_documents": int((row or {}).get("total_documents") or 0),
             "total_prompt_tokens": int((row or {}).get("total_prompt_tokens") or 0),

@@ -1,11 +1,11 @@
-# Synced against the local conda environment `hypertension-qa` on 2026-04-11.
+# Synced against the local conda environment `hypertension-qa` on 2026-07-29.
 # This file stays project-scoped instead of becoming a full `pip freeze` lockfile.
 
 # ========== Web Framework ==========
-fastapi==0.135.1
+fastapi==0.140.13
 uvicorn==0.41.0
-python-multipart==0.0.22
-starlette==0.52.1
+python-multipart==0.0.31
+starlette==1.3.1
 
 # ========== A2A SDK ==========
 a2a-sdk[http-server]==0.3.25
@@ -13,49 +13,46 @@ a2a-sdk[http-server]==0.3.25
 # ========== Database ==========
 neo4j==6.1.0
 pymilvus==2.6.9
-asyncmy==0.2.10
+aiomysql==0.3.2
 sqlalchemy==2.0.48
 
 # ========== LangChain / LangGraph ==========
-langgraph==1.0.10
-langgraph-checkpoint==4.0.1
-langgraph-prebuilt==1.0.8
-langgraph-sdk==0.3.9
-langchain==1.2.10
-langchain-community==0.4.1
-langchain-core==1.2.17
-langchain-openai==1.1.7
-langchain-text-splitters==1.1.1
+langgraph==1.2.10
+langgraph-checkpoint==4.1.1
+langgraph-prebuilt==1.1.0
+langgraph-sdk==0.4.2
+langchain==1.3.14
+langchain-community==0.4.2
+langchain-core==1.5.2
+langchain-openai==1.4.1
+langchain-text-splitters==1.1.2
 langchain-docling==2.0.0
-langsmith==0.7.14
+langsmith==0.10.11
 
 # ========== LLM / AI ==========
-openai==2.14.0
-zhipuai==2.1.5.20250825
+openai==2.50.0
 tiktoken==0.12.0
 jiter==0.12.0
 
 # ========== ML / Transformers ==========
-torch==2.6.0
-transformers==4.57.6
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.14.1
 sentence-transformers==5.2.3
 accelerate==1.13.0
-peft==0.18.1
-safetensors==0.7.0
+safetensors==0.8.0
 tokenizers==0.22.2
-flagembedding==1.3.5
 milvus-model==0.2.12
 faiss-cpu==1.13.2
 onnxruntime==1.24.3
 
 # ========== Document Processing ==========
-docling==2.80.0
-docling-core==2.70.0
-docling-ibm-models==3.12.0
+docling==2.94.0
+docling-core==2.88.0
+docling-ibm-models==3.13.3
 docling-parse==5.5.0
 pymupdf==1.27.1
 pdfplumber==0.11.9
-pypdf2==3.0.1
 pypdfium2==5.6.0
 pdfminer.six==20251230
 python-docx==1.2.0
@@ -71,7 +68,7 @@ jieba==0.42.1
 regex==2026.2.28
 
 # ========== Web Scraping ==========
-requests==2.32.5
+requests==2.33.0
 charset-normalizer==3.4.5
 beautifulsoup4==4.14.3
 selenium==4.41.0
@@ -82,7 +79,7 @@ httpcore==1.0.9
 pandas==2.3.3
 numpy==2.4.3
 pyarrow==23.0.1
-pillow==12.1.1
+pillow==12.3.0
 networkx==3.5
 igraph==0.11.9
 leidenalg==0.10.2
@@ -93,12 +90,12 @@ pyyaml==6.0.3
 omegaconf==2.3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
-pydantic-settings==2.13.1
+pydantic-settings==2.14.2
 python-dateutil==2.9.0.post0
 pytz==2026.1.post1
 
 # ========== Async / Networking ==========
-aiohttp==3.13.3
+aiohttp==3.14.3
 aiohappyeyeballs==2.6.1
 aiosignal==1.4.0
 anyio==4.12.1
@@ -115,12 +112,24 @@ termcolor==3.3.0
 packaging==25.0
 filelock==3.25.0
 fsspec==2026.2.0
+pyjwt==2.13.0
+click==8.3.3
+cryptography==48.0.1
+gitpython==3.1.55
+idna==3.15
+lxml==6.1.0
+pyasn1==0.6.4
+pygments==2.20.0
+setuptools==83.0.0
+soupsieve==2.8.4
+tornado==6.5.7
+urllib3==2.7.0
 
 # ========== Development / Testing ==========
-pytest==8.3.5
-pytest-asyncio==0.24.0
+pytest==9.0.3
+pytest-asyncio==1.4.0
 mypy==1.13.0
 ruff==0.7.4
-black==24.10.0
+black==26.3.1
 isort==5.13.2
 coverage==7.6.1

@@ -21,7 +21,6 @@ from app.mcp.tools import (
 )
 from app.rag_core.vector_store import VectorStore
 
-
 EVIDENCE_FIELDS = {
     "source_type",
     "source_id",

@@ -18,7 +18,6 @@ from app.a2a.subagents.retry_utils import (
 from app.a2a.subagents.kg.state import KgSubAgentState
 from app.a2a.tool_gateway import MCPToolGateway
 
-
 _KG_QUERY_HINTS = (
     "列出",
     "所有节点",

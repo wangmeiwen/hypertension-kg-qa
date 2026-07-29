@@ -27,7 +27,7 @@ def _build_async_mysql_url(database: str | None = None) -> URL:
             "环境变量 MYSQL_PASSWORD 未设置。请在 .env 文件或系统环境中设置 MySQL 密码。"
         )
     return URL.create(
-        drivername="mysql+asyncmy",
+        drivername="mysql+aiomysql",
         username=os.getenv("MYSQL_USER", "root"),
         password=password,
         host=os.getenv("MYSQL_HOST", "localhost"),
@@ -156,3 +156,13 @@ async def initialize_database(force: bool = False) -> bool:
             exc,
         )
         return False
+
+
+async def close_database() -> None:
+    """释放全局异步 Engine，并重置初始化状态。"""
+    global _ENGINE, _db_initialized
+    engine = _ENGINE
+    _ENGINE = None
+    _db_initialized = False
+    if engine is not None:
+        await engine.dispose()

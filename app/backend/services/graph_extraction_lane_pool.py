@@ -73,7 +73,7 @@ class GraphExtractionLanePool:
 
     @staticmethod
     def clone_lane_statuses(
-        lane_statuses: list[dict[str, Any]]
+        lane_statuses: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """复制 lane 状态用于写回任务响应。"""
         return [dict(item) for item in lane_statuses]

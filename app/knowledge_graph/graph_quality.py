@@ -8,7 +8,6 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, TypedDict
 
-
 GRAPH_QUALITY_POLICY_VERSION = 1
 
 

@@ -17,9 +17,9 @@ from app.backend.testing.deterministic_support import (
 )
 from app.core.config import Config
 from app.backend.infrastructure.database_health import check_databases
+from app.backend.repositories.database import close_database
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.rag_core.kg_milvus_store import KgMilvusStore
-
 
 pytestmark = [pytest.mark.integration, pytest.mark.db]
 
@@ -144,6 +144,7 @@ async def test_mysql_session_and_admin_routes_roundtrip(
         await client.aclose()
         cleanup_session_artifacts(session_id)
         await cleanup_mysql_prefix(test_data_prefix)
+        await close_database()
 
 
 @pytest.mark.asyncio

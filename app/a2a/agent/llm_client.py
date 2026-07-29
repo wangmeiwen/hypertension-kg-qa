@@ -31,7 +31,6 @@ from app.backend.observability.session_logger import (
     log_llm_call,
 )
 
-
 logger = logging.getLogger(__name__)
 
 

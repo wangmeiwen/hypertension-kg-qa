@@ -101,14 +101,14 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
 
     @router.post("/admin/graph/embed-to-milvus")
     async def embed_graph_to_milvus(
-        data: Optional[dict[str, Any]] = None
+        data: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """将知识图谱嵌入到 Milvus。"""
         return await service.embed_graph_to_milvus(data)
 
     @router.post("/admin/graph/jobs/embed-milvus")
     async def submit_embed_milvus_job(
-        data: Optional[dict[str, Any]] = None
+        data: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """提交图谱嵌入后台任务。"""
         return await service.submit_graph_embed_milvus_job(data)

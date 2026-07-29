@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, TypeAlias, TypedDict
 
-
 EvidencePayload: TypeAlias = dict[str, Any]
 
 

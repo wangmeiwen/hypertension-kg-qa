@@ -7,7 +7,6 @@ import hashlib
 import re
 from typing import Any, Iterable
 
-
 NEO4J_MARKER_PREFIX = "hypertension_schema_v"
 
 

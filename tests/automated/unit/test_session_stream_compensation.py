@@ -9,7 +9,6 @@ import pytest
 from app.backend.services.session_stream_service import SessionStreamService
 from tests.conftest import await_call
 
-
 pytestmark = pytest.mark.unit
 
 

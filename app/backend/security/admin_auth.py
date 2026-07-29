@@ -22,7 +22,6 @@ from typing import Any, Dict, Optional
 
 from app.backend.security.admin_access import ADMIN_ALL_PERMISSIONS
 
-
 DEFAULT_ADMIN = {
     "username": os.getenv("ADMIN_USERNAME", ""),
     "password": os.getenv("ADMIN_PASSWORD", ""),

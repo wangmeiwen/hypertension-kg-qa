@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.0.45
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: hypertension_kg
@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.0.45
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: hypertension_kg
@@ -82,7 +82,7 @@ jobs:
           --health-timeout=5s
           --health-retries=20
       neo4j:
-        image: neo4j:5.26
+        image: neo4j:5.26.28
         env:
           NEO4J_AUTH: neo4j/password
         ports:
@@ -125,7 +125,7 @@ jobs:
             -e ETCD_USE_EMBED=true \
             -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
             -e COMMON_STORAGETYPE=local \
-            milvusdb/milvus:v2.4.15 \
+            milvusdb/milvus:v2.6.13 \
             milvus run standalone
           for i in {1..60}; do
             if curl -fsS http://127.0.0.1:9091/healthz >/dev/null; then

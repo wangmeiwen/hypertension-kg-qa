@@ -18,7 +18,6 @@ from starlette.datastructures import UploadFile
 
 from tests.conftest import await_call, log_api_error
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -528,6 +527,7 @@ async def test_graph_admin_service_crud_and_readonly_cypher() -> None:
 
 
 async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) -> None:
+    import app.backend.services.background_job_runtime as runtime_module
     from app.backend.services.graph_admin_service import GraphAdminService
     from app.backend.services.graph_extraction_lane_pool import (
         GraphExtractionLanePool,
@@ -539,6 +539,14 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
         ) -> list[dict[str, Any]]:
             _ = (query, params)
             return []
+
+    async def fake_fetch_all(
+        statement: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        _ = (statement, params)
+        return []
+
+    monkeypatch.setattr(runtime_module, "fetch_all", fake_fetch_all)
 
     service = GraphAdminService(
         await_call=await_call,
@@ -921,11 +929,17 @@ async def test_mcp_server_degrades_when_milvus_tools_fail(monkeypatch) -> None:
         def __init__(self, conf: Any) -> None:
             raise MilvusLikeError("kg milvus unavailable")
 
+    class FakeHistoryReadTool:
+        async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+            _ = payload
+            return {"matched": False, "evidence": []}
+
     await module.close_mcp_server()
     monkeypatch.setattr(module, "RagSearchTool", BrokenRagSearchTool)
     monkeypatch.setattr(
         module, "KgEntityRelationSearchTool", BrokenKgEntityRelationSearchTool
     )
+    monkeypatch.setattr(module, "HistoryReadTool", FakeHistoryReadTool)
 
     server = module.build_mcp_server()
     try:
@@ -1320,6 +1334,9 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
     async def init_db() -> bool:
         return True
 
+    async def close_db() -> None:
+        events.append("mysql_close")
+
     async def check_db() -> dict[str, Any]:
         return {
             "all_running": True,
@@ -1360,6 +1377,7 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
             close_neo4j_on_shutdown=True,
         ),
         database_initializer=init_db,
+        database_closer=close_db,
         database_checker=check_db,
         neo4j_schema_initializer=migrate_neo4j,
         get_shared_vector_store=lambda: events.append("vector"),
@@ -1381,11 +1399,12 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
         "retrieval",
     }.issubset(set(events))
     await service.shutdown()
-    assert events[-5:] == [
+    assert events[-6:] == [
         "shutdown",
         "agent_close",
         "runtime_mcp_close",
         "global_mcp_close",
+        "mysql_close",
         "neo4j_close",
     ]
     assert runtime.mcp_server is None
