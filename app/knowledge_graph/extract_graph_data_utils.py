@@ -27,8 +27,13 @@ import json
 import logging
 
 from langchain_openai import ChatOpenAI
+
 from app.core.config import Config
 from app.core.perf_logger import log_duration
+from app.knowledge_graph.graph_quality import (
+    GraphSourceContext,
+    stage_graph_extraction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +329,7 @@ primary_prompt = PromptTemplate(
         "- recommendation\n"
         "- recommendation_class\n"
         "- evidence_level\n"
+        "- confidence（0 到 1 之间的数值）\n"
         "- source_type\n"
         "- title\n"
         "- organization\n"
@@ -333,6 +339,9 @@ primary_prompt = PromptTemplate(
         "- pmid\n"
         "- url\n"
         "- note\n\n"
+        "attributes 中的 year 必须是四位年份；confidence 必须在 0 到 1 之间。"
+        "不要自行生成 source_id、source_hash、source_chunk_index、extracted_at 或 extraction_model，"
+        "这些可信来源字段由导入服务统一注入。\n\n"
         "【示例：文本 -> 抽取结果】\n"
         "示例1（复杂规则）：\n"
         "输入文本：\n"
@@ -445,6 +454,7 @@ def _emit_stage_event(
     action: str,
     stage: str,
     detail: str,
+    metrics: Optional[dict[str, Any]] = None,
 ) -> None:
     """安全触发阶段事件回调。
 
@@ -453,6 +463,7 @@ def _emit_stage_event(
         action: 阶段动作。
         stage: 阶段名称。
         detail: 阶段说明。
+        metrics: 可选阶段质量指标。
 
     Returns:
         None: 无返回值。
@@ -460,7 +471,7 @@ def _emit_stage_event(
     if not stage_callback:
         return
     try:
-        stage_callback(action, stage, detail, detail)
+        stage_callback(action, stage, detail, detail, metrics)
     except (
         RuntimeError,
         ValueError,
@@ -869,11 +880,14 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
 
     for relation in relation_list:
         key = (relation["subject_type"], relation["relation"], relation["object_type"])
+        props = sanitize_props(relation.get("attributes") or {})
         by_triple.setdefault(key, []).append(
             {
                 "subj": relation["subject"],
                 "obj": relation["object"],
-                "props": sanitize_props(relation.get("attributes") or {}),
+                "source_id": props["source_id"],
+                "source_chunk_index": props["source_chunk_index"],
+                "props": props,
             }
         )
 
@@ -887,7 +901,10 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
         UNWIND $rows AS row
         MATCH (a:{source_label} {{name: row.subj}})
         MATCH (b:{target_label} {{name: row.obj}})
-        MERGE (a)-[r:{rel_label}]->(b)
+        MERGE (a)-[r:{rel_label} {{
+            source_id: row.source_id,
+            source_chunk_index: row.source_chunk_index
+        }}]->(b)
         SET r += row.props
         """
         queries.append((cypher.strip(), {"rows": rows}))
@@ -903,6 +920,8 @@ def extract_text_to_graph_queries(
     max_chars: int = 12000,
     stage_callback: Optional[Callable[..., None]] = None,
     llm_bundle: Optional[Dict[str, Any]] = None,
+    *,
+    source_context: GraphSourceContext,
 ) -> dict:
     """
     从文本抽取图谱结果并构建可直接执行的 Neo4j 节点与关系查询。
@@ -912,6 +931,7 @@ def extract_text_to_graph_queries(
         max_chars: 最大字符数限制，默认 12000
         stage_callback: 可选阶段回调，用于展示抽取和查询构建进度。
         llm_bundle: 可选模型调用链 bundle，用于并发 lane 或测试替换。
+        source_context: 当前文档和分块的可信来源上下文。
 
     Returns:
         包含抽取结果、实体映射、关系列表和查询语句的字典
@@ -923,13 +943,24 @@ def extract_text_to_graph_queries(
     ):
         clean_text = (text or "").strip()
         if not clean_text:
+            staging = stage_graph_extraction(
+                {"entities": [], "relations": []}, source_context
+            )
             return {
                 "extraction": {"entities": [], "relations": []},
                 "entity_map": {},
                 "relation_list": [],
                 "node_queries": [],
                 "relation_queries": [],
-                "stats": {"entities": 0, "relations": 0},
+                "stats": {
+                    "entities": 0,
+                    "relations": 0,
+                    **staging["metrics"],
+                },
+                "quality": {
+                    "rejected": staging["rejected"],
+                    "metrics": staging["metrics"],
+                },
             }
 
         limited_text = clean_text[:max_chars]
@@ -943,15 +974,24 @@ def extract_text_to_graph_queries(
         _emit_stage_event(
             stage_callback,
             "enter",
-            "build_neo4j_queries",
-            "正在构建 Neo4j 节点与关系查询",
+            "graph_quality_staging",
+            "正在校验图谱本体、关系方向和来源",
         )
-        entity_map = build_entity_map(extraction["entities"])
-        relation_list = build_relation_list(extraction["relations"])
+        staging = stage_graph_extraction(extraction, source_context)
+        accepted_extraction = {
+            "entities": staging["entities"],
+            "relations": staging["relations"],
+        }
+        entity_map = build_entity_map(accepted_extraction["entities"])
+        relation_list = build_relation_list(accepted_extraction["relations"])
         node_queries = build_node_queries(entity_map)
         relation_queries = build_relation_queries(relation_list)
         _emit_stage_event(
-            stage_callback, "complete", "build_neo4j_queries", "Neo4j 查询构建完成"
+            stage_callback,
+            "complete",
+            "graph_quality_staging",
+            "图谱质量校验和 Neo4j 查询构建完成",
+            metrics=dict(staging["metrics"]),
         )
 
         logger.info(
@@ -959,12 +999,20 @@ def extract_text_to_graph_queries(
         )
 
         return {
-            "extraction": extraction,
+            "extraction": accepted_extraction,
             "entity_map": entity_map,
             "relation_list": relation_list,
             "node_queries": node_queries,
             "relation_queries": relation_queries,
-            "stats": {"entities": len(entity_map), "relations": len(relation_list)},
+            "stats": {
+                "entities": len(entity_map),
+                "relations": len(relation_list),
+                **staging["metrics"],
+            },
+            "quality": {
+                "rejected": staging["rejected"],
+                "metrics": staging["metrics"],
+            },
         }
 
 

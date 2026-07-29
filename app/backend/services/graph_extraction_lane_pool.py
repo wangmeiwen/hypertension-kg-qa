@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from app.backend.services.graph_import_writer import GraphImportWriter
@@ -174,6 +174,7 @@ class GraphExtractionLanePool:
         total_relation_batches = int(progress.get("relation_batches") or 0)
         processed_chars = int(progress["processed_chars"])
         completed_chunks = int(progress["completed_chunks"])
+        quality_reports: list[dict[str, Any]] = []
         from app.knowledge_graph.extract_graph_data_utils import create_graph_llm_bundle
 
         lane_configs = list(lane_configs[:max_parallelism])
@@ -357,6 +358,8 @@ class GraphExtractionLanePool:
                             processed_chars,
                             lane_stage_callback,
                             llm_bundle,
+                            prepared,
+                            lane_config,
                         )
                     except Exception as exc:
                         error_text = str(exc).strip() or exc.__class__.__name__
@@ -509,6 +512,12 @@ class GraphExtractionLanePool:
                     total_relations = write_result["relation_count"]
                     total_node_batches += write_result["node_batches"]
                     total_relation_batches += write_result["relation_batches"]
+                    quality_reports.append(
+                        {
+                            "chunk_index": index,
+                            **dict(chunk_result["quality"]),
+                        }
+                    )
 
                     write_cursor += 1
                     if next_schedule_cursor < len(pending_chunks):
@@ -544,6 +553,7 @@ class GraphExtractionLanePool:
             "relation_count": total_relations,
             "node_batches": total_node_batches,
             "relation_batches": total_relation_batches,
+            "quality_reports": quality_reports,
         }
 
     def extract_single_chunk_blocking(  # pragma: no cover - external LLM runtime
@@ -555,6 +565,8 @@ class GraphExtractionLanePool:
         processed_chars: int,
         stage_callback: Callable[..., None],
         llm_bundle: dict[str, Any],
+        source_document: dict[str, Any],
+        lane_config: dict[str, Any],
     ) -> dict[str, Any]:
         """在线程中执行单块图谱抽取（单次尝试）。
 
@@ -566,6 +578,8 @@ class GraphExtractionLanePool:
             processed_chars: 已处理字符数。
             stage_callback: 阶段进度回调。
             llm_bundle: 当前 lane 使用的 LLM 配置和客户端上下文。
+            source_document: 当前导入文档的可信元数据。
+            lane_config: 当前抽取 lane 配置。
 
         Returns:
             dict[str, Any]: 当前块抽取出的节点查询、关系查询和统计数据。
@@ -573,8 +587,17 @@ class GraphExtractionLanePool:
         from app.knowledge_graph.extract_graph_data_utils import (
             extract_text_to_graph_queries,
         )
+        from app.knowledge_graph.graph_quality import GraphSourceContext
 
         chunk_chars = len(chunk)
+        source_context: GraphSourceContext = {
+            "source_id": str(source_document["file_hash"]),
+            "source_name": str(source_document["file_name"]),
+            "source_hash": str(source_document["file_hash"]),
+            "source_chunk_index": chunk_index,
+            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "extraction_model": str(lane_config["model_name"]),
+        }
         stage_callback(
             "heartbeat",
             detail=f"文档解析完成，准备抽取第 {chunk_index}/{total_chunks} 段文本",
@@ -593,6 +616,7 @@ class GraphExtractionLanePool:
             chunk_chars,
             stage_callback=stage_callback,
             llm_bundle=llm_bundle,
+            source_context=source_context,
         )
         return {
             "chunk_index": chunk_index,
@@ -600,6 +624,7 @@ class GraphExtractionLanePool:
             "node_queries": graph_data["node_queries"],
             "relation_queries": graph_data["relation_queries"],
             "stats": graph_data["stats"],
+            "quality": graph_data["quality"],
         }
 
     @staticmethod

@@ -57,6 +57,7 @@ class GraphImportWriter:
         node_queries = list(chunk_result["node_queries"])
         relation_queries = list(chunk_result["relation_queries"])
         stats = dict(chunk_result["stats"])
+        quality_metrics = dict(chunk_result["quality"]["metrics"])
         node_batches = len(node_queries)
         relation_batches = len(relation_queries)
         lane_label = str(chunk_result.get("lane_label") or "")
@@ -75,6 +76,7 @@ class GraphImportWriter:
                 "completed_chunks": completed_chunks,
                 "current_chunk_index": chunk_index,
                 "current_chunk_chars": chunk_chars,
+                **quality_metrics,
             },
         )
         try:
@@ -123,6 +125,7 @@ class GraphImportWriter:
                 "completed_chunks": next_completed_chunks,
                 "current_chunk_index": chunk_index,
                 "current_chunk_chars": chunk_chars,
+                **quality_metrics,
             },
         )
         return {

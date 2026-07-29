@@ -413,6 +413,13 @@ def test_graph_lane_pool_schedules_chunks_and_writes_in_order(monkeypatch) -> No
             "node_queries": [f"node-{chunk_index}"],
             "relation_queries": [f"relation-{chunk_index}"],
             "stats": {"entities": 1, "relations": 1},
+            "quality": {
+                "rejected": [],
+                "metrics": {
+                    "accepted_entities": 1,
+                    "accepted_relations": 1,
+                },
+            },
         },
     )
 
@@ -566,6 +573,13 @@ def test_graph_import_writer_writes_nodes_before_relations() -> None:
                 "relation_queries": ["relation-1"],
                 "stats": {"entities": 2, "relations": 1},
                 "lane_label": "lane1:model",
+                "quality": {
+                    "rejected": [],
+                    "metrics": {
+                        "accepted_entities": 2,
+                        "accepted_relations": 1,
+                    },
+                },
             },
             total_chars=24,
             processed_chars=0,
@@ -612,6 +626,13 @@ def test_graph_import_writer_marks_chunk_and_run_failed() -> None:
                     "node_queries": ["node-1"],
                     "relation_queries": ["relation-1"],
                     "stats": {"entities": 1, "relations": 1},
+                    "quality": {
+                        "rejected": [],
+                        "metrics": {
+                            "accepted_entities": 1,
+                            "accepted_relations": 1,
+                        },
+                    },
                 },
                 total_chars=12,
                 processed_chars=0,
