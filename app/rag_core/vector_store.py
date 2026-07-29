@@ -933,7 +933,12 @@ class VectorStore:
             )
 
     async def hybrid_search_with_rerank(
-        self, query, k=conf.RETRIEVAL_K, source_filter=None
+        self,
+        query,
+        k=conf.RETRIEVAL_K,
+        source_filter=None,
+        *,
+        retrieval_mode="rerank",
     ):
         """
         执行混合检索并返回重排序后的子块文档。
@@ -946,12 +951,18 @@ class VectorStore:
             query: 查询文本。
             k: 检索结果数。
             source_filter: 来源过滤条件。
+            retrieval_mode: dense、sparse、hybrid 或 rerank。
 
         Returns:
             list[Document]: 重排序后的子块文档列表。
         """
+        if retrieval_mode not in {"dense", "sparse", "hybrid", "rerank"}:
+            raise ValueError(f"unsupported_retrieval_mode:{retrieval_mode}")
         with log_duration(
-            "milvus.hybrid_search_with_rerank", k=k, source_filter=source_filter
+            "milvus.hybrid_search_with_rerank",
+            k=k,
+            source_filter=source_filter,
+            retrieval_mode=retrieval_mode,
         ):
             final_limit = max(1, int(k or 1))
             internal_limit = self._resolve_internal_recall_limit(final_limit)
@@ -1021,16 +1032,24 @@ class VectorStore:
                     },
                 )[0]
             self._log_candidate_diagnostics("dense", query, dense_results)
+            dense_sub_chunks = self._dedupe_sub_chunks(
+                [
+                    self._doc_from_hit(hit, retrieval_method="dense")
+                    for hit in dense_results
+                ]
+            )
+            if retrieval_mode == "dense":
+                return dense_sub_chunks[:final_limit]
 
             if not sparse_enabled:
-                sub_chunks = self._dedupe_sub_chunks(
-                    [
-                        self._doc_from_hit(hit, retrieval_method="dense")
-                        for hit in dense_results
-                    ]
-                )
+                if retrieval_mode == "sparse":
+                    return []
+                if retrieval_mode == "hybrid":
+                    return dense_sub_chunks[:final_limit]
                 reranked_sub_chunks = self._rerank_sub_chunks(
-                    query, sub_chunks, limit=min(len(sub_chunks), internal_limit)
+                    query,
+                    dense_sub_chunks,
+                    limit=min(len(dense_sub_chunks), internal_limit),
                 )
                 self._log_candidate_diagnostics(
                     "rerank_dense_only", query, reranked_sub_chunks
@@ -1054,6 +1073,14 @@ class VectorStore:
                         search_params={"metric_type": "IP", "params": {}},
                     )[0]
             self._log_candidate_diagnostics("sparse", query, sparse_results)
+            sparse_sub_chunks = self._dedupe_sub_chunks(
+                [
+                    self._doc_from_hit(hit, retrieval_method="sparse")
+                    for hit in sparse_results
+                ]
+            )
+            if retrieval_mode == "sparse":
+                return sparse_sub_chunks[:final_limit]
 
             logger.info("使用 RRF 算法融合检索结果")
             fused_entities = self._reciprocal_rank_fusion(dense_results, sparse_results)
@@ -1070,11 +1097,29 @@ class VectorStore:
                     for entity in fused_entities
                 ]
             )
+            if retrieval_mode == "hybrid":
+                return sub_chunks[:final_limit]
             reranked_sub_chunks = self._rerank_sub_chunks(
                 query, sub_chunks, limit=min(len(sub_chunks), internal_limit)
             )
             self._log_candidate_diagnostics("rerank", query, reranked_sub_chunks)
             return reranked_sub_chunks[:final_limit]
+
+    async def search_by_mode(
+        self,
+        *,
+        query,
+        k,
+        retrieval_mode,
+        source_filter=None,
+    ):
+        """按显式消融模式执行向量检索。"""
+        return await self.hybrid_search_with_rerank(
+            query=query,
+            k=k,
+            source_filter=source_filter,
+            retrieval_mode=retrieval_mode,
+        )
 
     def _get_unique_parent_docs(self, sub_chunks):
         """

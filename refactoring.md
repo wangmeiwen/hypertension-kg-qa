@@ -355,9 +355,33 @@ page/workspace
 - 用真实 Neo4j 快照计算全图指标，并与单块 staging 指标区分。
 - 由领域人员复核并扩充别名表、关系签名和金标多跳路径。
 
-### P1：检索消融与评测
+### P1：检索消融与评测（进行中）
 
-固定并经领域人员复核的问题集，分别运行 KG-only、dense-only、sparse-only、hybrid、rerank 和 Agent。质量报告同时记录 Recall@K、MRR、nDCG、证据命中率、延迟、token、失败率。
+第一批已完成：
+
+- `VectorStore` 增加显式 `dense / sparse / hybrid / rerank` 四种模式；线上默认路径仍为 `rerank`，消融不再靠修改内部实现或伪造中间结果。
+- `rag_search` MCP 工具开放 `retrieval_mode`，各模式继续返回统一 Evidence；非法模式返回显式错误。
+- 新增确定性检索指标模块与离线汇总脚本，统一计算 Recall@K、MRR、nDCG、证据命中率、延迟、token 和失败率。
+- 指标优先使用稳定 Evidence ID 精确匹配；为兼容旧数据集保留规范化文本包含匹配，并在报告中显式记录匹配策略。
+- 汇总器拒绝重复题目、重复运行项、未知模式和模式缺题，避免不完整实验被静默补零。
+- 支持 KG-only、dense-only、sparse-only、hybrid、rerank 和 Agent 六种结果文件；报告会标注缺失模式和数据集领域复核状态。
+- 现有 30 题数据没有稳定 Evidence ID，也没有可确认的领域复核状态，因此本批只建立可复现的模式与指标契约，不把历史 Ragas 分数表述为可信消融结论。
+
+第一批质量门禁：
+
+- 检索模式、指标与命令行入口定向测试：17 passed。
+- 后端非数据库自动化测试：108 passed，3 deselected。
+- Python 格式检查：Black 检查 172 个文件，全部通过。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 144 个源文件，0 errors。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
+后续验收：
+
+- 由至少两名领域人员复核问题、年份、口径、参考答案和金标 Evidence ID。
+- 在同一 Milvus/Neo4j 快照上采集六种模式的完整运行结果并生成版本化报告。
+- 将检索排序指标与 Ragas 答案忠实度、相关性指标分开报告，禁止相互替代。
+- 增加图谱金标多跳路径命中率，并记录每次实验的索引、模型和配置版本。
 
 ### P1：API 与流式契约（已完成）
 

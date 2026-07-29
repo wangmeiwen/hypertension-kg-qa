@@ -47,10 +47,13 @@ tools:
       示例：
       - 基础检索：{"query":"高血压危象处理流程","top_k":5}
       - 带来源过滤：{"query":"ARB 与 ACEI 联用是否推荐","top_k":6,"source_filter":"guideline"}
+      - 检索消融：{"query":"老年患者血压控制目标值是多少","top_k":8,"retrieval_mode":"dense"}
       - 以问句检索：{"query":"老年患者血压控制目标值是多少","top_k":8}
     input_schema:
       query: str
       top_k: int?
+      source_filter: str?
+      retrieval_mode: str?
 
   - server_name: local
     tool_name: history_read

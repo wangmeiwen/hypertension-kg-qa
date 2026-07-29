@@ -319,16 +319,35 @@ class RagSearchTool:
         source_filter = (
             str(source_filter).strip() if source_filter is not None else None
         )
+        retrieval_mode_value = payload.get("retrieval_mode")
+        retrieval_mode = (
+            str(retrieval_mode_value).strip().lower()
+            if retrieval_mode_value is not None
+            else "rerank"
+        )
         if source_filter == "":
             source_filter = None
         if not query:
             return {"evidence": []}
+        if retrieval_mode not in {"dense", "sparse", "hybrid", "rerank"}:
+            return {
+                "evidence": [],
+                "error": f"unsupported_retrieval_mode:{retrieval_mode}",
+            }
         try:
-            docs = await self.vector_store.hybrid_search_with_rerank(
-                query=query,
-                k=top_k,
-                source_filter=source_filter,
-            )
+            if retrieval_mode == "rerank":
+                docs = await self.vector_store.hybrid_search_with_rerank(
+                    query=query,
+                    k=top_k,
+                    source_filter=source_filter,
+                )
+            else:
+                docs = await self.vector_store.search_by_mode(
+                    query=query,
+                    k=top_k,
+                    source_filter=source_filter,
+                    retrieval_mode=retrieval_mode,
+                )
 
             evidence = []
             total = len(docs)
@@ -789,7 +808,12 @@ def build_mcp_server() -> MCPServer:
 
     builtin_registry["rag_search"] = {
         "description": "基于Milvus进行向量检索，返回相关片段",
-        "input_schema": {"query": "str", "top_k": "int?"},
+        "input_schema": {
+            "query": "str",
+            "top_k": "int?",
+            "source_filter": "str?",
+            "retrieval_mode": "dense|sparse|hybrid|rerank?",
+        },
         "handler": rag_handler,
     }
 

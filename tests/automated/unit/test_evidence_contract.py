@@ -211,6 +211,29 @@ def test_rag_search_tool_returns_shared_evidence_contract() -> None:
                 )
             ]
 
+        async def search_by_mode(
+            self,
+            *,
+            query: str,
+            k: int,
+            source_filter: str | None,
+            retrieval_mode: str,
+        ) -> list[Document]:
+            assert query == "高血压"
+            assert k == 2
+            assert source_filter is None
+            return [
+                Document(
+                    page_content="稠密检索证据。",
+                    metadata={
+                        "source": "guide.pdf",
+                        "chunk_id": "chunk-dense",
+                        "search_score": 0.81,
+                        "retrieval_method": retrieval_mode,
+                    },
+                )
+            ]
+
     tool = object.__new__(RagSearchTool)
     tool.conf = SimpleNamespace(
         RAG_SEARCH_TOP_K_DEFAULT=5,
@@ -224,6 +247,16 @@ def test_rag_search_tool_returns_shared_evidence_contract() -> None:
     assert len(result["evidence"]) == 1
     assert set(result["evidence"][0]) == EVIDENCE_FIELDS
     assert result["evidence"][0]["retrieval_method"] == "dense_sparse_rrf_rerank"
+
+    dense_result = asyncio.run(
+        tool.query({"query": "高血压", "top_k": 2, "retrieval_mode": "dense"})
+    )
+    invalid_result = asyncio.run(
+        tool.query({"query": "高血压", "retrieval_mode": "invalid"})
+    )
+
+    assert dense_result["evidence"][0]["retrieval_method"] == "dense"
+    assert invalid_result["error"] == "unsupported_retrieval_mode:invalid"
 
 
 def test_kg_query_tool_returns_shared_evidence_contract() -> None:
