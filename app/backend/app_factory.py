@@ -36,6 +36,7 @@ from app.backend.routers.admin_graph import create_admin_graph_router
 from app.backend.routers.admin_observability import create_admin_observability_router
 from app.backend.routers.admin_runtime import create_admin_runtime_router
 from app.backend.routers.admin_sessions import create_admin_sessions_router
+from app.backend.routers.admin_storage import create_admin_storage_router
 from app.backend.routers.graph_public import create_graph_public_router
 from app.backend.routers.query_chat import create_query_chat_router
 from app.backend.routers.sessions_history import create_sessions_router
@@ -59,7 +60,11 @@ from app.backend.services.startup_runtime_service import (
     StartupRuntimeBehavior,
     StartupRuntimeService,
 )
+from app.backend.services.storage_schema_service import StorageSchemaService
 from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
+from app.backend.repositories.database import fetch_all
+from app.core.config import Config
+from app.rag_core.document_pipeline import DOCUMENT_EMBEDDING_DENSE_DIM
 
 
 @dataclass(slots=True)
@@ -86,6 +91,7 @@ class BackendAppTestOverrides:
     sessions_history_service: Any = None
     admin_auth_service: AdminAuthService | None = None
     admin_runtime_service: Any = None
+    storage_schema_service: Any = None
     admin_sessions_service: Any = None
     admin_observability_service: Any = None
     admin_documents_service: Any = None
@@ -145,6 +151,7 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
 
     neo4j_client = overrides.neo4j_client or _LazyNeo4jClient()
     backend_config = build_backend_config()
+    storage_config = Config()
     runtime_container = BackendRuntimeContainer(config=backend_config)
     runtime_container.mcp_server = overrides.mcp_server
     runtime_container.a2a_service = overrides.a2a_service
@@ -230,6 +237,25 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         get_a2a=a2a_runtime_service.get_a2a,
         measure_event_loop_lag=a2a_runtime_service.measure_event_loop_lag,
         build_a2a_runtime_snapshot=a2a_runtime_service.build_a2a_runtime_snapshot,
+    )
+
+    def _create_milvus_diagnostic_client() -> Any:
+        from pymilvus import MilvusClient  # type: ignore[import-untyped]
+
+        return MilvusClient(
+            uri=(
+                f"http://{storage_config.MILVUS_HOST}:" f"{storage_config.MILVUS_PORT}"
+            ),
+            db_name=storage_config.MILVUS_DATABASE_NAME,
+        )
+
+    storage_schema_service = overrides.storage_schema_service or StorageSchemaService(
+        fetch_mysql_migrations=fetch_all,
+        neo4j_client=neo4j_client,
+        milvus_client_factory=_create_milvus_diagnostic_client,
+        document_collection_name=storage_config.MILVUS_COLLECTION_NAME,
+        graph_collection_name=storage_config.KG_MILVUS_COLLECTION_NAME,
+        document_dense_dim=DOCUMENT_EMBEDDING_DENSE_DIM,
     )
 
     admin_sessions_service = overrides.admin_sessions_service or AdminSessionsService(
@@ -336,6 +362,7 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     app.include_router(create_sessions_router(service=sessions_history_service))
     app.include_router(create_admin_auth_router(service=admin_auth_service))
     app.include_router(create_admin_runtime_router(service=admin_runtime_service))
+    app.include_router(create_admin_storage_router(service=storage_schema_service))
     app.include_router(create_admin_sessions_router(service=admin_sessions_service))
     app.include_router(
         create_admin_observability_router(service=admin_observability_service)

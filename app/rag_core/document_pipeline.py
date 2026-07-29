@@ -9,6 +9,7 @@ import json
 DOCUMENT_PARSER_VERSION = 1
 DOCUMENT_CHUNK_STRATEGY_VERSION = 1
 DOCUMENT_EMBEDDING_PIPELINE_VERSION = 1
+DOCUMENT_EMBEDDING_DENSE_DIM = 1024
 
 
 def build_embedding_model_signature(model_path: str) -> str:

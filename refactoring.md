@@ -406,7 +406,7 @@ page/workspace
 - 客户端重连后可从会话历史恢复 `persisted` 对应的消息 ID。
 - `/process`、`/process_with_session` 和前端通过版本化 JSON Schema 与响应头完成契约握手。
 
-### P2：数据库迁移与版本管理（进行中）
+### P2：数据库迁移与版本管理（已完成）
 
 第一批已完成：
 
@@ -452,10 +452,24 @@ page/workspace
 - Python 类型检查：`mypy app` 检查 149 个源文件，0 errors。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 
-后续验收：
+第三批已完成：
 
-- 为 schema 版本与健康状态增加只读诊断报告，便于部署验收。
-- 增加从空库、历史库和内容漂移库升级的 CI 场景，保持真实依赖测试不把跳过伪装成通过。
+- 新增管理员只读接口 `/admin/storage/schema-report`，并发返回 MySQL、Neo4j、Milvus 的期望版本、实际版本、待迁移项、哨兵、集合名和完整指纹。
+- 三类存储分别隔离错误；单库不可用或 schema 不兼容时报告整体 `incompatible`，同时保留其他存储的有效诊断结果。
+- 诊断使用轻量 Milvus 客户端直接读取集合描述，不触发 embedding 或 reranker 模型加载。
+- 真实 MySQL、Neo4j、Milvus 联合诊断结果为 `compatible`，实际版本分别为 MySQL v2、Neo4j v1、Milvus 两个集合 v1。
+- 空 MySQL 在 CI 初始化步骤执行完整 migration；单元测试覆盖历史库补列、迁移内容漂移、版本超前、历史缺口、Neo4j 重复哨兵和 Milvus 字段/维度不兼容。
+
+第三批质量门禁：
+
+- 后端非数据库自动化测试：128 passed，3 deselected。
+- Python 格式检查：Black 检查 184 个文件，全部通过。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 151 个源文件，0 errors。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
+后续增强（不阻断本阶段）：
+
 - 为升级前缺少 `source_hash` 的历史 Milvus 行提供只读审计和显式清理工具，不自动按同名文件删除。
 
 ### P2：可观测性与安全
