@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.a2a.tool_gateway import MCPToolGateway
-from app.a2a.models import SubAgentResult
+from app.a2a.models import Evidence, SubAgentResult
 from app.a2a.subagents.kg.query_builder import (
     build_kg_entity_relation_payload,
     build_kg_query_payload,
@@ -17,6 +16,7 @@ from app.a2a.subagents.retry_utils import (
     query_variant_for_attempt,
 )
 from app.a2a.subagents.kg.state import KgSubAgentState
+from app.a2a.tool_gateway import MCPToolGateway
 
 
 _KG_QUERY_HINTS = (
@@ -85,29 +85,16 @@ def _build_query_records(
         content_parts: list[str] = []
         citations: list[str] = []
 
-        records_obj = result.get("records")
-        result_records = records_obj if isinstance(records_obj, list) else []
-        for item in result_records[:3]:
-            if isinstance(item, dict):
-                content_parts.append(str(item).replace("\n", " ").strip()[:280])
-
-        entities_obj = result.get("entities")
-        entities = entities_obj if isinstance(entities_obj, list) else []
-        for entity in entities[:3]:
-            if not isinstance(entity, dict):
+        evidence_obj = result.get("evidence")
+        evidence_rows = evidence_obj if isinstance(evidence_obj, list) else []
+        for item in evidence_rows[:6]:
+            if not isinstance(item, dict):
                 continue
-            content_parts.append(str(entity).replace("\n", " ").strip()[:280])
-            citation = str(entity.get("id") or entity.get("name") or "").strip()
-            if citation and citation not in citations:
-                citations.append(citation)
-
-        relationships_obj = result.get("relationships")
-        relationships = relationships_obj if isinstance(relationships_obj, list) else []
-        for relation in relationships[:3]:
-            if not isinstance(relation, dict):
-                continue
-            content_parts.append(str(relation).replace("\n", " ").strip()[:280])
-            citation = str(relation.get("id") or relation.get("relation") or relation.get("type") or "").strip()
+            if len(content_parts) < 3:
+                content = str(item.get("content") or "").replace("\n", " ").strip()
+                if content:
+                    content_parts.append(content[:280])
+            citation = str(item.get("source_id") or "").strip()
             if citation and citation not in citations:
                 citations.append(citation)
 
@@ -182,15 +169,16 @@ def _extract_retry_terms_from_evidence(state: KgSubAgentState) -> list[str]:
     terms: list[str] = []
     for row in evidence:
         item = row if isinstance(row, dict) else {}
-        for key in ("entity", "relationship", "record"):
-            payload_obj = item.get(key)
-            payload = payload_obj if isinstance(payload_obj, dict) else {}
-            properties_obj = payload.get("properties")
-            properties = properties_obj if isinstance(properties_obj, dict) else payload
-            for field in ("name", "canonical_name", "alias", "relation", "type"):
-                value = str(properties.get(field) or "").strip()
-                if value:
-                    terms.append(value)
+        provenance_obj = item.get("provenance")
+        provenance = provenance_obj if isinstance(provenance_obj, dict) else {}
+        raw_obj = provenance.get("raw")
+        raw = raw_obj if isinstance(raw_obj, dict) else {}
+        properties_obj = raw.get("properties")
+        properties = properties_obj if isinstance(properties_obj, dict) else raw
+        for field in ("name", "canonical_name", "alias", "relation", "type"):
+            value = str(properties.get(field) or "").strip()
+            if value:
+                terms.append(value)
     return terms
 
 
@@ -285,38 +273,23 @@ async def node_execute_tools(state: KgSubAgentState, tool_gateway: MCPToolGatewa
 
 
 def _extract_evidence_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """从单条 KG 工具结果中抽取统一证据列表。
+    """从单条 KG 工具结果中校验统一证据列表。
 
     Args:
         row: 标准化后的工具调用结果。
 
     Returns:
-        包含实体、关系或 Cypher 记录的证据项列表。
+        通过 Evidence 契约校验的证据项列表。
     """
-    tool_name = str(row.get("tool_name") or "")
     result_obj = row.get("result")
     result = result_obj if isinstance(result_obj, dict) else {}
-    if tool_name == "kg_query":
-        records_obj = result.get("records")
-        records = records_obj if isinstance(records_obj, list) else []
-        evidence: list[dict[str, Any]] = []
-        for item in records:
-            if isinstance(item, dict):
-                evidence.append({"tool": tool_name, "record": item})
-        return evidence
-
-    entities_obj = result.get("entities")
-    entities = entities_obj if isinstance(entities_obj, list) else []
-    relations_obj = result.get("relationships")
-    relations = relations_obj if isinstance(relations_obj, list) else []
-    evidence = []
-    for item in entities:
-        if isinstance(item, dict):
-            evidence.append({"tool": tool_name, "entity": item})
-    for item in relations:
-        if isinstance(item, dict):
-            evidence.append({"tool": tool_name, "relationship": item})
-    return evidence
+    evidence_obj = result.get("evidence")
+    evidence_rows = evidence_obj if isinstance(evidence_obj, list) else []
+    return [
+        Evidence.model_validate(item).model_dump()
+        for item in evidence_rows
+        if isinstance(item, dict)
+    ]
 
 
 async def node_normalize_results(state: KgSubAgentState) -> KgSubAgentState:
@@ -364,7 +337,10 @@ async def node_build_response(state: KgSubAgentState) -> KgSubAgentState:
     """
     evidence_rows_obj = state.get("evidence")
     evidence_rows = evidence_rows_obj if isinstance(evidence_rows_obj, list) else []
-    evidence_count = len(evidence_rows)
+    evidence_models = [
+        Evidence.model_validate(row) for row in evidence_rows if isinstance(row, dict)
+    ]
+    evidence_count = len(evidence_models)
 
     query_statements_obj = state.get("query_statements")
     query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
@@ -396,7 +372,7 @@ async def node_build_response(state: KgSubAgentState) -> KgSubAgentState:
         queries_used=queries_used,
         query_records=query_records,
         tool_results=tool_results,
-        evidence=evidence_rows,
+        evidence=evidence_models,
         signal=signal,
         coverage={
             "coverage_status": "none" if evidence_count == 0 else "partial",

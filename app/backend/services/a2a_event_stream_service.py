@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, cast
 
 from app.a2a import A2AService
+from app.backend.domain.stream_events import (
+    DoneStreamEvent,
+    DoneStatus,
+    ErrorStreamEvent,
+    JobStreamEvent,
+    ProgressStreamEvent,
+    ProgressStage,
+    ReplyStreamEvent,
+    StreamEvent,
+    stream_event_json_line,
+    validate_stream_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +99,7 @@ def build_processing_steps_from_progress_events(events_obj: Any) -> List[str]:
     return rows
 
 
-def map_a2a_state_to_done_status(state: str) -> str:
+def map_a2a_state_to_done_status(state: str) -> DoneStatus:
     """将 A2A 状态映射为前端完成状态。"""
     safe_state = str(state or "").strip().lower()
     if safe_state == "completed":
@@ -97,7 +108,7 @@ def map_a2a_state_to_done_status(state: str) -> str:
         return "cancelled"
     if safe_state == "failed":
         return "failed"
-    return safe_state or "failed"
+    return "failed"
 
 
 def extract_progress_detail(event: Dict[str, Any]) -> str:
@@ -138,9 +149,22 @@ def normalize_progress_event(event: Dict[str, Any]) -> Dict[str, str]:
     if not text:
         return {}
 
-    if any(token in text for token in ("finalized", "orchestrator_done", "task_completed", "终答", "最终回答", "answer")):
+    if any(
+        token in text
+        for token in (
+            "finalized",
+            "orchestrator_done",
+            "task_completed",
+            "终答",
+            "最终回答",
+            "answer",
+        )
+    ):
         stage = "answer"
-    elif any(token in text for token in ("subagent", "子代理", "检索", "kg", "rag", "search", "retrieval")):
+    elif any(
+        token in text
+        for token in ("subagent", "子代理", "检索", "kg", "rag", "search", "retrieval")
+    ):
         stage = "subagent"
     elif any(
         token in text
@@ -176,12 +200,18 @@ def extract_task_final_text(task: Dict[str, Any], state: str) -> str:
 
     status_message = extract_a2a_status_message(task)
     status_text = extract_text_from_parts(status_message.get("parts"))
-    if status_text and status_text not in {"task_submitted", "task_running", "task_completed"}:
+    if status_text and status_text not in {
+        "task_submitted",
+        "task_running",
+        "task_completed",
+    }:
         return status_text
 
     metadata_obj = status_message.get("metadata")
     metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
-    fallback = str(metadata.get("error") or metadata.get("error_type") or state or "").strip()
+    fallback = str(
+        metadata.get("error") or metadata.get("error_type") or state or ""
+    ).strip()
     return fallback or "任务结束"
 
 
@@ -223,15 +253,15 @@ class A2AEventStreamService:
         Yields:
             每行一个 JSON 对象字符串，用于兼容旧前端流式协议。
         """
-        async for msg in self.iter_a2a_stream_events(
+        async for event in self.iter_a2a_stream_events(
             input_text=input_text,
             user_id=user_id,
             session_id=session_id,
             request_id=request_id,
         ):
-            yield json.dumps(msg, ensure_ascii=False) + "\n"
+            yield stream_event_json_line(event)
 
-    async def iter_a2a_stream_events(self, **kwargs: Any) -> AsyncIterator[Dict[str, Any]]:
+    async def iter_a2a_stream_events(self, **kwargs: Any) -> AsyncIterator[StreamEvent]:
         """统一迭代 A2A 流事件，优先使用注入的事件工厂。"""
         if self._stream_events_factory is None:
             async for event in self.generate_a2a_stream_events(**kwargs):
@@ -239,7 +269,7 @@ class A2AEventStreamService:
             return
 
         async for event in self._stream_events_factory(**kwargs):
-            yield event
+            yield validate_stream_event(event)
 
     async def generate_a2a_stream_events(
         self,
@@ -253,7 +283,7 @@ class A2AEventStreamService:
         file_id: str = "",
         original_input_text: str = "",
         memory_context: Optional[Dict[str, Any]] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
+    ) -> AsyncIterator[StreamEvent]:
         """生成 Agent 流式输出事件。
 
         Args:
@@ -304,11 +334,16 @@ class A2AEventStreamService:
         if not task_id:
             raise RuntimeError("a2a_task_id_missing")
 
-        yield {"type": "job", "job_id": task_id, "request_id": req_id, "task_id": task_id}
+        yield JobStreamEvent(job_id=task_id, request_id=req_id, task_id=task_id)
 
         safe_poll_ms = max(
             100,
-            min(int(safe_float(os.getenv("AGENT_RUN_A2A_POLL_MS", "250"), default=250.0)), 3000),
+            min(
+                int(
+                    safe_float(os.getenv("AGENT_RUN_A2A_POLL_MS", "250"), default=250.0)
+                ),
+                3000,
+            ),
         )
         traces: List[Dict[str, Any]] = []
         emitted_progress_stages: set[str] = set()
@@ -318,13 +353,11 @@ class A2AEventStreamService:
         while True:
             snapshot = await service.aget_task_updates(task_id, cursor)
             if snapshot is None:
-                yield {
-                    "type": "done",
-                    "msg": "任务不存在或已被清理",
-                    "status": "failed",
-                    "traces": traces,
-                    "task_id": task_id,
-                }
+                yield ErrorStreamEvent(
+                    code="a2a_task_not_found",
+                    message="任务不存在或已被清理",
+                    task_id=task_id,
+                )
                 break
 
             events_obj = snapshot.get("events")
@@ -332,69 +365,95 @@ class A2AEventStreamService:
             cursor = int(snapshot.get("next_cursor") or cursor)
 
             for event in events:
-                reply_delta = extract_reply_delta(event if isinstance(event, dict) else {})
+                reply_delta = extract_reply_delta(
+                    event if isinstance(event, dict) else {}
+                )
                 if reply_delta:
                     if "answer" not in emitted_progress_stages:
                         emitted_progress_stages.add("answer")
-                        yield {
-                            "type": "msg",
-                            "msg": _SIMPLIFIED_PROGRESS_STAGES["answer"],
-                            "stage": "answer",
-                            "task_id": task_id,
-                        }
+                        yield ProgressStreamEvent(
+                            msg=_SIMPLIFIED_PROGRESS_STAGES["answer"],
+                            stage="answer",
+                            task_id=task_id,
+                        )
                     reply_emitted = True
-                    yield {"type": "reply", "msg": reply_delta, "task_id": task_id}
+                    yield ReplyStreamEvent(delta=reply_delta, task_id=task_id)
                     continue
 
-                detail = extract_progress_detail(event if isinstance(event, dict) else {})
+                detail = extract_progress_detail(
+                    event if isinstance(event, dict) else {}
+                )
                 if not detail:
                     continue
                 traces.append({"step": len(traces) + 1, "action": detail})
-                normalized = normalize_progress_event(event if isinstance(event, dict) else {})
+                normalized = normalize_progress_event(
+                    event if isinstance(event, dict) else {}
+                )
                 stage = str(normalized.get("stage") or "")
                 if stage and stage not in emitted_progress_stages:
                     emitted_progress_stages.add(stage)
-                    yield {
-                        "type": "msg",
-                        "msg": str(normalized.get("msg") or ""),
-                        "stage": stage,
-                        "task_id": task_id,
-                    }
+                    yield ProgressStreamEvent(
+                        msg=str(normalized.get("msg") or ""),
+                        stage=cast(ProgressStage, stage),
+                        task_id=task_id,
+                    )
 
             state = str(snapshot.get("state") or "").strip().lower()
             if bool(snapshot.get("terminal")):
                 task_obj = snapshot.get("task")
                 task_payload = task_obj if isinstance(task_obj, dict) else {}
                 final_text = extract_task_final_text(task_payload, state)
-                processing_steps_obj = extract_a2a_artifact(task_payload, "processing_steps")
-                processing_steps = processing_steps_obj if isinstance(processing_steps_obj, list) else []
-                tool_observations_obj = extract_a2a_artifact(task_payload, "tool_observations")
-                tool_observations = tool_observations_obj if isinstance(tool_observations_obj, list) else []
-                evidence_summary_obj = extract_a2a_artifact(task_payload, "evidence_summary")
-                evidence_summary = evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
+                processing_steps_obj = extract_a2a_artifact(
+                    task_payload, "processing_steps"
+                )
+                processing_steps = (
+                    processing_steps_obj
+                    if isinstance(processing_steps_obj, list)
+                    else []
+                )
+                tool_observations_obj = extract_a2a_artifact(
+                    task_payload, "tool_observations"
+                )
+                tool_observations = (
+                    tool_observations_obj
+                    if isinstance(tool_observations_obj, list)
+                    else []
+                )
+                evidence_summary_obj = extract_a2a_artifact(
+                    task_payload, "evidence_summary"
+                )
+                evidence_summary = (
+                    evidence_summary_obj
+                    if isinstance(evidence_summary_obj, dict)
+                    else {}
+                )
                 telemetry_obj = extract_a2a_artifact(task_payload, "telemetry")
                 telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
                 if state == "completed" and "answer" not in emitted_progress_stages:
                     emitted_progress_stages.add("answer")
-                    yield {
-                        "type": "msg",
-                        "msg": _SIMPLIFIED_PROGRESS_STAGES["answer"],
-                        "stage": "answer",
-                        "task_id": task_id,
-                    }
+                    yield ProgressStreamEvent(
+                        msg=_SIMPLIFIED_PROGRESS_STAGES["answer"],
+                        stage="answer",
+                        task_id=task_id,
+                    )
                 if state == "completed" and final_text and not reply_emitted:
-                    yield {"type": "reply", "msg": final_text, "task_id": task_id}
-                yield {
-                    "type": "done",
-                    "msg": final_text,
-                    "status": map_a2a_state_to_done_status(state),
-                    "traces": traces,
-                    "task_id": task_id,
-                    "processing_steps": processing_steps,
-                    "tool_observations": tool_observations,
-                    "evidence_summary": evidence_summary,
-                    "telemetry": telemetry,
-                }
+                    yield ReplyStreamEvent(delta=final_text, task_id=task_id)
+                if state == "failed":
+                    yield ErrorStreamEvent(
+                        code="a2a_task_failed",
+                        message=final_text or "Agent 任务执行失败",
+                        task_id=task_id,
+                    )
+                    break
+                yield DoneStreamEvent(
+                    status=map_a2a_state_to_done_status(state),
+                    traces=traces,
+                    task_id=task_id,
+                    processing_steps=processing_steps,
+                    tool_observations=tool_observations,
+                    evidence_summary=evidence_summary,
+                    telemetry=telemetry,
+                )
                 break
 
             await asyncio.sleep(float(safe_poll_ms) / 1000.0)

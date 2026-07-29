@@ -1,7 +1,14 @@
 import { z } from "zod";
 
 // 后端后台任务状态枚举，兼容图谱构建、文档嵌入等异步任务。
-export const taskStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled", "paused"]);
+export const taskStatusSchema = z.enum([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "paused",
+]);
 
 // 标准 API envelope，同时 passthrough 保留后端扩展字段。
 export const apiEnvelopeSchema = z
@@ -78,26 +85,66 @@ export const rollbackResultSchema = z
   .passthrough();
 
 export const streamEventSchema = z.discriminatedUnion("type", [
-  // SSE/流式问答事件按 type 字段区分任务、会话、消息和完成状态。
-  z.object({ type: z.literal("job"), job_id: z.string().optional() }).passthrough(),
+  // NDJSON 问答流按 type 区分任务、会话、增量正文、终态和持久化结果。
+  z
+    .object({
+      type: z.literal("job"),
+      job_id: z.string(),
+      request_id: z.string(),
+      task_id: z.string(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("session"),
-      session_id: z.string().optional(),
-      user_message_id: z.number().optional(),
+      session_id: z.string(),
+      user_message_id: z.number(),
     })
-    .passthrough(),
+    .strict(),
   z
     .object({
       type: z.literal("persisted"),
-      session_id: z.string().optional(),
-      user_message_id: z.number().optional(),
-      assistant_message_id: z.number().optional(),
+      session_id: z.string(),
+      user_message_id: z.number(),
+      assistant_message_id: z.number(),
     })
-    .passthrough(),
-  z.object({ type: z.literal("msg"), msg: z.string().optional(), stage: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("reply"), msg: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("done"), msg: z.string().optional(), status: z.string().optional() }).passthrough(),
+    .strict(),
+  z
+    .object({
+      type: z.literal("msg"),
+      msg: z.string(),
+      stage: z.enum(["orchestrator", "subagent", "answer"]),
+      task_id: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("reply"),
+      delta: z.string().min(1),
+      task_id: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("done"),
+      status: z.enum(["done", "failed", "cancelled"]),
+      task_id: z.string(),
+      traces: z.array(z.record(z.string(), z.unknown())),
+      processing_steps: z.array(z.string()),
+      tool_observations: z.array(z.record(z.string(), z.unknown())),
+      evidence_summary: z.record(z.string(), z.unknown()),
+      telemetry: z.record(z.string(), z.unknown()),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("error"),
+      code: z.string(),
+      message: z.string(),
+      task_id: z.string(),
+      recoverable: z.boolean(),
+    })
+    .strict(),
 ]);
 
 export const adminStatsSchema = z
@@ -283,7 +330,9 @@ export const graphJobSchema = z
     stage_detail: z.string().optional(),
     progress_text: z.string().optional(),
     error: z.string().optional(),
-    warnings: z.array(z.object({ message: z.string(), timestamp: z.string().optional() }).passthrough()).optional(),
+    warnings: z
+      .array(z.object({ message: z.string(), timestamp: z.string().optional() }).passthrough())
+      .optional(),
     trace: z.array(z.record(z.string(), z.unknown())).optional(),
     labels: z.array(z.string()).optional(),
     batch_size: z.number().optional(),

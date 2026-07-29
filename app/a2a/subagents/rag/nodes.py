@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.a2a.tool_gateway import MCPToolGateway
-from app.a2a.models import SubAgentResult
+from app.a2a.models import Evidence, SubAgentResult
 from app.a2a.subagents.rag.query_builder import build_rag_payload, validate_rag_payload
 from app.a2a.subagents.retry_utils import (
     MAX_SUBAGENT_TOOL_CALLS,
@@ -13,6 +12,7 @@ from app.a2a.subagents.retry_utils import (
     query_variant_for_attempt,
 )
 from app.a2a.subagents.rag.state import RagSubAgentState
+from app.a2a.tool_gateway import MCPToolGateway
 
 
 def _is_statistical_query(query: str) -> bool:
@@ -54,26 +54,42 @@ def _build_query_records(
         row = tool_results[index] if index < len(tool_results) and isinstance(tool_results[index], dict) else {}
         result_obj = row.get("result")
         result = result_obj if isinstance(result_obj, dict) else {}
-        hits_obj = result.get("hits")
-        hits = hits_obj if isinstance(hits_obj, list) else []
+        evidence_obj = result.get("evidence")
+        evidence_rows = evidence_obj if isinstance(evidence_obj, list) else []
         content_parts: list[str] = []
         citations: list[str] = []
-        top_hit = hits[0] if hits and isinstance(hits[0], dict) else {}
-        page_num = top_hit.get("page_num")
-        start_page = top_hit.get("start_page")
-        end_page = top_hit.get("end_page")
-        chunk_id = str(top_hit.get("chunk_id") or "").strip()
-        selected_hits = hits[:1] if _is_statistical_query(query) else hits[:3]
-        for hit in selected_hits:
-            if not isinstance(hit, dict):
+        top_evidence = (
+            evidence_rows[0]
+            if evidence_rows and isinstance(evidence_rows[0], dict)
+            else {}
+        )
+        provenance_obj = top_evidence.get("provenance")
+        top_provenance = provenance_obj if isinstance(provenance_obj, dict) else {}
+        page_num = top_evidence.get("page")
+        start_page = top_provenance.get("start_page")
+        end_page = top_provenance.get("end_page")
+        chunk_id = str(top_evidence.get("chunk_id") or "").strip()
+        selected_evidence = (
+            evidence_rows[:1]
+            if _is_statistical_query(query)
+            else evidence_rows[:3]
+        )
+        for item in selected_evidence:
+            if not isinstance(item, dict):
                 continue
-            snippet = _trim_hit_snippet(query, hit.get("text") or "")
+            snippet = _trim_hit_snippet(query, item.get("content") or "")
             if snippet:
                 content_parts.append(snippet)
-            source = str(hit.get("source") or hit.get("id") or "").strip()
-            page_label = hit.get("page_num")
-            start_label = hit.get("start_page")
-            end_label = hit.get("end_page")
+            source = str(item.get("source_id") or "").strip()
+            page_label = item.get("page")
+            item_provenance_obj = item.get("provenance")
+            item_provenance = (
+                item_provenance_obj
+                if isinstance(item_provenance_obj, dict)
+                else {}
+            )
+            start_label = item_provenance.get("start_page")
+            end_label = item_provenance.get("end_page")
             citation = source
             if page_label not in (None, ""):
                 citation = f"{source}@p{page_label}" if source else f"p{page_label}"
@@ -127,10 +143,8 @@ def _extract_retry_terms_from_evidence(state: RagSubAgentState) -> list[str]:
     terms: list[str] = []
     for row in evidence[:3]:
         item = row if isinstance(row, dict) else {}
-        hit_obj = item.get("hit")
-        hit = hit_obj if isinstance(hit_obj, dict) else {}
-        for field in ("source", "title", "section_title"):
-            value = str(hit.get(field) or "").strip()
+        for field in ("source_id", "section"):
+            value = str(item.get(field) or "").strip()
             if value:
                 terms.append(value)
     return terms
@@ -219,11 +233,11 @@ async def node_normalize_results(state: RagSubAgentState) -> RagSubAgentState:
             continue
         result_obj = row.get("result")
         result = result_obj if isinstance(result_obj, dict) else {}
-        hits_obj = result.get("hits")
-        hits = hits_obj if isinstance(hits_obj, list) else []
-        for hit in hits:
-            if isinstance(hit, dict):
-                evidence.append({"tool": "rag_search", "hit": hit})
+        evidence_obj = result.get("evidence")
+        evidence_rows = evidence_obj if isinstance(evidence_obj, list) else []
+        for item in evidence_rows:
+            if isinstance(item, dict):
+                evidence.append(Evidence.model_validate(item).model_dump())
 
     state["evidence"] = evidence
     state["no_signal"] = len(evidence) == 0
@@ -253,7 +267,10 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
     """
     evidence_rows_obj = state.get("evidence")
     evidence_rows = evidence_rows_obj if isinstance(evidence_rows_obj, list) else []
-    evidence_count = len(evidence_rows)
+    evidence_models = [
+        Evidence.model_validate(row) for row in evidence_rows if isinstance(row, dict)
+    ]
+    evidence_count = len(evidence_models)
 
     query_statements_obj = state.get("query_statements")
     query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
@@ -285,7 +302,7 @@ async def node_build_response(state: RagSubAgentState) -> RagSubAgentState:
         queries_used=queries_used,
         query_records=query_records,
         tool_results=tool_results,
-        evidence=evidence_rows,
+        evidence=evidence_models,
         signal=signal,
         coverage={
             "coverage_status": "none" if evidence_count == 0 else "partial",

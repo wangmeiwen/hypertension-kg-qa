@@ -68,3 +68,15 @@ def sse_streaming_response(event_iter: AsyncIterator[str]) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def ndjson_streaming_response(event_iter: AsyncIterator[str]) -> StreamingResponse:
+    """构造逐行 JSON StreamingResponse。"""
+    return StreamingResponse(
+        event_iter,
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -7,6 +7,8 @@ import logging
 import re
 from typing import Any, Callable, Literal
 
+from pydantic import ValidationError
+
 try:
     import jieba  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover - dependency is enforced at runtime
@@ -14,7 +16,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
-from app.a2a.models import SubAgentConstraints, SubTask
+from app.a2a.models import Evidence, SubAgentConstraints, SubTask
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
@@ -97,19 +99,22 @@ class UnifiedOrchestratorController:
         return (
             "你是高血压问答系统的主控agent。\n"
             "你的职责是基于当前用户问题、会话问答记忆、历史检索问题索引，以及已经拿到的工具结果，自主决定下一步动作。\n"
-            "你只能选择三种动作之一：\n"
+            "你只能选择四种动作之一：\n"
             "1. final_answer：直接给出最终回答。\n"
             "2. call_kg：调用图谱子agent。\n"
             "3. call_rag：调用检索子agent。\n"
+            "4. call_history_read：按历史检索索引读取对应 Evidence。\n"
             "如果会话记忆已经可以回答此问题，直接回答。"
-            "如果历史检索里已经有高度相关的问题，可以基于索引内容直接回答或要求对应子agent补检索。\n"
+            "如果历史检索里有高度相关的问题，先使用 call_history_read 读取 Evidence，再决定回答或补检索。\n"
             "主控只负责拆分问题和选择子agent，不允许指定 MCP 工具名、Cypher、检索 payload 或底层工具参数。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
             "{"
-            "\"action\":\"final_answer|call_kg|call_rag\","
+            "\"action\":\"final_answer|call_kg|call_rag|call_history_read\","
             "\"reason\":\"简短原因\","
             "\"question\":\"当需要子agent处理时拆分出的子问题，可为空\","
+            "\"history_id\":\"仅 call_history_read 时填写索引中的 history_id\","
+            "\"user_question\":\"仅 call_history_read 且没有 history_id 时填写历史问题\","
             "\"answer\":\"仅 final_answer 时填写\""
             "}\n"
             "若信息仍不足且已拿到一些证据，也要基于现有证据给出谨慎回答，不要卡住。"
@@ -129,17 +134,21 @@ class UnifiedOrchestratorController:
             "\"tool_observations\":["
             "{"
             "\"agent\":\"kg|rag|history\","
-            "\"action\":\"call_kg|call_rag\","
+            "\"action\":\"call_kg|call_rag|call_history_read\","
             "\"subquery\":\"相关的子问题\","
             "\"summary\":\"该工具结果的压缩摘要\","
-            "\"query_records\":["
+            "\"evidence\":["
             "{"
-            "\"agent\":\"kg|rag|history\","
-            "\"query\":\"相关检索query\","
-            "\"result_content\":\"和当前问题最相关的结果内容\","
-            "\"captured_at\":\"可为空\","
-            "\"citations\":[],"
-            "\"has_signal\":true"
+            "\"source_type\":\"document|knowledge_graph|history\","
+            "\"source_id\":\"来源标识\","
+            "\"document_id\":\"文档标识，可为空\","
+            "\"chunk_id\":\"分块标识，可为空\","
+            "\"page\":null,"
+            "\"section\":\"章节，可为空\","
+            "\"content\":\"和当前问题最相关的证据内容\","
+            "\"score\":null,"
+            "\"retrieval_method\":\"检索方法\","
+            "\"provenance\":{}"
             "}"
             "]"
             "}"
@@ -149,7 +158,7 @@ class UnifiedOrchestratorController:
             "要求：\n"
             "1. qa_memory_text 只保留和当前问题直接相关的问答。\n"
             "2. retrieval_question_index_text 只保留和当前问题相关的历史检索问题。\n"
-            "3. tool_observations 只保留和当前问题相关的工具结果，优先保留 query_records。\n"
+            "3. tool_observations 只保留和当前问题相关的工具结果，Evidence 字段名和来源信息必须原样保留。\n"
             "4. 如果某一部分没有相关内容，可以返回“当前暂无问答对”“当前暂无历史检索问题”或空数组。\n"
             "5. 输出内容越短越好，但必须保留当前问题作答所需的关键信息。"
         )
@@ -178,10 +187,60 @@ class UnifiedOrchestratorController:
             agent = _sanitize_text(row.get("agent"), 32)
             action = _sanitize_text(row.get("action"), 32)
             subquery = _sanitize_text(row.get("subquery") or row.get("question"), 180)
+            evidence = [
+                normalized
+                for normalized in (
+                    self._normalize_evidence(item)
+                    for item in _coerce_list(row.get("evidence"))[:6]
+                )
+                if normalized is not None
+            ]
+            evidence_summary = self._summarize_evidence(evidence, limit=3)
+            result_summary = evidence_summary or self._summarize_observation_result(row)
             lines.append(
-                f"{index}. agent={agent or 'unknown'} | action={action or 'unknown'} | subquery={subquery} | result={self._summarize_observation_result(row)}"
+                f"{index}. agent={agent or 'unknown'} | action={action or 'unknown'} | subquery={subquery} | evidence={result_summary}"
             )
         return lines or ["当前还没有新的工具结果。"]
+
+    @staticmethod
+    def _normalize_evidence(row: Any) -> dict[str, Any] | None:
+        """通过共享 Evidence 契约校验工具观测。"""
+        if not isinstance(row, dict):
+            return None
+        try:
+            return Evidence.model_validate(row).model_dump()
+        except ValidationError:
+            return None
+
+    @staticmethod
+    def _evidence_citation_label(row: dict[str, Any]) -> str:
+        """从 Evidence 构造确定性的引用标签。"""
+        source_id = _sanitize_text(row.get("source_id"), 120)
+        page = row.get("page")
+        if page not in (None, ""):
+            return f"[{source_id} p{page}]" if source_id else f"[p{page}]"
+        return f"[{source_id}]" if source_id else ""
+
+    @classmethod
+    def _format_evidence_excerpt(cls, row: dict[str, Any]) -> str:
+        """将 Evidence 格式化为带来源标签的简短证据。"""
+        content = _sanitize_text(row.get("content"), 260)
+        if not content:
+            return ""
+        citation = cls._evidence_citation_label(row)
+        prefix = f"{citation} " if citation else ""
+        return f"{prefix}{content}"
+
+    def _summarize_evidence(
+        self, rows: list[dict[str, Any]], *, limit: int = 3
+    ) -> str:
+        """提炼 Evidence 并保留来源标签。"""
+        snippets: list[str] = []
+        for item in rows[: max(1, int(limit or 1))]:
+            excerpt = self._format_evidence_excerpt(item)
+            if excerpt and excerpt not in snippets:
+                snippets.append(excerpt)
+        return " | ".join(snippets)[:900]
 
     def _count_prompt_tokens(self, messages: list[dict[str, Any]]) -> int:
         """使用 jieba 统计提示词分词数。"""
@@ -226,48 +285,13 @@ class UnifiedOrchestratorController:
             record["chunk_id"] = chunk_id
         return record
 
-    def _format_query_record_excerpt(self, row: dict[str, Any]) -> str:
-        """将单条 query_record 格式化为简短证据摘要。"""
-        if not isinstance(row, dict):
-            return ""
-        snippet = _sanitize_text(row.get("result_content"), 220)
-        if not snippet:
-            return ""
-        page_num = row.get("page_num")
-        start_page = row.get("start_page")
-        end_page = row.get("end_page")
-        page_text = ""
-        if page_num not in (None, ""):
-            page_text = f"p{page_num}"
-        elif start_page not in (None, ""):
-            if end_page not in (None, "") and str(end_page) != str(start_page):
-                page_text = f"p{start_page}-{end_page}"
-            else:
-                page_text = f"p{start_page}"
-        query = _sanitize_text(row.get("query"), 80)
-        prefix = f"{query} -> " if query else ""
-        if page_text:
-            prefix = f"{page_text} {prefix}".strip() + " "
-        return f"{prefix}{snippet}".strip()
-
-    def _summarize_query_records(self, rows: list[dict[str, Any]], *, limit: int = 3) -> str:
-        """提炼前几条 query_record 形成可读摘要。"""
-        snippets: list[str] = []
-        for item in rows[: max(1, int(limit or 1))]:
-            if not isinstance(item, dict) or not bool(item.get("has_signal")):
-                continue
-            excerpt = self._format_query_record_excerpt(item)
-            if excerpt and excerpt not in snippets:
-                snippets.append(excerpt)
-        return " | ".join(snippets)[:700]
-
     def _detect_numeric_conflicts(self, rows: list[dict[str, Any]]) -> list[str]:
         """检测证据片段中是否存在明显数值冲突。"""
         percent_values: set[str] = set()
         for item in rows[:2]:
             if not isinstance(item, dict):
                 continue
-            content = str(item.get("result_content") or "")
+            content = str(item.get("content") or "")
             for matched in re.findall(r"\d+(?:\.\d+)?%", content):
                 percent_values.add(matched)
         if len(percent_values) > 1:
@@ -291,15 +315,15 @@ class UnifiedOrchestratorController:
                 or result_payload.get("summary"),
                 500,
             )
-            query_records: list[dict[str, Any]] = []
-            for record in _coerce_list(item.get("query_records"))[:4]:
-                normalized = self._normalize_query_record(record, default_agent=agent)
+            evidence: list[dict[str, Any]] = []
+            for evidence_item in _coerce_list(item.get("evidence"))[:6]:
+                normalized = self._normalize_evidence(evidence_item)
                 if normalized is not None:
-                    query_records.append(normalized)
+                    evidence.append(normalized)
             if summary and not _sanitize_text(result_payload.get("summary"), 500):
                 result_payload["summary"] = summary
-            if query_records and not _sanitize_text(result_payload.get("summary"), 500):
-                result_payload["summary"] = f"保留 {len(query_records)} 条相关检索记录"
+            if evidence and not _sanitize_text(result_payload.get("summary"), 500):
+                result_payload["summary"] = f"保留 {len(evidence)} 条相关 Evidence"
             for key in ("matched", "history_id", "user_question"):
                 if key in item and key not in result_payload:
                     result_payload[key] = item.get(key)
@@ -312,7 +336,7 @@ class UnifiedOrchestratorController:
                     ),
                     "subquery": _sanitize_text(item.get("subquery") or item.get("question"), 240),
                     "arguments": _coerce_dict(item.get("arguments")),
-                    "query_records": query_records,
+                    "evidence": evidence,
                     "result": {
                         "ok": bool(item.get("ok", True)),
                         "error": _sanitize_text(item.get("error"), 240),
@@ -334,11 +358,11 @@ class UnifiedOrchestratorController:
                     "action": _sanitize_text(row.get("action"), 32),
                     "subquery": _sanitize_text(row.get("subquery") or row.get("question"), 240),
                     "summary": self._summarize_observation_result(row),
-                    "query_records": [
+                    "evidence": [
                         normalized
                         for normalized in (
-                            self._normalize_query_record(record, default_agent=_sanitize_text(row.get("agent"), 24) or "unknown")
-                            for record in _coerce_list(row.get("query_records"))[:4]
+                            self._normalize_evidence(item)
+                            for item in _coerce_list(row.get("evidence"))[:6]
                         )
                         if normalized is not None
                     ],
@@ -403,7 +427,7 @@ class UnifiedOrchestratorController:
             f"用户问题：{question}\n\n"
             f"这是之前的问答情况：\n{qa_memory_text}\n\n"
             f"这是之前检索过的问题：\n{retrieval_index_text}\n\n"
-            "你可以直接回答，或把需要补证据的子问题交给 kg/rag 子agent。\n"
+            "你可以直接回答、读取历史 Evidence，或把需要补证据的子问题交给 kg/rag 子agent。\n"
             f"{final_rule}\n\n"
             "这是你目前已经拿到的工具/历史读取结果：\n"
             + "\n".join(observation_lines)
@@ -660,6 +684,14 @@ class UnifiedOrchestratorController:
     def _build_history_observation(self, action: dict[str, Any], tool_result: dict[str, Any]) -> dict[str, Any]:
         """将 history_read 工具结果包装成统一观测结构。"""
         payload = _coerce_dict(tool_result.get("result"))
+        evidence = [
+            normalized
+            for normalized in (
+                self._normalize_evidence(item)
+                for item in _coerce_list(payload.get("evidence"))
+            )
+            if normalized is not None
+        ]
         return {
             "agent": "history",
             "action": "call_history_read",
@@ -669,18 +701,18 @@ class UnifiedOrchestratorController:
                 "history_id": _sanitize_text(action.get("history_id"), 64),
                 "user_question": _sanitize_text(action.get("user_question"), 200),
             },
-            "query_records": payload.get("records") if isinstance(payload.get("records"), list) else [],
+            "evidence": evidence,
             "result": {
                 "ok": bool(tool_result.get("ok")),
                 "error": str(tool_result.get("error") or ""),
                 "result": {
                     "matched": bool(payload.get("matched")),
                     "summary": (
-                        f"读取到 {len(payload.get('records') or [])} 条历史检索记录"
+                        f"读取到 {len(evidence)} 条历史 Evidence"
                         if bool(payload.get("matched"))
                         else "未匹配到历史检索记录"
                     ),
-                    "records": payload.get("records") if isinstance(payload.get("records"), list) else [],
+                    "evidence_count": len(evidence),
                     "history_id": _sanitize_text(payload.get("history_id"), 64),
                     "user_question": _sanitize_text(payload.get("user_question"), 200),
                 },
@@ -697,8 +729,18 @@ class UnifiedOrchestratorController:
             )
             if normalized is not None
         ]
-        evidence_summary = self._summarize_query_records(query_records, limit=3)
-        risk_flags = self._detect_numeric_conflicts(query_records)
+        evidence = [
+            normalized
+            for normalized in (
+                self._normalize_evidence(
+                    item.model_dump() if isinstance(item, Evidence) else item
+                )
+                for item in result.evidence
+            )
+            if normalized is not None
+        ]
+        evidence_summary = self._summarize_evidence(evidence, limit=3)
+        risk_flags = self._detect_numeric_conflicts(evidence)
         return {
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
@@ -707,17 +749,18 @@ class UnifiedOrchestratorController:
             "subquery": _sanitize_text(result.question, 240),
             "arguments": {},
             "query_records": query_records,
+            "evidence": evidence,
             "result": {
                 "ok": True,
                 "error": "",
                 "result": {
-                    "summary": evidence_summary or f"signal={result.signal}; evidence_count={len(result.evidence)}; queries={len(result.queries_used)}",
+                    "summary": evidence_summary or f"signal={result.signal}; evidence_count={len(evidence)}; queries={len(result.queries_used)}",
                     "signal": result.signal,
                     "coverage": result.coverage,
                     "reason": result.reason,
                     "queries_used": result.queries_used,
                     "query_records": query_records,
-                    "evidence_count": len(result.evidence),
+                    "evidence_count": len(evidence),
                     "retrieval_risk_flags": risk_flags,
                 },
             },
@@ -752,30 +795,34 @@ class UnifiedOrchestratorController:
 
     def _build_evidence_summary(self, tool_observations: list[dict[str, Any]]) -> dict[str, Any]:
         """汇总工具观测中的证据覆盖信息。"""
-        query_records: list[dict[str, Any]] = []
+        evidence: list[dict[str, Any]] = []
         covered_topics: list[str] = []
         for row in tool_observations:
             if not isinstance(row, dict):
                 continue
-            for record in _coerce_list(row.get("query_records")):
-                if isinstance(record, dict) and bool(record.get("has_signal")):
-                    query_records.append(record)
+            for item in _coerce_list(row.get("evidence")):
+                normalized = self._normalize_evidence(item)
+                if normalized is not None:
+                    evidence.append(normalized)
             subquery = _sanitize_text(row.get("subquery"), 120)
             if subquery and subquery not in covered_topics:
                 covered_topics.append(subquery)
         supported_points = []
-        for item in query_records[:5]:
-            if not isinstance(item, dict):
-                continue
-            excerpt = self._format_query_record_excerpt(item)
+        citations: list[str] = []
+        for item in evidence[:5]:
+            excerpt = self._format_evidence_excerpt(item)
             if excerpt and excerpt not in supported_points:
                 supported_points.append(excerpt)
-        retrieval_risk_flags = self._detect_numeric_conflicts(query_records)
+            citation = self._evidence_citation_label(item)
+            if citation and citation not in citations:
+                citations.append(citation)
+        retrieval_risk_flags = self._detect_numeric_conflicts(evidence)
         return {
-            "answer_mode": "retrieval_augmented" if query_records else "direct_answer",
+            "answer_mode": "retrieval_augmented" if evidence else "direct_answer",
             "supported_points": supported_points,
+            "citations": citations,
             "covered_topics": covered_topics[:5],
-            "evidence_count": len(query_records),
+            "evidence_count": len(evidence),
             "retrieval_risk_flags": retrieval_risk_flags,
         }
 
@@ -804,7 +851,8 @@ class UnifiedOrchestratorController:
             "1. 直接回答问题，不要输出 JSON，不要解释推理过程。\n"
             "2. 如果证据不足，要明确说明不确定性，但仍基于现有信息给出谨慎回答。\n"
             "3. 优先使用已有检索证据，不要编造新的事实或来源。\n"
-            "4. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
+            "4. 引用来源时只能使用 Evidence 中提供的 source_id 和 page，格式为 [source_id p页码]；没有页码时使用 [source_id]。\n"
+            "5. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
         )
 
     def _build_final_answer_user_prompt(
@@ -1045,6 +1093,39 @@ class UnifiedOrchestratorController:
                 total_tokens += int(answer_tokens.get("total_tokens") or 0)
                 confidence = 0.9 if tool_observations else 0.7
                 break
+
+            if action_name == "call_history_read":
+                retrieval_round += 1
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "event": "history_read",
+                            "detail": "读取历史 Evidence",
+                            "tool_name": "history_read",
+                        }
+                    )
+                if self._mcp_gateway is None:
+                    from app.a2a.tool_gateway import MCPToolGateway
+
+                    self._mcp_gateway = MCPToolGateway(
+                        agent_type="orchestrator"
+                    )
+                history_id = _sanitize_text(action.get("history_id"), 64)
+                history_question = _sanitize_text(
+                    action.get("user_question"), 300
+                )
+                history_result = await self._mcp_gateway.invoke_tool(
+                    "history_read",
+                    {
+                        "session_id": safe_session_id,
+                        "history_id": history_id,
+                        "user_question": history_question,
+                    },
+                )
+                tool_observations.append(
+                    self._build_history_observation(action, history_result)
+                )
+                continue
 
             if action_name in {"call_kg", "call_rag"}:
                 retrieval_round += 1

@@ -31,28 +31,55 @@ vi.mock("../../shared/lib/observability", () => ({
   trackEvent: vi.fn(),
 }));
 
-// 模拟一次完整成功的 SSE 事件序列。
+// 模拟一次完整成功的 NDJSON 事件序列。
 async function* successfulStream() {
-  yield { type: "job" as const, job_id: "job-1" };
-  yield { type: "session" as const, session_id: "s1" };
-  yield { type: "persisted" as const, user_message_id: 11, assistant_message_id: 12 };
-  yield { type: "msg" as const, msg: "running orchestrator", stage: "orchestrator" };
-  yield { type: "reply" as const, msg: "基于当前知识库，建议规律监测血压。" };
-  yield { type: "done" as const, status: "succeeded" };
+  yield { type: "job" as const, job_id: "job-1", request_id: "req-1", task_id: "job-1" };
+  yield { type: "session" as const, session_id: "s1", user_message_id: 11 };
+  yield {
+    type: "msg" as const,
+    msg: "running orchestrator",
+    stage: "orchestrator" as const,
+    task_id: "job-1",
+  };
+  yield { type: "reply" as const, delta: "基于当前知识库，建议规律监测血压。", task_id: "job-1" };
+  yield {
+    type: "persisted" as const,
+    session_id: "s1",
+    user_message_id: 11,
+    assistant_message_id: 12,
+  };
+  yield {
+    type: "done" as const,
+    status: "done" as const,
+    task_id: "job-1",
+    traces: [],
+    processing_steps: [],
+    tool_observations: [],
+    evidence_summary: {},
+    telemetry: {},
+  };
 }
 
 async function* failedStream() {
   // 先产出进度事件再抛错，覆盖页面的失败反馈路径。
-  yield { type: "msg" as const, msg: "准备失败" };
+  yield { type: "msg" as const, msg: "准备失败", stage: "orchestrator" as const, task_id: "job-1" };
   throw new Error("问答流式请求失败");
 }
 
 async function* cumulativeReplyStream() {
-  yield { type: "session" as const, session_id: "s1" };
-  yield { type: "reply" as const, msg: "第一段" };
-  yield { type: "reply" as const, msg: "第一段第二段" };
-  yield { type: "reply" as const, msg: "第一段第二段" };
-  yield { type: "done" as const, status: "succeeded" };
+  yield { type: "session" as const, session_id: "s1", user_message_id: 11 };
+  yield { type: "reply" as const, delta: "第一段", task_id: "job-1" };
+  yield { type: "reply" as const, delta: "第二段", task_id: "job-1" };
+  yield {
+    type: "done" as const,
+    status: "done" as const,
+    task_id: "job-1",
+    traces: [],
+    processing_steps: [],
+    tool_observations: [],
+    evidence_summary: {},
+    telemetry: {},
+  };
 }
 
 describe("ChatWorkspacePage", () => {
@@ -135,7 +162,10 @@ describe("ChatWorkspacePage", () => {
 
     renderWithProviders(<ChatWorkspacePage />);
 
-    await user.upload(screen.getByLabelText("上传文件"), new File(["pdf"], "guide.pdf", { type: "application/pdf" }));
+    await user.upload(
+      screen.getByLabelText("上传文件"),
+      new File(["pdf"], "guide.pdf", { type: "application/pdf" }),
+    );
     await user.type(screen.getByRole("textbox", { name: "问题输入" }), "总结这个文件");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
@@ -163,7 +193,7 @@ describe("ChatWorkspacePage", () => {
     expect(await screen.findAllByText("问答流式请求失败")).not.toHaveLength(0);
   });
 
-  it("does not duplicate cumulative streaming reply chunks", async () => {
+  it("appends reply deltas exactly once", async () => {
     const user = userEvent.setup();
     sessionClientMocks.streamProcessWithSession.mockImplementation(cumulativeReplyStream);
     sessionClientMocks.getSession.mockResolvedValue({
@@ -208,7 +238,9 @@ describe("ChatWorkspacePage", () => {
 
     await user.click(screen.getByRole("button", { name: "重新发送" }));
 
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "问题输入" })).toHaveValue("高血压怎么管理？"));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "问题输入" })).toHaveValue("高血压怎么管理？"),
+    );
     expect(screen.getByText("已将消息重新写回输入框，可继续发送。")).toBeVisible();
   });
 });

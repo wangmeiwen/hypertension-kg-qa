@@ -742,6 +742,8 @@ class VectorStore:
             metadata["page_bias_bonus"] = float(page_bonus)
             metadata["content_match_bonus"] = float(content_bonus)
             metadata["final_rank_score"] = float(final_score)
+            retrieval_method = str(metadata["retrieval_method"]).strip()
+            metadata["retrieval_method"] = f"{retrieval_method}_rerank"
             doc.metadata = metadata
             ranked_rows.append((final_score, doc))
         ranked_rows.sort(key=lambda item: item[0], reverse=True)
@@ -861,7 +863,12 @@ class VectorStore:
             self._log_candidate_diagnostics("dense", query, dense_results)
 
             if not sparse_enabled:
-                sub_chunks = self._dedupe_sub_chunks([self._doc_from_hit(hit) for hit in dense_results])
+                sub_chunks = self._dedupe_sub_chunks(
+                    [
+                        self._doc_from_hit(hit, retrieval_method="dense")
+                        for hit in dense_results
+                    ]
+                )
                 reranked_sub_chunks = self._rerank_sub_chunks(query, sub_chunks, limit=min(len(sub_chunks), internal_limit))
                 self._log_candidate_diagnostics("rerank_dense_only", query, reranked_sub_chunks)
                 return reranked_sub_chunks[:final_limit]
@@ -886,7 +893,19 @@ class VectorStore:
             fused_entities = self._reciprocal_rank_fusion(dense_results, sparse_results)
             self._log_candidate_diagnostics("fused", query, fused_entities)
 
-            sub_chunks = self._dedupe_sub_chunks([self._doc_from_hit(entity) for entity in fused_entities])
+            sub_chunks = self._dedupe_sub_chunks(
+                [
+                    self._doc_from_hit(
+                        entity,
+                        retrieval_method=(
+                            "dense_sparse_rrf"
+                            if sparse_query_vector
+                            else "dense_rrf"
+                        ),
+                    )
+                    for entity in fused_entities
+                ]
+            )
             reranked_sub_chunks = self._rerank_sub_chunks(query, sub_chunks, limit=min(len(sub_chunks), internal_limit))
             self._log_candidate_diagnostics("rerank", query, reranked_sub_chunks)
             return reranked_sub_chunks[:final_limit]
@@ -921,12 +940,13 @@ class VectorStore:
             # 返回去重后的父文档列表
         return unique_docs
 
-    def _doc_from_hit(self, hit):
+    def _doc_from_hit(self, hit, *, retrieval_method):
         """
         将 Milvus 命中记录转换为 LangChain Document。
 
         Args:
             hit: Milvus 命中记录。
+            retrieval_method: 命中记录已执行的检索阶段。
 
         Returns:
             Document: 转换后的文档对象。
@@ -949,6 +969,7 @@ class VectorStore:
             "chunk_id": entity.get("chunk_id"),
             "parent_index": _safe_int(entity.get("parent_index")),
             "sub_index": _safe_int(entity.get("sub_index")),
+            "retrieval_method": str(retrieval_method).strip(),
         }
         if score is not None:
             try:

@@ -7,8 +7,9 @@ import uuid
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
+from app.backend.infrastructure.responses import ndjson_streaming_response
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.agent_run_service import AgentRunService
 from app.backend.services.readiness_service import ReadinessService
@@ -60,14 +61,13 @@ def create_query_chat_router(
         user_id = str(data.get("user_id") or "") or str(uuid.uuid4())
         session_id = str(data.get("session_id") or "")
 
-        return StreamingResponse(
+        return ndjson_streaming_response(
             event_stream_service.generate_data_lines(
                 input_text=input_text,
                 user_id=user_id,
                 session_id=session_id,
                 request_id=str(getattr(request.state, "request_id", "") or ""),
-            ),
-            media_type="text/plain",
+            )
         )
 
     @router.post("/agent/run")
@@ -91,10 +91,18 @@ def create_query_chat_router(
                 type(exc).__name__,
                 exc,
             )
-            return {"ok": False, "error": f"invalid_request:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"invalid_request:{str(exc)}",
+                "trace_id": trace_id,
+            }
 
         raw_max_turns = data.get("max_turns")
-        max_turns: Optional[int] = raw_max_turns if isinstance(raw_max_turns, int) and raw_max_turns > 0 else None
+        max_turns: Optional[int] = (
+            raw_max_turns
+            if isinstance(raw_max_turns, int) and raw_max_turns > 0
+            else None
+        )
 
         agent_run_service.bind_agent_trace_metadata(
             trace_id=trace_id,
@@ -133,7 +141,9 @@ def create_query_chat_router(
     async def process_with_session(data: dict, request: Request):
         """处理流式问答请求，并将用户问题和助手回答写入会话历史。"""
         trace_id = get_trace_id(request)
-        readiness_error = await readiness_service.ensure_core_ready("/process_with_session")
+        readiness_error = await readiness_service.ensure_core_ready(
+            "/process_with_session"
+        )
         if readiness_error is not None:
             return readiness_error
 
@@ -171,12 +181,16 @@ def create_query_chat_router(
             file_id=file_id,
         )
         if not bool(prepared.get("ok")):
-            return {"ok": False, "error": str(prepared.get("error") or "unknown"), "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": str(prepared.get("error") or "unknown"),
+                "trace_id": trace_id,
+            }
 
         request.state.user_id = str(prepared.get("user_id") or "")
         request.state.session_id = str(prepared.get("session_id") or "")
 
-        return StreamingResponse(
+        return ndjson_streaming_response(
             session_stream_service.generate_data_with_session_lines(
                 input_text=input_text,
                 user_id=str(prepared.get("user_id") or ""),
@@ -185,10 +199,15 @@ def create_query_chat_router(
                 file_id=file_id,
                 user_message_id=int(prepared.get("user_message_id") or 0),
                 request_id=str(getattr(request.state, "request_id", "") or ""),
-                original_input_text=str(prepared.get("original_input_text") or input_text or ""),
-                memory_context=prepared.get("memory_context") if isinstance(prepared.get("memory_context"), dict) else {},
-            ),
-            media_type="text/plain",
+                original_input_text=str(
+                    prepared.get("original_input_text") or input_text or ""
+                ),
+                memory_context=(
+                    prepared.get("memory_context")
+                    if isinstance(prepared.get("memory_context"), dict)
+                    else {}
+                ),
+            )
         )
 
     return router

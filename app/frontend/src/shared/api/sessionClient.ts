@@ -31,21 +31,35 @@ export async function createSession(userId: string, title = "新建会话"): Pro
 }
 
 export async function listSessions(userId: string, limit = 50): Promise<SessionRecord[]> {
-  return fetchJson(`/sessions?user_id=${encodeURIComponent(userId)}&limit=${limit}`, sessionListSchema, {}, {
-    fallbackMessage: "加载会话列表失败",
-  });
+  return fetchJson(
+    `/sessions?user_id=${encodeURIComponent(userId)}&limit=${limit}`,
+    sessionListSchema,
+    {},
+    {
+      fallbackMessage: "加载会话列表失败",
+    },
+  );
 }
 
 export async function getSession(sessionId: string | null, userId: string): Promise<SessionDetail> {
   if (!sessionId) {
     throw new Error("缺少会话 ID");
   }
-  return fetchJson(`/sessions/${sessionId}?user_id=${encodeURIComponent(userId)}`, sessionDetailSchema, {}, {
-    fallbackMessage: "加载会话失败",
-  });
+  return fetchJson(
+    `/sessions/${sessionId}?user_id=${encodeURIComponent(userId)}`,
+    sessionDetailSchema,
+    {},
+    {
+      fallbackMessage: "加载会话失败",
+    },
+  );
 }
 
-export async function updateSession(sessionId: string, userId: string, title: string): Promise<void> {
+export async function updateSession(
+  sessionId: string,
+  userId: string,
+  title: string,
+): Promise<void> {
   await fetchJson(
     `/sessions/${sessionId}`,
     z.record(z.string(), z.unknown()),
@@ -67,7 +81,11 @@ export async function deleteSession(sessionId: string, userId: string): Promise<
   );
 }
 
-export async function rollbackToQuestion(sessionId: string, userId: string, messageId: number): Promise<RollbackResult> {
+export async function rollbackToQuestion(
+  sessionId: string,
+  userId: string,
+  messageId: number,
+): Promise<RollbackResult> {
   return fetchJson(
     `/sessions/${sessionId}/rollback-to-question`,
     rollbackResultSchema,
@@ -96,7 +114,12 @@ export async function cancelQaJob(jobId: string, userId: string, sessionId: stri
 export async function uploadChatFile(file: File): Promise<UploadFileResult> {
   const formData = new FormData();
   formData.append("file", file);
-  return fetchJson("/upload_file", uploadFileResultSchema, { method: "POST", body: formData }, { fallbackMessage: "文件上传失败" });
+  return fetchJson(
+    "/upload_file",
+    uploadFileResultSchema,
+    { method: "POST", body: formData },
+    { fallbackMessage: "文件上传失败" },
+  );
 }
 
 export async function* streamProcessWithSession(
@@ -118,13 +141,7 @@ export async function* streamProcessWithSession(
   if (fileId) payload.file_id = fileId;
 
   for await (const line of fetchStream("/process_with_session", payload, "问答流式请求失败")) {
-    try {
-      // 标准 JSON 事件走 schema 校验；非 JSON 行降级为普通消息，避免流中断。
-      const json = JSON.parse(line) as unknown;
-      const event = streamEventSchema.parse(json);
-      yield event;
-    } catch {
-      yield { type: "msg", msg: line };
-    }
+    const json = JSON.parse(line) as unknown;
+    yield streamEventSchema.parse(json);
   }
 }

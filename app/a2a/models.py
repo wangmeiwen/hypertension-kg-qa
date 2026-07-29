@@ -4,10 +4,27 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 AgentType = Literal["kg", "rag"]
+
+
+class Evidence(BaseModel):
+    """跨 KG、RAG 和历史检索共享的证据契约。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: str = Field(default="")
+    source_id: str = Field(default="")
+    document_id: str = Field(default="")
+    chunk_id: str = Field(default="")
+    page: Optional[int] = Field(default=None)
+    section: str = Field(default="")
+    content: str = Field(default="")
+    score: Optional[float] = Field(default=None)
+    retrieval_method: str = Field(default="")
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class UserQuestion(BaseModel):
@@ -62,7 +79,7 @@ class SubAgentResult(BaseModel):
     queries_used: list[str] = Field(default_factory=list)
     query_records: list[dict[str, Any]] = Field(default_factory=list)
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
     signal: str = Field(default="none")
     coverage: dict[str, Any] = Field(default_factory=dict)
     missing_points: list[str] = Field(default_factory=list)
@@ -83,8 +100,8 @@ class SubAgentResult(BaseModel):
 class EvidenceBundle(BaseModel):
     """主代理证据池。"""
 
-    kg_evidence: list[dict[str, Any]] = Field(default_factory=list)
-    rag_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    kg_evidence: list[Evidence] = Field(default_factory=list)
+    rag_evidence: list[Evidence] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
 
 

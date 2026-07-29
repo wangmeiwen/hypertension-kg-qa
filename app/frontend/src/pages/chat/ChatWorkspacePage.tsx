@@ -24,7 +24,9 @@ const MAX_STREAM_REPLY_CHARS = 60000;
 const MAX_CHAT_UPLOAD_BYTES = 150 * 1024 * 1024;
 const STREAM_TRUNCATED_NOTICE = "\n\n[回答内容过长，前端已停止继续追加后续片段。]";
 
-function formatSessionMessages(session: Awaited<ReturnType<typeof getSession>> | undefined): UiMessage[] {
+function formatSessionMessages(
+  session: Awaited<ReturnType<typeof getSession>> | undefined,
+): UiMessage[] {
   // 将后端持久化消息字段转换为前端消息线程使用的 UI 模型。
   return (session?.messages || []).map((message) => ({
     id: message.id,
@@ -37,25 +39,6 @@ function formatSessionMessages(session: Awaited<ReturnType<typeof getSession>> |
 
 function appendUnique(values: string[], next: string): string[] {
   return values.includes(next) ? values : [...values, next];
-}
-
-function findChunkOverlap(current: string, next: string): number {
-  // 计算 current 尾部和 next 头部的最大重叠，避免重复 chunk 造成内容膨胀。
-  const maxOverlap = Math.min(current.length, next.length);
-  for (let size = maxOverlap; size > 0; size -= 1) {
-    if (current.endsWith(next.slice(0, size))) return size;
-  }
-  return 0;
-}
-
-function mergeReplyChunk(current: string, next: string): string {
-  // 兼容后端偶发发送累计全文、重复片段或正常 delta 三种情况。
-  if (!next) return current;
-  if (!current) return next;
-  if (next === current || current.endsWith(next)) return current;
-  if (next.startsWith(current)) return next;
-  const overlap = findChunkOverlap(current, next);
-  return `${current}${next.slice(overlap)}`;
 }
 
 export default function ChatWorkspacePage() {
@@ -129,8 +112,14 @@ export default function ChatWorkspacePage() {
   function resolveThinkLabel(raw: string, stage = ""): string {
     const lowered = `${raw} ${stage}`.toLowerCase();
     if (lowered.includes("memory")) return t("chat.thinkStatus.memory");
-    if (lowered.includes("orchestrator") || lowered.includes("planner")) return t("chat.thinkStatus.orchestration");
-    if (lowered.includes("retrieval") || lowered.includes("subagent") || lowered.includes("kg") || lowered.includes("rag")) {
+    if (lowered.includes("orchestrator") || lowered.includes("planner"))
+      return t("chat.thinkStatus.orchestration");
+    if (
+      lowered.includes("retrieval") ||
+      lowered.includes("subagent") ||
+      lowered.includes("kg") ||
+      lowered.includes("rag")
+    ) {
       return t("chat.thinkStatus.retrieval");
     }
     return t("chat.thinkStatus.answer");
@@ -220,7 +209,14 @@ export default function ChatWorkspacePage() {
       clearAttachment();
       trackEvent("chat_send", { sessionId: streamSessionId });
 
-      for await (const event of streamProcessWithSession(normalizedQuestion, userId, streamSessionId, imageBase64, fileName, fileId)) {
+      for await (const event of streamProcessWithSession(
+        normalizedQuestion,
+        userId,
+        streamSessionId,
+        imageBase64,
+        fileName,
+        fileId,
+      )) {
         // 流式事件分为任务、会话、持久化 ID、思考状态和回答增量。
         if (event.type === "job" && event.job_id) {
           setCurrentJobId(event.job_id);
@@ -236,12 +232,15 @@ export default function ChatWorkspacePage() {
           };
         }
         if (event.type === "msg") {
-          thinkStatuses = appendUnique(thinkStatuses, resolveThinkLabel(event.msg || "", event.stage));
+          thinkStatuses = appendUnique(
+            thinkStatuses,
+            resolveThinkLabel(event.msg || "", event.stage),
+          );
           thinkContent = thinkStatuses.join("\n");
         }
-        if (event.type === "reply" && event.msg) {
+        if (event.type === "reply") {
           if (!streamTruncated) {
-            const mergedReply = mergeReplyChunk(replyContent, event.msg);
+            const mergedReply = `${replyContent}${event.delta}`;
             if (mergedReply.length > MAX_STREAM_REPLY_CHARS) {
               replyContent = `${mergedReply.slice(0, MAX_STREAM_REPLY_CHARS)}${STREAM_TRUNCATED_NOTICE}`;
               streamTruncated = true;
@@ -249,6 +248,9 @@ export default function ChatWorkspacePage() {
               replyContent = mergedReply;
             }
           }
+        }
+        if (event.type === "error") {
+          throw new Error(event.message);
         }
         scheduleStreamMessageFlush();
       }
@@ -274,7 +276,9 @@ export default function ChatWorkspacePage() {
       setCurrentJobId("");
       if (streamSessionId) {
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions.list(userId) });
-        await queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(userId, streamSessionId) });
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.sessions.detail(userId, streamSessionId),
+        });
       }
     }
   }
@@ -322,7 +326,9 @@ export default function ChatWorkspacePage() {
       if (result.question) {
         setDraft(result.question);
       }
-      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(userId, currentSessionId) });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.sessions.detail(userId, currentSessionId),
+      });
       trackEvent("chat_rollback", { sessionId: currentSessionId, messageId: message.id });
     } catch (rollbackError) {
       reportFrontendError(rollbackError, "chat_rollback");

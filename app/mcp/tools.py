@@ -23,10 +23,11 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from app.a2a.agent.llm_client import LLMClient
+from app.a2a.evidence import build_kg_evidence, build_rag_evidence
+from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.config import Config
 from app.core.perf_logger import log_duration
-from app.a2a.agent.llm_client import LLMClient
-from app.backend.services.session_memory_service import SessionMemoryService
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.mcp.server import MCPServer, MCPTool
 from app.mcp.tool_manager import ToolManager
@@ -138,7 +139,7 @@ class KnowledgeGraphTool:
         - limit: 返回条数上限
 
         Returns:
-            dict[str, Any]: 标准查询结果。失败时返回 unavailable 结构。
+            dict[str, Any]: Evidence 查询结果。失败时返回 unavailable 结构。
         """
         cypher = (payload.get("cypher") or "").strip()
         keyword = (payload.get("keyword") or payload.get("question") or "").strip()
@@ -149,11 +150,28 @@ class KnowledgeGraphTool:
             if cypher:
                 lower = cypher.lower()
                 if any(token in lower for token in self.forbidden):
-                    return {"records": [], "blocked": True, "reason": "unsafe_cypher"}
+                    return {"evidence": [], "blocked": True, "reason": "unsafe_cypher"}
                 if not lower.startswith("match") and not lower.startswith("with"):
-                    return {"records": [], "blocked": True, "reason": "read_only_required"}
+                    return {
+                        "evidence": [],
+                        "blocked": True,
+                        "reason": "read_only_required",
+                    }
                 records = (await self.client.run_cypher(cypher))[:limit]
-                return {"records": records, "blocked": False}
+                return {
+                    "evidence": [
+                        build_kg_evidence(
+                            record,
+                            tool_name="kg_query",
+                            evidence_kind="record",
+                            retrieval_method="neo4j_cypher",
+                        )
+                        for record in records
+                        if isinstance(record, dict)
+                    ],
+                    "blocked": False,
+                    "mode": "cypher",
+                }
 
             if list_all_nodes:
                 records = await self.client.run_cypher(
@@ -164,14 +182,27 @@ class KnowledgeGraphTool:
                     """,
                     {"limit": limit},
                 )
-                return {"records": records, "blocked": False, "mode": "all_nodes"}
+                return {
+                    "evidence": [
+                        build_kg_evidence(
+                            record,
+                            tool_name="kg_query",
+                            evidence_kind="record",
+                            retrieval_method="neo4j_all_nodes",
+                        )
+                        for record in records
+                        if isinstance(record, dict)
+                    ],
+                    "blocked": False,
+                    "mode": "all_nodes",
+                }
 
             if not keyword:
-                return {"records": [], "blocked": False}
+                return {"evidence": [], "blocked": False}
 
             tokens = self._split_keyword_terms(keyword)
             if not tokens:
-                return {"records": [], "blocked": False}
+                return {"evidence": [], "blocked": False}
 
             records = await self.client.run_cypher(
                 """
@@ -207,11 +238,33 @@ class KnowledgeGraphTool:
                     {"limit": limit},
                 )
                 return {
-                    "records": fallback_records,
+                    "evidence": [
+                        build_kg_evidence(
+                            record,
+                            tool_name="kg_query",
+                            evidence_kind="record",
+                            retrieval_method="neo4j_keyword_fallback_all_nodes",
+                        )
+                        for record in fallback_records
+                        if isinstance(record, dict)
+                    ],
                     "blocked": False,
                     "mode": "keyword_fallback_all_nodes",
                 }
-            return {"records": records, "blocked": False}
+            return {
+                "evidence": [
+                    build_kg_evidence(
+                        record,
+                        tool_name="kg_query",
+                        evidence_kind="record",
+                        retrieval_method="neo4j_keyword",
+                    )
+                    for record in records
+                    if isinstance(record, dict)
+                ],
+                "blocked": False,
+                "mode": "keyword",
+            }
         except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
             logger.exception(
                 "kg_query_failed: dependency=neo4j error_type=%s error=%s",
@@ -219,7 +272,7 @@ class KnowledgeGraphTool:
                 exc,
             )
             return {
-                "records": [],
+                "evidence": [],
                 "blocked": False,
                 "unavailable": True,
                 "dependency": "neo4j",
@@ -230,7 +283,7 @@ class KnowledgeGraphTool:
 class RagSearchTool:
     """RAG 向量检索工具。
 
-    基于共享向量库执行混合检索与重排，输出统一 hits 结构。
+    基于共享向量库执行混合检索与重排，输出统一 Evidence 结构。
     """
 
     def __init__(self, conf: Config):
@@ -249,7 +302,7 @@ class RagSearchTool:
             payload: 调用参数，支持 query/question、top_k、source_filter。
 
         Returns:
-            dict[str, Any]: 包含 hits 数组的结果对象。
+            dict[str, Any]: 包含 evidence 数组的结果对象。
         """
         query = (payload.get("query") or payload.get("question") or "").strip()
         top_k = int(payload.get("top_k") or self.conf.RAG_SEARCH_TOP_K_DEFAULT)
@@ -259,7 +312,7 @@ class RagSearchTool:
         if source_filter == "":
             source_filter = None
         if not query:
-            return {"hits": []}
+            return {"evidence": []}
         try:
             docs = await self.vector_store.hybrid_search_with_rerank(
                 query=query,
@@ -267,7 +320,7 @@ class RagSearchTool:
                 source_filter=source_filter,
             )
 
-            hits = []
+            evidence = []
             total = len(docs)
             for idx, doc in enumerate(docs):
                 metadata = doc.metadata if isinstance(doc.metadata, dict) else {}
@@ -278,23 +331,29 @@ class RagSearchTool:
                     rank_score = metadata.get("search_score")
                 if rank_score is None:
                     rank_score = (total - idx) / total if total > 0 else 0.0
-                hits.append(
-                    {
-                        "id": metadata.get("chunk_id") or metadata.get("parent_id") or idx + 1,
-                        "score": round(rank_score, 6),
-                        "text": doc.page_content,
-                        "source": metadata.get("source"),
-                        "timestamp": metadata.get("timestamp"),
-                        "parent_content": metadata.get("parent_content", doc.page_content),
-                        "page_num": metadata.get("page_num"),
-                        "start_page": metadata.get("start_page"),
-                        "end_page": metadata.get("end_page"),
-                        "chunk_id": metadata.get("chunk_id"),
-                        "parent_index": metadata.get("parent_index"),
-                        "sub_index": metadata.get("sub_index"),
-                    }
+                evidence.append(
+                    build_rag_evidence(
+                        {
+                            "id": metadata.get("chunk_id")
+                            or metadata.get("parent_id")
+                            or idx + 1,
+                            "score": round(rank_score, 6),
+                            "text": doc.page_content,
+                            "source": metadata.get("source"),
+                            "document_id": metadata.get("document_id"),
+                            "parent_id": metadata.get("parent_id"),
+                            "timestamp": metadata.get("timestamp"),
+                            "page_num": metadata.get("page_num"),
+                            "start_page": metadata.get("start_page"),
+                            "end_page": metadata.get("end_page"),
+                            "chunk_id": metadata.get("chunk_id"),
+                            "parent_index": metadata.get("parent_index"),
+                            "sub_index": metadata.get("sub_index"),
+                            "retrieval_method": metadata["retrieval_method"],
+                        }
+                    )
                 )
-            return {"hits": hits}
+            return {"evidence": evidence}
         except Exception as exc:
             logger.exception(
                 "rag_search_failed: dependency=milvus error_type=%s error=%s",
@@ -302,7 +361,7 @@ class RagSearchTool:
                 exc,
             )
             return {
-                "hits": [],
+                "evidence": [],
                 "unavailable": True,
                 "dependency": "milvus",
                 "reason": f"milvus_unavailable:{exc}",
@@ -451,7 +510,7 @@ class KgEntityRelationSearchTool:
                 消歧与社区检测开关等扩展项。
 
         Returns:
-            dict[str, Any]: 结构化实体关系检索结果。
+            dict[str, Any]: Evidence 实体关系检索结果。
         """
         query = (payload.get("query") or payload.get("keyword") or "").strip()
         top_k = int(payload.get("top_k") or payload.get("limit") or self.conf.KG_RETRIEVAL_TOP_K_DEFAULT)
@@ -464,9 +523,12 @@ class KgEntityRelationSearchTool:
         disambiguation_margin = float(payload.get("disambiguation_margin") or self.conf.KG_DISAMBIGUATION_MARGIN_DEFAULT)
 
         if not query:
-            return {"entities": [], "relationships": [], "collection_name": self.store.collection_name}
+            return {
+                "evidence": [],
+                "collection_name": self.store.collection_name,
+            }
         try:
-            return await self.store.search_entity_relations(
+            result = await self.store.search_entity_relations(
                 query=query,
                 top_k=top_k,
                 lexical_weight=lexical_weight,
@@ -477,6 +539,48 @@ class KgEntityRelationSearchTool:
                 disambiguation_margin=disambiguation_margin,
                 disambiguation_resolver=self._resolve_disambiguation_with_llm,
             )
+            entities_obj = result.get("entities")
+            entities = entities_obj if isinstance(entities_obj, list) else []
+            relationships_obj = result.get("relationships")
+            relationships = (
+                relationships_obj if isinstance(relationships_obj, list) else []
+            )
+            provenance_context = {
+                "collection_name": result.get("collection_name"),
+                "retrieval_meta": result.get("retrieval_meta"),
+            }
+            evidence = [
+                build_kg_evidence(
+                    item,
+                    tool_name="kg_entity_relation_search",
+                    evidence_kind="entity",
+                    provenance_context=provenance_context,
+                )
+                for item in entities
+                if isinstance(item, dict)
+            ]
+            evidence.extend(
+                build_kg_evidence(
+                    item,
+                    tool_name="kg_entity_relation_search",
+                    evidence_kind="relationship",
+                    provenance_context=provenance_context,
+                )
+                for item in relationships
+                if isinstance(item, dict)
+            )
+            response = {
+                key: value
+                for key, value in result.items()
+                if key
+                not in {
+                    "entities",
+                    "relationships",
+                    "disambiguated_entities",
+                }
+            }
+            response["evidence"] = evidence
+            return response
         except Exception as exc:
             logger.exception(
                 "kg_entity_relation_search_failed: dependency=milvus error_type=%s error=%s",
@@ -484,8 +588,7 @@ class KgEntityRelationSearchTool:
                 exc,
             )
             return {
-                "entities": [],
-                "relationships": [],
+                "evidence": [],
                 "collection_name": self.store.collection_name,
                 "unavailable": True,
                 "dependency": "milvus",
@@ -514,9 +617,17 @@ class HistoryReadTool:
         history_id = str(payload.get("history_id") or "").strip()
         user_question = str(payload.get("user_question") or "").strip()
         if not session_id:
-            return {"matched": False, "records": [], "error": "session_id_required"}
+            return {
+                "matched": False,
+                "evidence": [],
+                "error": "session_id_required",
+            }
         if not history_id and not user_question:
-            return {"matched": False, "records": [], "error": "history_id_or_user_question_required"}
+            return {
+                "matched": False,
+                "evidence": [],
+                "error": "history_id_or_user_question_required",
+            }
         return await self._memory.read_retrieval_history(
             session_id=session_id,
             history_id=history_id,
@@ -625,7 +736,7 @@ def build_mcp_server() -> MCPServer:
             Returns:
                 dict[str, Any]: 标记 unavailable 的空结果。
             """
-            return {"hits": [], "unavailable": True, "reason": message}
+            return {"evidence": [], "unavailable": True, "reason": message}
 
     builtin_registry["rag_search"] = {
         "description": "基于Milvus进行向量检索，返回相关片段",
@@ -680,17 +791,16 @@ def build_mcp_server() -> MCPServer:
                 payload: 工具输入参数字典（降级场景下不使用）。
 
             Returns:
-                dict[str, Any]: 标记 unavailable 的空实体/关系结果。
+                dict[str, Any]: 标记 unavailable 的空 Evidence 结果。
             """
             return {
-                "entities": [],
-                "relationships": [],
+                "evidence": [],
                 "unavailable": True,
                 "reason": message,
             }
 
     builtin_registry["kg_entity_relation_search"] = {
-        "description": "基于知识图谱专用Milvus集合检索并返回实体与关系",
+        "description": "基于知识图谱专用 Milvus 集合检索并返回统一 Evidence",
         "input_schema": {
             "query": "str",
             "top_k": "int?",
@@ -718,7 +828,7 @@ def build_mcp_server() -> MCPServer:
         return await history_read_tool.query(payload)
 
     builtin_registry["history_read"] = {
-        "description": "读取当前会话中某个历史检索问题对应的 query 与结果内容",
+        "description": "读取当前会话中某个历史检索问题对应的 Evidence",
         "input_schema": {
             "session_id": "str",
             "history_id": "str?",
