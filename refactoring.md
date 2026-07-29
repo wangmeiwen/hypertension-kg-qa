@@ -306,7 +306,7 @@ page/workspace
 - 后端 CI 的触发范围扩展到全部 Python 源文件，并固定执行 Black、Ruff、mypy 和异步 pytest；各门禁使用独立步骤，失败位置可直接定位。
 - 本地验收：Black 检查 163 个文件通过，Ruff 全部通过，mypy 检查 139 个源文件 0 errors，非数据库自动化测试 93 passed、3 deselected。
 
-### P1：图谱质量治理（进行中）
+### P1：图谱质量治理（工程实现已完成，领域验收待复核）
 
 建立高血压领域本体、别名归一、关系方向、来源、时间和置信度约束；抽取结果先进入 staging，通过质量门槛后再写正式图。
 
@@ -345,7 +345,7 @@ page/workspace
 - 前端 TypeScript、ESLint、模块边界、Stylelint、目标文件 Prettier 和 Vite 生产构建通过。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 
-后续验收：
+领域验收（不阻断工程重构收口）：
 
 - 重复实体率
 - 孤立节点率
@@ -355,7 +355,7 @@ page/workspace
 - 用真实 Neo4j 快照计算全图指标，并与单块 staging 指标区分。
 - 由领域人员复核并扩充别名表、关系签名和金标多跳路径。
 
-### P1：检索消融与评测（进行中）
+### P1：检索消融与评测（工程实现已完成，领域验收待复核）
 
 第一批已完成：
 
@@ -376,7 +376,7 @@ page/workspace
 - Python 类型检查：`mypy app` 检查 144 个源文件，0 errors。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 
-后续验收：
+领域验收（不阻断工程重构收口）：
 
 - 由至少两名领域人员复核问题、年份、口径、参考答案和金标 Evidence ID。
 - 在同一 Milvus/Neo4j 快照上采集六种模式的完整运行结果并生成版本化报告。
@@ -472,12 +472,12 @@ page/workspace
 
 - 为升级前缺少 `source_hash` 的历史 Milvus 行提供只读审计和显式清理工具，不自动按同名文件删除。
 
-### P2：可观测性与安全（进行中）
+### P2：可观测性与安全（已完成）
 
 - [x] request/session/turn/agent/tool/LLM/job 使用统一 trace id。
 - [x] token 和耗时在产生源记录并向上聚合。
 - [x] 管理接口增加更细粒度权限、审计和速率限制。
-- 增加依赖扫描、密钥扫描和容器镜像扫描。
+- [x] 增加依赖扫描、密钥扫描和容器镜像扫描。
 - [x] 对上传文件执行 MIME、扩展名、大小、页数和解压炸弹检查。
 
 上传安全第一批：
@@ -535,6 +535,38 @@ page/workspace
 - 统一 43 个历史文件的 Prettier 格式，不包含行为变更。
 - Prettier、TypeScript、ESLint、边界检查和 Stylelint 全部通过。
 - 前端组件与契约测试 76 passed，Vite 生产构建通过。
+
+安全与运行时第四批：
+
+- Python 主依赖通过 `pip-audit`；Ragas 离线评估依赖单独审计，只对不经过本项目文本评估路径的多模态 URL 风险和当前用户独占缓存目录风险做精确编号豁免。
+- 前端增加高危/严重漏洞门禁；仅接受 ESLint/Workbox 构建期固定 glob 和未启用的 React Router RSC Server Action 两项范围受控的上游通告，其他高危或严重通告会直接失败。
+- 增加 `detect-secrets` 基线和 CI 密钥扫描，基线只记录测试、CI 与演示占位值，不纳入真实凭据。
+- 增加 Trivy 镜像矩阵，固定 MySQL、Neo4j、Milvus、etcd 和 MinIO 镜像版本；临时例外同时绑定 CVE、镜像内文件路径和到期时间。
+- 将 SQLAlchemy MySQL 异步驱动从 `asyncmy` 迁移为 `aiomysql`，补齐应用关闭时的引擎释放，并修复单元测试意外访问真实 MySQL 的边界遗漏。
+- 升级 FastAPI、Starlette、LangChain/LangGraph、OpenAI、Transformers、PyTorch 与前端 Vite/Router/Vitest 等依赖；Conda `hypertension-qa` 环境保持 CUDA 可用，`pip check` 无破损依赖。
+- 确定性 E2E 后端补齐图谱质量报告契约；前端测试脚本显式管理后端与 Vite 生命周期，解决 Windows 下 Playwright 多 WebServer 回收悬挂。
+
+第四批质量门禁：
+
+- 后端非数据库自动化测试：141 passed，3 deselected；真实 MySQL、Neo4j、Milvus 测试：3 passed。
+- Python 格式检查：Black 检查 191 个文件，全部通过；Ruff 全部通过；mypy 检查 155 个源文件，0 errors。
+- Python 主依赖审计无已知漏洞；Ragas 两项限定场景通告按精确编号记录并隔离。
+- 前端 Prettier、TypeScript、ESLint、模块边界、Stylelint 和生产构建通过。
+- 前端测试：25 个测试文件、81 项测试通过；全局覆盖率为 statements 75.84%、branches 60.76%、functions 74.11%、lines 77.24%。
+- Playwright 确定性浏览器 E2E：7 passed，服务进程可正常回收。
+- 前端依赖门禁通过；密钥基线扫描通过；五个固定容器镜像的严重漏洞扫描通过。
+
+## 工程重构收口（2026-07-29）
+
+本路线中的 P0、P1、P2 工程任务已经完成：核心契约、图谱任务拆分、格式与类型基线、图谱质量计算、检索消融框架、流式补偿、存储版本管理、可观测性和安全门禁均已有实现与自动化验证。当前不存在需要继续保留的新旧双实现。
+
+仍需外部角色完成的工作不属于代码重构完成度：
+
+- 医学领域人员复核并扩充本体别名、关系签名和金标多跳路径。
+- 在冻结的真实 Milvus/Neo4j 快照上采集六种检索模式结果，并对 30 题评估集补齐稳定 Evidence ID 和领域复核记录。
+- 在发布或生产部署前，由部署负责人提供独立密钥、备份恢复演练、容量压测和安全响应流程。
+
+因此，“项目重构完成”表示工程路线和质量门禁收口，不表示医疗有效性、真实问答质量、生产容量或合规性已经得到证明。
 
 ## 每阶段完成标准
 

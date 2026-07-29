@@ -39,7 +39,7 @@ flowchart LR
 
 | 层级 | 技术 |
 | --- | --- |
-| 后端 | Python, FastAPI, SQLAlchemy, asyncmy, A2A SDK |
+| 后端 | Python, FastAPI, SQLAlchemy, aiomysql, A2A SDK |
 | Agent | LangChain, LangGraph, MCP Tools |
 | 图谱 | Neo4j, Cypher, PyMilvus graph collection |
 | 检索 | Milvus, sentence-transformers, reranker |
@@ -74,7 +74,7 @@ flowchart LR
 ## 环境要求
 
 - Python 3.11+
-- Node.js 20+
+- Node.js 20.19+ 或 22.12+
 - npm 10+
 - MySQL 8+
 - Neo4j 5+
@@ -235,24 +235,29 @@ npm run dev
 后端：
 
 ```powershell
-pytest
+python -m pytest tests/automated -m "not db"
+python -m pytest tests/automated -m db
 ruff check app tests
 black --check app tests
 mypy app
+python -m pip_audit -r requirements.txt
 ```
 
 前端：
 
 ```powershell
 cd app/frontend
+npm run format:check
 npm run lint
 npm run typecheck
-npm run test
+npm run stylelint
+npm run test:coverage
 npm run test:e2e
 npm run build
+npm run security:audit
 ```
 
-部分测试依赖真实数据库、Neo4j、Milvus 或本地模型。没有外部依赖时，可优先运行单元测试或使用 deterministic 测试入口。
+`-m db` 测试要求真实 MySQL、Neo4j 和 Milvus 可用。`npm run test:e2e` 会启动确定性后端与 Vite，并要求当前 Python 命令来自已安装后端依赖的环境；使用本项目时应先激活 Conda `hypertension-qa`。组件测试和确定性 E2E 通过不等于真实数据库、模型效果或医疗质量已经验证。
 
 ## 数据与模型
 
@@ -277,6 +282,8 @@ npm run build
 ## 安全说明
 
 请不要提交真实 API key、数据库密码、患者隐私数据或未授权医学资料。发现安全问题时，请通过私有渠道联系维护者，不要在公开 issue 中披露敏感细节。
+
+仓库通过独立安全工作流执行 Python/前端依赖审计、`detect-secrets` 基线扫描和固定容器镜像的 Trivy 严重漏洞扫描。范围受控的临时例外分别记录在前端审计脚本、Ragas 独立依赖文件和 [.trivyignore.yaml](./.trivyignore.yaml) 中；例外必须绑定具体通告及适用路径，容器例外还必须设置到期时间，不能用全局忽略替代修复。
 
 ## 许可证
 
