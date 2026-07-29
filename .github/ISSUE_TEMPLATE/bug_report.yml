@@ -1,0 +1,60 @@
+name: 缺陷报告
+description: 报告可复现的软件缺陷
+title: "[Bug] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。安全漏洞请使用仓库 Security 页面中的私有报告入口，不要在此披露密钥、患者信息或利用细节。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 issue，未找到相同问题
+          required: true
+        - label: 我已移除日志、截图和配置中的敏感信息
+          required: true
+        - label: 这不是安全漏洞或紧急医疗问题
+          required: true
+  - type: input
+    id: commit
+    attributes:
+      label: 提交号
+      description: 运行 `git rev-parse --short HEAD` 获取
+      placeholder: 例如 0c8b3ed
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: 操作系统、Python、Node.js，以及相关 MySQL、Neo4j、Milvus 版本
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 提供最小、稳定、已脱敏的复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 可以附加已脱敏的错误日志
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 相关接口、模块、截图或可能原因

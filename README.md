@@ -4,10 +4,15 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/frontend-React-61dafb.svg)](https://react.dev/)
+[![backend](https://github.com/wangmeiwen/hypertension-kg-qa/actions/workflows/backend.yml/badge.svg)](https://github.com/wangmeiwen/hypertension-kg-qa/actions/workflows/backend.yml)
+[![frontend](https://github.com/wangmeiwen/hypertension-kg-qa/actions/workflows/frontend.yml/badge.svg)](https://github.com/wangmeiwen/hypertension-kg-qa/actions/workflows/frontend.yml)
+[![security](https://github.com/wangmeiwen/hypertension-kg-qa/actions/workflows/security.yml/badge.svg)](https://github.com/wangmeiwen/hypertension-kg-qa/actions/workflows/security.yml)
 
 HypertensionKG QA System 是一个面向高血压领域的知识图谱问答系统。项目以 FastAPI 和 React 为应用层，结合 Neo4j 知识图谱、Milvus 向量检索、MySQL 会话存储、A2A 子代理编排和 LangGraph 工作流，用于构建可追溯、可观测、可管理的医学问答应用。
 
 > 本项目仅用于研究、教学和工程验证，不构成医疗建议。任何健康相关决策都应咨询具备资质的医疗专业人员。
+
+> 项目当前处于预发布阶段，尚未完成临床验证、生产容量验证或稳定版本发布。
 
 ## 功能特性
 
@@ -37,15 +42,15 @@ flowchart LR
 
 ## 技术栈
 
-| 层级 | 技术 |
-| --- | --- |
-| 后端 | Python, FastAPI, SQLAlchemy, aiomysql, A2A SDK |
-| Agent | LangChain, LangGraph, MCP Tools |
-| 图谱 | Neo4j, Cypher, PyMilvus graph collection |
-| 检索 | Milvus, sentence-transformers, reranker |
-| 文档 | Docling, PyMuPDF, pdfplumber, python-docx, OCR |
-| 前端 | React, Vite, React Router, TanStack Query, Zustand |
-| 测试 | pytest, Vitest, Playwright, Ruff, Black, mypy |
+| 层级  | 技术                                               |
+| ----- | -------------------------------------------------- |
+| 后端  | Python, FastAPI, SQLAlchemy, aiomysql, A2A SDK     |
+| Agent | LangChain, LangGraph, MCP Tools                    |
+| 图谱  | Neo4j, Cypher, PyMilvus graph collection           |
+| 检索  | Milvus, sentence-transformers, reranker            |
+| 文档  | Docling, PyMuPDF, pdfplumber, python-docx, OCR     |
+| 前端  | React, Vite, React Router, TanStack Query, Zustand |
+| 测试  | pytest, Vitest, Playwright, Ruff, Black, mypy      |
 
 ## 目录结构
 
@@ -69,7 +74,13 @@ flowchart LR
 └─ README.md
 ```
 
-项目演进和经验总结见 [project_retrospective.md](./project_retrospective.md)，复盘后的重构决策、当前边界和后续验收标准见 [refactoring.md](./refactoring.md)。
+项目文档：
+
+- [project_retrospective.md](./project_retrospective.md)：项目演进、问题与经验总结；
+- [refactoring.md](./refactoring.md)：重构决策、当前边界和后续验收标准；
+- [OPEN_SOURCE_AUDIT.md](./OPEN_SOURCE_AUDIT.md)：开源治理、数据授权与仓库卫生审计；
+- [CONTRIBUTING.md](./CONTRIBUTING.md)：开发、测试和贡献流程；
+- [SECURITY.md](./SECURITY.md)：安全漏洞私有报告流程。
 
 ## 环境要求
 
@@ -89,7 +100,7 @@ Neo4j 和 Milvus 不可用时，后端可以降级启动，但图谱与检索能
 ### 1. 克隆项目
 
 ```powershell
-git clone git@github.com:wangmeiwen/hypertension-kg-qa.git
+git clone https://github.com/wangmeiwen/hypertension-kg-qa.git
 cd hypertension-kg-qa
 ```
 
@@ -261,30 +272,26 @@ npm run security:audit
 
 ## 数据与模型
 
-项目默认读取以下本地资源：
+项目可以读取以下本地资源：
 
-- `data/`：领域文档、图谱元数据或评估数据。
+- `data/`：本地领域文档、图谱元数据或评估数据。
 - `model/bge-m3`：本地嵌入模型。
 - `model/bge-reranker-large`：本地重排模型。
 
-这些目录可能包含较大的数据和模型文件。公开分发时建议只保留必要样例，并通过环境变量指向本地私有资源。
+仓库不分发第三方医学全文、模型权重或私有评估数据。公开可访问不等于允许再次分发，使用者应自行获取资料并遵守来源授权。具体目录约定和指南来源见 [data/README.md](./data/README.md)。
 
 ## 贡献指南
 
-欢迎通过 issue 或 pull request 参与改进。提交前请尽量完成：
-
-1. 保持变更聚焦，避免混入无关格式化。
-2. 为行为变化补充测试。
-3. 运行相关后端或前端检查。
-4. 不提交 `.env`、日志、缓存、模型权重或私有数据。
-5. 在 PR 描述中说明动机、主要改动和验证方式。
+欢迎通过 issue 或 pull request 参与改进。开发环境、测试范围、提交要求和数据授权约束见 [CONTRIBUTING.md](./CONTRIBUTING.md)。参与项目即表示同意遵守 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)。
 
 ## 安全说明
 
-请不要提交真实 API key、数据库密码、患者隐私数据或未授权医学资料。发现安全问题时，请通过私有渠道联系维护者，不要在公开 issue 中披露敏感细节。
+请不要提交真实 API key、数据库密码、患者隐私数据或未授权医学资料。发现安全问题时，请按照 [SECURITY.md](./SECURITY.md) 使用 GitHub 私有漏洞报告入口，不要在公开 issue 中披露敏感细节。
 
 仓库通过独立安全工作流执行 Python/前端依赖审计、`detect-secrets` 基线扫描和固定容器镜像的 Trivy 严重漏洞扫描。范围受控的临时例外分别记录在前端审计脚本、Ragas 独立依赖文件和 [.trivyignore.yaml](./.trivyignore.yaml) 中；例外必须绑定具体通告及适用路径，容器例外还必须设置到期时间，不能用全局忽略替代修复。
 
 ## 许可证
 
 本项目采用 [Apache License 2.0](./LICENSE)。
+
+该许可证只覆盖仓库中由项目贡献者创作并提交的代码和文档；第三方医学资料、数据、模型和商标仍受各自条款约束。使用帮助见 [SUPPORT.md](./SUPPORT.md)。

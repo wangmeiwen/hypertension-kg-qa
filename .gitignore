@@ -70,7 +70,7 @@ Thumbs.db
 *.cache
 /tmp/
 /app/frontend/runtime_cache/
-/runtime_cache/defense_ppt/
+/runtime_cache/
 /docs/
 
 # Test coverage
@@ -87,7 +87,9 @@ htmlcov/
 /.codex_tmp/
 /.claude/
 /pytest_tmp_run/
-/data/
+/data/*
+!/data/README.md
+!/data/kg_schema_metadata.json
 /model/
 
 # Private academic materials
