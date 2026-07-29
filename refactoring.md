@@ -476,7 +476,7 @@ page/workspace
 
 - request/session/turn/agent/tool/LLM/job 使用统一 trace id。
 - token 和耗时在产生源记录并向上聚合。
-- 管理接口增加更细粒度权限、审计和速率限制。
+- [x] 管理接口增加更细粒度权限、审计和速率限制。
 - 增加依赖扫描、密钥扫描和容器镜像扫描。
 - [x] 对上传文件执行 MIME、扩展名、大小、页数和解压炸弹检查。
 
@@ -493,6 +493,22 @@ page/workspace
 - Python 格式检查：Black 检查 186 个文件，全部通过。
 - Python 规范检查：`ruff check app tests` 通过。
 - Python 类型检查：`mypy app` 检查 152 个源文件，0 errors。
+
+管理端安全第二批：
+
+- 管理员会话显式绑定权限集合，管理路由统一按 `runtime/storage/sessions/observability/documents/graph` 资源及 `read/write/operate` 动作鉴权。
+- 图谱只读 Cypher 归入读取权限；文档上传、图谱抽取和向量嵌入归入高成本操作权限，不再与普通读取共享配额。
+- 复用线程安全滑动窗口限流器，按“管理员 + 权限”限流：读取 120 次、写入 30 次、高成本操作 6 次，窗口沿用后端统一配置。
+- 新增 `admin_audit.v1` 结构化审计事件，记录 trace、管理员、方法、路径、权限、决策、状态和耗时；不记录查询值、请求正文、令牌或文件内容。
+- 集成测试覆盖权限映射、登录会话权限、越权 403、高成本操作 429 和审计敏感值排除。
+
+第二批质量门禁：
+
+- 后端自动化测试：141 passed。
+- Python 格式检查：Black 检查 189 个文件，全部通过。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 154 个源文件，0 errors。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
 
 ## 每阶段完成标准
 

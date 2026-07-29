@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.migrations.mysql import MYSQL_MIGRATIONS
 from app.backend.migrations.neo4j import NEO4J_MIGRATIONS
 from app.backend.routers.admin_storage import create_admin_storage_router
@@ -92,7 +92,7 @@ def test_storage_schema_report_marks_all_compatible_contracts() -> None:
 def test_storage_schema_route_returns_report_for_admin() -> None:
     app = FastAPI()
     app.include_router(create_admin_storage_router(_service()))
-    app.dependency_overrides[require_admin_login] = lambda: None
+    app.dependency_overrides[require_admin_access] = lambda: None
     client = TestClient(app)
     response = client.get("/admin/storage/schema-report")
 

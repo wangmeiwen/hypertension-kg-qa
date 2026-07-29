@@ -6,13 +6,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.admin_runtime_service import AdminRuntimeService
 
 
 def create_admin_runtime_router(service: AdminRuntimeService) -> APIRouter:
     """创建管理员运行时路由。"""
-    router = APIRouter(dependencies=[Depends(require_admin_login)])
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
 
     @router.get("/admin/runtime/flags")
     async def admin_runtime_flags() -> dict[str, Any]:

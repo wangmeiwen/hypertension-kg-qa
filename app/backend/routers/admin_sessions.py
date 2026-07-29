@@ -6,13 +6,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.admin_sessions_service import AdminSessionsService
 
 
 def create_admin_sessions_router(service: AdminSessionsService) -> APIRouter:
     """创建管理员会话路由。"""
-    router = APIRouter(dependencies=[Depends(require_admin_login)])
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
 
     @router.get("/admin/sessions")
     async def admin_get_sessions(limit: int = 100, offset: int = 0) -> dict[str, Any]:

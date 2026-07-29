@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.infrastructure.errors import UnauthorizedError
 
 
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 
 def allow_admin(app: FastAPI) -> None:
     """在测试 app 中绕过管理员登录依赖。"""
-    app.dependency_overrides[require_admin_login] = lambda: None
+    app.dependency_overrides[require_admin_access] = lambda: None
 
 
 def install_unauthorized_handler(app: FastAPI) -> None:

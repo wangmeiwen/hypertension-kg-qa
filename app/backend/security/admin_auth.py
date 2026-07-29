@@ -20,6 +20,8 @@ import time
 from contextvars import ContextVar, Token
 from typing import Any, Dict, Optional
 
+from app.backend.security.admin_access import ADMIN_ALL_PERMISSIONS
+
 
 DEFAULT_ADMIN = {
     "username": os.getenv("ADMIN_USERNAME", ""),
@@ -99,6 +101,7 @@ def verify_login(username: str, password: str) -> Optional[str]:
         "username": username,
         "issued_at": now,
         "expires_at": now + SESSION_TTL_SECONDS,
+        "permissions": sorted(ADMIN_ALL_PERMISSIONS),
     }
     return token
 

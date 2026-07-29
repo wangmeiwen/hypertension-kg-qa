@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.routers.admin_documents import create_admin_documents_router
 
 
@@ -36,7 +36,7 @@ def create_client(service: DocumentsServiceStub) -> TestClient:
     """构建只挂载 admin documents router 的测试客户端。"""
     app = FastAPI()
     app.include_router(create_admin_documents_router(service))
-    app.dependency_overrides[require_admin_login] = lambda: None
+    app.dependency_overrides[require_admin_access] = lambda: None
     return TestClient(app)
 
 

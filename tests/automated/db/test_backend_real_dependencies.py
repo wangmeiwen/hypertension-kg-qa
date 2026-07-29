@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backend.app_factory import BackendAppTestOverrides, create_app
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
 from app.backend.testing.deterministic_support import (
     DeterministicA2AService,
@@ -59,7 +59,7 @@ def _build_real_fastapi_app(
         get_shared_vector_store=get_shared_vector_store,
     )
     app = create_app(test_overrides=overrides)
-    app.dependency_overrides[require_admin_login] = lambda: None
+    app.dependency_overrides[require_admin_access] = lambda: None
     return app
 
 

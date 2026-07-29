@@ -14,6 +14,11 @@ def unauthorized_response(message: str = "未登录") -> JSONResponse:
     return JSONResponse(status_code=401, content={"ok": False, "error": message})
 
 
+def forbidden_response(message: str = "权限不足") -> JSONResponse:
+    """构造 403 响应。"""
+    return JSONResponse(status_code=403, content={"ok": False, "error": message})
+
+
 def not_found_response(message: str = "资源不存在") -> JSONResponse:
     """构造 404 响应。"""
     return JSONResponse(status_code=404, content={"ok": False, "error": message})

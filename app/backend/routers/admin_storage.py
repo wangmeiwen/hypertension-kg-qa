@@ -6,13 +6,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.storage_schema_service import StorageSchemaService
 
 
 def create_admin_storage_router(service: StorageSchemaService) -> APIRouter:
     """创建只读存储诊断路由。"""
-    router = APIRouter(dependencies=[Depends(require_admin_login)])
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
 
     @router.get("/admin/storage/schema-report")
     async def get_storage_schema_report() -> dict[str, Any]:

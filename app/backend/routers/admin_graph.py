@@ -6,13 +6,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.graph_admin_service import GraphAdminService
 
 
 def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
     """创建管理员图谱路由。"""
-    router = APIRouter(dependencies=[Depends(require_admin_login)])
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
 
     @router.get("/admin/graph/labels")
     async def get_graph_labels() -> dict[str, Any]:

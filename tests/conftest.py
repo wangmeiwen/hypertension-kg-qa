@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.backend.app_factory import BackendAppTestOverrides, create_app
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.startup_runtime_service import (
     StartupRuntimeBehavior,
 )
@@ -193,7 +193,7 @@ def app_client_factory() -> Callable[..., TestClient]:
             )
         app = create_app(test_overrides=resolved_overrides)
         if require_admin:
-            app.dependency_overrides[require_admin_login] = lambda: None
+            app.dependency_overrides[require_admin_access] = lambda: None
         return TestClient(app)
 
     return _factory

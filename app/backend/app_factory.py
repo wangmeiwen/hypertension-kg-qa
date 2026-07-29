@@ -25,8 +25,16 @@ from app.backend.dependencies.guards import (
 from app.backend.dependencies.request_context import (
     get_trace_id as _resolve_trace_id_from_request,
 )
-from app.backend.infrastructure.errors import UnauthorizedError
-from app.backend.infrastructure.responses import unauthorized_response
+from app.backend.infrastructure.errors import (
+    ForbiddenError,
+    RateLimitedError,
+    UnauthorizedError,
+)
+from app.backend.infrastructure.responses import (
+    forbidden_response,
+    rate_limited_response,
+    unauthorized_response,
+)
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
 from app.backend.middleware.request_timing import request_timing_middleware
 from app.backend.routers.a2a import create_a2a_router
@@ -309,6 +317,23 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         _: Request, exc: UnauthorizedError
     ) -> JSONResponse:
         return unauthorized_response(str(exc) or "未登录")
+
+    @app.exception_handler(ForbiddenError)
+    async def _handle_forbidden_error(_: Request, exc: ForbiddenError) -> JSONResponse:
+        return forbidden_response(str(exc))
+
+    @app.exception_handler(RateLimitedError)
+    async def _handle_rate_limited_error(
+        _: Request, exc: RateLimitedError
+    ) -> JSONResponse:
+        return rate_limited_response(
+            endpoint=exc.endpoint,
+            dimension=exc.dimension,
+            retry_after_ms=exc.retry_after_ms,
+            trace_id=exc.trace_id,
+            limit=exc.limit,
+            window_seconds=exc.window_seconds,
+        )
 
     app.add_middleware(
         CORSMiddleware,
