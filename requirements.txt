@@ -82,7 +82,7 @@ httpcore==1.0.9
 pandas==2.3.3
 numpy==2.4.3
 pyarrow==23.0.1
-pillow==12.1.1
+pillow==12.3.0
 networkx==3.5
 igraph==0.11.9
 leidenalg==0.10.2
