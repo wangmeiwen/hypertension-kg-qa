@@ -28,6 +28,7 @@ import threading
 import uuid
 from typing import Any
 
+from app.a2a.telemetry import normalize_token_usage
 from app.core.concurrency import concurrency_guard
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ _SESSION_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 _USER_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
     "user_id", default=""
+)
+_TURN_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "turn_id", default=""
 )
 
 _WRITE_LOCK = threading.Lock()
@@ -429,6 +433,21 @@ def get_request_id() -> str:
     return _REQUEST_ID_CTX.get()
 
 
+def set_turn_context(turn_id: str) -> contextvars.Token[str]:
+    """设置当前问答轮次 ID。"""
+    return _TURN_ID_CTX.set(str(turn_id))
+
+
+def reset_turn_context(token: contextvars.Token[str]) -> None:
+    """重置当前问答轮次 ID。"""
+    _TURN_ID_CTX.reset(token)
+
+
+def get_turn_id() -> str:
+    """获取当前问答轮次 ID。"""
+    return _TURN_ID_CTX.get()
+
+
 def get_session_id() -> str:
     """
     获取当前会话 ID。
@@ -587,6 +606,7 @@ def log_api_call(
     payload = {
         "ts": _utc_now(),
         "request_id": str(request_id or ""),
+        "trace_id": str(request_id or ""),
         "method": str(method or ""),
         "path": str(path or ""),
         "status_code": int(status_code),
@@ -641,8 +661,12 @@ def log_llm_call(
     """
     sid = _safe_id(session_id)
     ensure_session_meta(sid, get_user_id())
+    turn_id = get_turn_id()
     max_chars = _max_content_chars()
     req_id = get_request_id()
+    resolved_trace_id = str(trace_id).strip()
+    if not resolved_trace_id:
+        resolved_trace_id = req_id
 
     messages_masked = _mask_sensitive(messages)
     include_content = _include_llm_content()
@@ -659,7 +683,8 @@ def log_llm_call(
     payload = {
         "ts": _utc_now(),
         "request_id": req_id,
-        "trace_id": str(trace_id or ""),
+        "trace_id": resolved_trace_id,
+        "turn_id": turn_id,
         "session_id": sid,
         "user_id": get_user_id(),
         "model": str(model or ""),
@@ -713,14 +738,19 @@ def log_session_op(
     """
     sid = _safe_id(session_id)
     ensure_session_meta(sid, get_user_id())
+    turn_id = get_turn_id()
+    if not turn_id:
+        turn_id = f"{sid}:{int(turn)}"
     day_file = (
         _sessions_dir() / sid / "ops" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
     )
     payload = {
         "ts": _utc_now(),
         "request_id": get_request_id(),
+        "trace_id": get_request_id(),
         "session_id": sid,
         "user_id": get_user_id(),
+        "turn_id": turn_id,
         "turn": int(turn),
         "stage": str(stage or ""),
         "action": str(action or ""),
@@ -745,6 +775,7 @@ def log_tool_event(
     duration_ms: float,
     fallback_used: bool = False,
     blocked_reason: str = "",
+    token_usage: dict[str, Any] | None = None,
 ) -> None:
     """
     记录工具调用事件。
@@ -759,26 +790,34 @@ def log_tool_event(
         duration_ms: 耗时毫秒。
         fallback_used: 是否使用回退策略。
         blocked_reason: 阻断原因。
+        token_usage: 工具内部模型调用产生的 token 统计。
 
     Returns:
         None。
     """
     sid = _safe_id(session_id)
     ensure_session_meta(sid, get_user_id())
+    turn_id = get_turn_id()
+    if not turn_id:
+        turn_id = f"{sid}:{int(turn)}"
+    normalized_tokens = normalize_token_usage(token_usage)
     day_file = (
         _sessions_dir() / sid / "tools" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
     )
     payload = {
         "ts": _utc_now(),
         "request_id": get_request_id(),
+        "trace_id": get_request_id(),
         "session_id": sid,
         "user_id": get_user_id(),
+        "turn_id": turn_id,
         "turn": int(turn),
         "tool_name": str(tool_name or ""),
         "arguments": _mask_sensitive(arguments),
         "result_ok": bool(result_ok),
         "has_signal": bool(has_signal),
         "duration_ms": round(float(duration_ms), 2),
+        "token_usage": normalized_tokens,
         "fallback_used": bool(fallback_used),
         "blocked_reason": str(blocked_reason or ""),
     }

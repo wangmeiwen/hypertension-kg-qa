@@ -1140,6 +1140,7 @@ async def test_a2a_runtime_service_lazy_init_and_subagent_queries(monkeypatch) -
             "output": kwargs["input_text"],
             "session_id": kwargs["session_id"],
             "user_id": kwargs["user_id"],
+            "trace_id": kwargs["trace_id"],
             "strategy": kwargs["strategy"],
             "memory_context": kwargs["memory_context"],
         }
@@ -1166,12 +1167,14 @@ async def test_a2a_runtime_service_lazy_init_and_subagent_queries(monkeypatch) -
         metadata={
             "session_id": "s1",
             "user_id": "u1",
+            "trace_id": "trace-1",
             "strategy": "iterative",
             "memory_context": {"qa_pairs": []},
         },
     )
     assert main_result["session_id"] == "s1"
     assert main_result["user_id"] == "u1"
+    assert main_result["trace_id"] == "trace-1"
 
     progress_events: list[dict[str, Any]] = []
     graph_result = await service._run_graph_a2a_query(

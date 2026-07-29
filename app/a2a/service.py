@@ -153,17 +153,23 @@ class A2AService:
                 return
             events_obj = task.get("events")
             events = events_obj if isinstance(events_obj, list) else []
+            metadata_obj = event.get("metadata")
+            metadata: dict[str, Any] = (
+                metadata_obj if isinstance(metadata_obj, dict) else {}
+            )
+            trace_id = str(event.get("trace_id") or metadata.get("trace_id") or "")
+            duration_ms = event.get("duration_ms")
+            if duration_ms is None:
+                duration_ms = metadata.get("duration_ms")
             events.append(
                 {
                     "ts": int(time.time() * 1000),
                     "event": str(event.get("event") or ""),
                     "detail": str(event.get("detail") or ""),
                     "tool_name": str(event.get("tool_name") or ""),
-                    "metadata": (
-                        event.get("metadata")
-                        if isinstance(event.get("metadata"), dict)
-                        else {}
-                    ),
+                    "trace_id": trace_id,
+                    "duration_ms": duration_ms,
+                    "metadata": metadata,
                 }
             )
             task["events"] = events
@@ -308,6 +314,9 @@ class A2AService:
             None: 无返回值。
         """
         progress_events: list[dict[str, Any]] = []
+        pending_progress_tasks: set[asyncio.Task[None]] = set()
+        started = time.perf_counter()
+        task_trace_id = ""
 
         def _progress_callback(event: dict[str, Any]) -> None:
             """收集并转发进度事件。
@@ -319,8 +328,20 @@ class A2AService:
                 None: 无返回值。
             """
             row = event if isinstance(event, dict) else {}
+            if task_trace_id:
+                row = {**row, "trace_id": task_trace_id}
             progress_events.append(row)
-            asyncio.create_task(self._append_event(task_id, row))
+            append_task = asyncio.create_task(self._append_event(task_id, row))
+            pending_progress_tasks.add(append_task)
+            append_task.add_done_callback(pending_progress_tasks.discard)
+
+        async def _flush_progress_events() -> None:
+            """等待同步回调调度的事件写入任务快照。"""
+            if pending_progress_tasks:
+                await asyncio.gather(
+                    *tuple(pending_progress_tasks),
+                    return_exceptions=True,
+                )
 
         def _cancel_check() -> bool:
             """查询任务取消状态。
@@ -350,6 +371,7 @@ class A2AService:
                 user_id = str(task.get("userId") or "")
                 metadata_obj = task.get("metadata")
                 metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
+                task_trace_id = str(metadata.get("trace_id") or "").strip()
 
             parsed = RequestContextParser.parse_message(message)
             query_kwargs = {
@@ -366,6 +388,7 @@ class A2AService:
                 result = await result_obj
             else:
                 result = result_obj
+            await _flush_progress_events()
 
             if await self._is_task_marked_canceled(task_id):
                 await self._set_status(task_id, state="canceled", text="task_canceled")
@@ -375,12 +398,36 @@ class A2AService:
                         "event": "task_canceled",
                         "detail": "task canceled",
                         "tool_name": "a2a",
-                        "metadata": {},
+                        "metadata": {
+                            "trace_id": task_trace_id,
+                            "duration_ms": round(
+                                (time.perf_counter() - started) * 1000.0,
+                                2,
+                            ),
+                        },
                     },
                 )
                 return
 
             parsed_result = result if isinstance(result, dict) else {}
+            telemetry_obj = parsed_result.get("telemetry")
+            telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
+            telemetry["trace_id"] = task_trace_id
+            telemetry["duration_ms"] = round(
+                (time.perf_counter() - started) * 1000.0,
+                2,
+            )
+            parsed_result["telemetry"] = telemetry
+            tool_observations_obj = parsed_result.get("tool_observations")
+            if isinstance(tool_observations_obj, list):
+                parsed_result["tool_observations"] = [
+                    (
+                        {**observation, "trace_id": task_trace_id}
+                        if isinstance(observation, dict)
+                        else observation
+                    )
+                    for observation in tool_observations_obj
+                ]
             artifacts = self._build_artifacts(parsed_result, progress_events)
             output = str(parsed_result.get("output") or "")
             output_type = str(parsed_result.get("output_type") or "")
@@ -399,6 +446,8 @@ class A2AService:
                             "output": output,
                             "output_type": output_type,
                             "confidence": confidence,
+                            "trace_id": task_trace_id,
+                            "duration_ms": telemetry["duration_ms"],
                         },
                     ),
                     "updatedAt": int(time.time() * 1000),
@@ -413,11 +462,14 @@ class A2AService:
                     "metadata": {
                         "output_type": output_type,
                         "confidence": confidence,
+                        "trace_id": task_trace_id,
+                        "duration_ms": telemetry["duration_ms"],
                     },
                 },
             )
 
         except asyncio.CancelledError:
+            await _flush_progress_events()
             await self._set_status(task_id, state="canceled", text="task_canceled")
             await self._append_event(
                 task_id,
@@ -425,11 +477,18 @@ class A2AService:
                     "event": "task_canceled",
                     "detail": "task canceled by cancellation",
                     "tool_name": "a2a",
-                    "metadata": {},
+                    "metadata": {
+                        "trace_id": task_trace_id,
+                        "duration_ms": round(
+                            (time.perf_counter() - started) * 1000.0,
+                            2,
+                        ),
+                    },
                 },
             )
             raise
         except Exception as exc:
+            await _flush_progress_events()
             logger.exception(
                 "a2a_task_failed: task_id=%s error_type=%s error=%s",
                 task_id,
@@ -440,7 +499,15 @@ class A2AService:
                 task_id,
                 state="failed",
                 text="task_failed",
-                metadata={"error": str(exc), "error_type": type(exc).__name__},
+                metadata={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "trace_id": task_trace_id,
+                    "duration_ms": round(
+                        (time.perf_counter() - started) * 1000.0,
+                        2,
+                    ),
+                },
             )
             await self._append_event(
                 task_id,
@@ -448,7 +515,14 @@ class A2AService:
                     "event": "task_failed",
                     "detail": str(exc),
                     "tool_name": "a2a",
-                    "metadata": {"error_type": type(exc).__name__},
+                    "metadata": {
+                        "error_type": type(exc).__name__,
+                        "trace_id": task_trace_id,
+                        "duration_ms": round(
+                            (time.perf_counter() - started) * 1000.0,
+                            2,
+                        ),
+                    },
                 },
             )
 
@@ -467,6 +541,7 @@ class A2AService:
         message_obj = message if isinstance(message, dict) else {}
         metadata_obj = message_obj.get("metadata")
         metadata = metadata_obj if isinstance(metadata_obj, dict) else {}
+        submitted_trace_id = str(trace_id or metadata.get("trace_id") or "")
 
         task_id = self._new_task_id()
         now_ms = int(time.time() * 1000)
@@ -481,13 +556,14 @@ class A2AService:
             "userId": user_id,
             "metadata": {
                 **metadata,
-                "trace_id": str(trace_id or metadata.get("trace_id") or ""),
+                "trace_id": submitted_trace_id,
             },
             "message": copy.deepcopy(message_obj),
             "status": {
                 "state": "submitted",
                 "message": self._build_status_message(
-                    text="task_submitted", metadata={}
+                    text="task_submitted",
+                    metadata={"trace_id": submitted_trace_id},
                 ),
                 "updatedAt": now_ms,
             },
@@ -497,7 +573,9 @@ class A2AService:
                     "event": "task_submitted",
                     "detail": "task submitted",
                     "tool_name": "a2a",
-                    "metadata": {},
+                    "metadata": {
+                        "trace_id": submitted_trace_id,
+                    },
                 }
             ],
             "artifacts": [],
@@ -507,13 +585,13 @@ class A2AService:
             "task_loop": asyncio.get_running_loop(),
         }
 
+        async with self._lock:
+            self._tasks[task_id] = task_payload
+
         async_task = asyncio.create_task(
             self._run_task(task_id), name=f"a2a-task-{task_id}"
         )
         task_payload["async_task"] = async_task
-
-        async with self._lock:
-            self._tasks[task_id] = task_payload
 
         return self._public_task_payload(task_payload)
 

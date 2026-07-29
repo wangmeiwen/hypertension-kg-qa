@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 from uuid import uuid4
 
+from app.backend.observability.session_logger import get_request_id
 from app.backend.repositories.database import fetch_all, fetch_one
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class BackgroundJobRuntimeMixin:
         """裁剪对外 job 响应。"""
         return {
             "job_id": job["job_id"],
+            "trace_id": job["trace_id"],
             "job_type": job["job_type"],
             "status": job["status"],
             "labels": job.get("labels"),
@@ -55,6 +57,7 @@ class BackgroundJobRuntimeMixin:
             "created_at": job.get("created_at"),
             "started_at": job.get("started_at"),
             "finished_at": job.get("finished_at"),
+            "duration_ms": job.get("duration_ms"),
             "stage": job.get("stage"),
             "stage_detail": job.get("stage_detail") or "",
             "stage_started_at": job.get("stage_started_at"),
@@ -150,12 +153,14 @@ class BackgroundJobRuntimeMixin:
             job_id = f"graph-job-{uuid4().hex}"
             job: dict[str, Any] = {
                 "job_id": job_id,
+                "trace_id": get_request_id(),
                 "job_type": job_type,
                 "status": self.JOB_STATUS_QUEUED,
                 "progress_text": "任务已提交，等待执行",
                 "created_at": self._utc_now_iso(),
                 "started_at": None,
                 "finished_at": None,
+                "duration_ms": None,
                 "stage": None,
                 "stage_detail": "",
                 "stage_started_at": None,
@@ -354,7 +359,16 @@ class BackgroundJobRuntimeMixin:
             if started and not job.get("started_at"):
                 job["started_at"] = self._utc_now_iso()
             if finished:
-                job["finished_at"] = self._utc_now_iso()
+                finished_at = self._utc_now_iso()
+                job["finished_at"] = finished_at
+                started_at = self._parse_utc_iso(
+                    job["started_at"] if job["started_at"] else job["created_at"]
+                )
+                finished_dt = self._parse_utc_iso(finished_at)
+                if started_at is not None and finished_dt is not None:
+                    job["duration_ms"] = int(
+                        (finished_dt - started_at).total_seconds() * 1000
+                    )
 
     def _mark_current_trace_finished(
         self, job: dict[str, Any], status: str, error: Optional[str] = None
@@ -411,6 +425,7 @@ class BackgroundJobRuntimeMixin:
             trace = job.setdefault("trace", [])
             trace.append(
                 {
+                    "trace_id": job["trace_id"],
                     "stage": stage,
                     "detail": detail or "",
                     "status": "running",

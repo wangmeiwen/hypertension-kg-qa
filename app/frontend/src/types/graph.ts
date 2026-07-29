@@ -99,6 +99,7 @@ export interface GraphJobResult extends UnknownRecord {
 
 export interface GraphJob extends UnknownRecord {
   job_id: string;
+  trace_id?: string;
   job_type?: string;
   status: string;
   message?: string;
@@ -117,6 +118,7 @@ export interface GraphJob extends UnknownRecord {
   stage_started_at?: string;
   last_heartbeat_at?: string;
   finished_at?: string;
+  duration_ms?: number;
   created_at?: string;
   chunk_limit?: number;
   batch_size?: number;

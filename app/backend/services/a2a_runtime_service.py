@@ -119,6 +119,7 @@ class A2ARuntimeService:
         meta = metadata if isinstance(metadata, dict) else {}
         session_id = str(context_id or meta.get("session_id") or "").strip()
         safe_user_id = str(user_id or meta.get("user_id") or "").strip()
+        trace_id = str(meta.get("trace_id") or "").strip()
         strategy = (
             str(meta.get("strategy") or "iterative").strip().lower() or "iterative"
         )
@@ -144,6 +145,7 @@ class A2ARuntimeService:
             input_text=str(input_text or ""),
             session_id=session_id,
             user_id=safe_user_id,
+            trace_id=trace_id,
             strategy=strategy,
             max_turns=max_turns,
             image_data=image_data,

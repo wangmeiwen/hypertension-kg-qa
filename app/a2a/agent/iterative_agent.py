@@ -51,6 +51,7 @@ class IterativeAgent:
         input_text: str,
         session_id: str = "",
         user_id: str = "",
+        trace_id: str = "",
         strategy: str = "iterative",
         max_turns: Optional[int] = None,
         image_data: str = "",
@@ -66,6 +67,7 @@ class IterativeAgent:
             input_text: 当前需要回答的用户问题。
             session_id: 会话 ID，用于关联历史和运行追踪。
             user_id: 用户 ID，用于区分不同用户上下文。
+            trace_id: 当前请求的端到端追踪 ID。
             strategy: 编排策略名称，默认使用 iterative 迭代策略。
             max_turns: 最大编排轮次；为空时读取配置并受上限约束。
             image_data: 可选图片数据，透传给编排执行器。
@@ -112,7 +114,7 @@ class IterativeAgent:
             input_text=str(input_text or "").strip(),
             session_id=str(session_id or "").strip(),
             user_id=str(user_id or "").strip(),
-            trace_id="",
+            trace_id=str(trace_id).strip(),
             strategy=str(strategy or "iterative").strip() or "iterative",
             max_turns=turns,
             image_data=str(image_data or "").strip(),

@@ -17,6 +17,11 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.models import Evidence, SubAgentConstraints, SubTask
+from app.a2a.telemetry import (
+    empty_token_usage,
+    merge_token_usage,
+    normalize_token_usage,
+)
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
@@ -741,6 +746,7 @@ class UnifiedOrchestratorController:
     ) -> dict[str, Any]:
         """将 history_read 工具结果包装成统一观测结构。"""
         payload = _coerce_dict(tool_result.get("result"))
+        meta = _coerce_dict(tool_result.get("meta"))
         evidence = [
             normalized
             for normalized in (
@@ -760,6 +766,8 @@ class UnifiedOrchestratorController:
                 "history_id": _sanitize_text(action.get("history_id"), 64),
                 "user_question": _sanitize_text(action.get("user_question"), 200),
             },
+            "duration_ms": float(meta.get("duration_ms") or 0.0),
+            "token_usage": normalize_token_usage(meta.get("token_usage")),
             "evidence": evidence,
             "result": {
                 "ok": bool(tool_result.get("ok")),
@@ -808,6 +816,7 @@ class UnifiedOrchestratorController:
         ]
         evidence_summary = self._summarize_evidence(evidence, limit=3)
         risk_flags = self._detect_numeric_conflicts(evidence)
+        telemetry = result.telemetry if isinstance(result.telemetry, dict) else {}
         return {
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
@@ -815,6 +824,8 @@ class UnifiedOrchestratorController:
             "requested_tool_name": "",
             "subquery": _sanitize_text(result.question, 240),
             "arguments": {},
+            "duration_ms": float(telemetry.get("duration_ms") or 0.0),
+            "token_usage": normalize_token_usage(result.token_usage),
             "query_records": query_records,
             "evidence": evidence,
             "result": {
@@ -1054,7 +1065,8 @@ class UnifiedOrchestratorController:
         processing_steps: list[str],
         retrieval_round: int,
         max_turns: int,
-        total_tokens: int,
+        token_usage: dict[str, int],
+        trace_id: str,
         compression_state: dict[str, Any],
     ) -> dict[str, Any]:
         """构建超预算中止场景的统一返回结构。"""
@@ -1071,7 +1083,8 @@ class UnifiedOrchestratorController:
                 "controller_mode": "explicit_memory_with_subagents",
                 "retrieval_round": retrieval_round,
                 "max_turns": max_turns,
-                "total_tokens": total_tokens,
+                "trace_id": trace_id,
+                **token_usage,
                 "final_source": "prompt_budget_guard",
                 **self._build_budget_telemetry(compression_state),
             },
@@ -1084,6 +1097,7 @@ class UnifiedOrchestratorController:
         input_text: str,
         session_id: str = "",
         user_id: str = "",
+        trace_id: str = "",
         max_turns: int = 3,
         image_data: str = "",
         file_id: str = "",
@@ -1094,6 +1108,7 @@ class UnifiedOrchestratorController:
         _ = user_id
         safe_question = str(input_text or "").strip()
         safe_session_id = str(session_id or "").strip()
+        safe_trace_id = str(trace_id or "").strip()
         safe_memory = memory_context if isinstance(memory_context, dict) else {}
         qa_memory_text = str(safe_memory.get("qa_memory_text") or "当前暂无问答对")
         retrieval_index_text = str(
@@ -1111,7 +1126,7 @@ class UnifiedOrchestratorController:
 
         tool_observations: list[dict[str, Any]] = []
         processing_steps: list[str] = ["已加载显式 QA 记忆与历史检索问题索引"]
-        total_tokens = 0
+        token_usage = empty_token_usage()
         retrieval_round = 0
         final_answer = ""
         confidence = 0.2
@@ -1156,10 +1171,11 @@ class UnifiedOrchestratorController:
                     processing_steps=processing_steps,
                     retrieval_round=retrieval_round,
                     max_turns=safe_max_turns,
-                    total_tokens=total_tokens,
+                    token_usage=token_usage,
+                    trace_id=safe_trace_id,
                     compression_state=compression_state,
                 )
-            total_tokens += int(tokens.get("total_tokens") or 0)
+            merge_token_usage(token_usage, tokens)
             action_name = str(action.get("action") or "").strip()
             processing_steps.append(
                 f"第 {turn_index} 轮主控决策：{action_name or 'unknown'}；原因：{_sanitize_text(action.get('reason'), 160) or '无'}"
@@ -1176,7 +1192,7 @@ class UnifiedOrchestratorController:
                     file_id=str(file_id or "").strip(),
                     progress_callback=progress_callback,
                 )
-                total_tokens += int(answer_tokens.get("total_tokens") or 0)
+                merge_token_usage(token_usage, answer_tokens)
                 confidence = 0.9 if tool_observations else 0.7
                 break
 
@@ -1204,6 +1220,10 @@ class UnifiedOrchestratorController:
                         "user_question": history_question,
                     },
                 )
+                merge_token_usage(
+                    token_usage,
+                    _coerce_dict(history_result.get("meta")).get("token_usage"),
+                )
                 tool_observations.append(
                     self._build_history_observation(action, history_result)
                 )
@@ -1225,6 +1245,7 @@ class UnifiedOrchestratorController:
                     max_tool_calls=safe_tool_calls,
                 )
                 result = await self._subagent_client.send_task(task)
+                merge_token_usage(token_usage, result.token_usage)
                 tool_observations.append(
                     self._build_subagent_observation(result, action)
                 )
@@ -1256,10 +1277,11 @@ class UnifiedOrchestratorController:
                     processing_steps=processing_steps,
                     retrieval_round=retrieval_round,
                     max_turns=safe_max_turns,
-                    total_tokens=total_tokens,
+                    token_usage=token_usage,
+                    trace_id=safe_trace_id,
                     compression_state=compression_state,
                 )
-            total_tokens += int(tokens.get("total_tokens") or 0)
+            merge_token_usage(token_usage, tokens)
             final_answer, answer_tokens = await self._stream_final_answer(
                 question=safe_question,
                 qa_memory_text=qa_memory_text,
@@ -1270,7 +1292,7 @@ class UnifiedOrchestratorController:
                 file_id=str(file_id or "").strip(),
                 progress_callback=progress_callback,
             )
-            total_tokens += int(answer_tokens.get("total_tokens") or 0)
+            merge_token_usage(token_usage, answer_tokens)
             if not final_answer:
                 final_answer = (
                     "当前基于已有问答记忆和检索记录，仍缺少足够证据给出更确定的回答。"
@@ -1290,7 +1312,8 @@ class UnifiedOrchestratorController:
                 "controller_mode": "explicit_memory_with_subagents",
                 "retrieval_round": retrieval_round,
                 "max_turns": safe_max_turns,
-                "total_tokens": total_tokens,
+                "trace_id": safe_trace_id,
+                **token_usage,
                 "final_source": "controller",
                 **self._build_budget_telemetry(compression_state),
             },

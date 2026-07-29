@@ -325,6 +325,7 @@ export const graphJobSchema = z
   .object({
     // 图谱任务 schema 覆盖构建、重建、嵌入等后台任务的通用观测字段。
     job_id: z.string(),
+    trace_id: z.string().optional(),
     job_type: z.string().optional(),
     status: taskStatusSchema.or(z.string()),
     message: z.string().optional(),
@@ -343,6 +344,7 @@ export const graphJobSchema = z
     created_at: z.string().optional(),
     started_at: z.string().optional(),
     finished_at: z.string().optional(),
+    duration_ms: z.number().optional(),
     last_heartbeat_at: z.string().optional(),
     stage_started_at: z.string().optional(),
     total_chars: z.number().optional(),

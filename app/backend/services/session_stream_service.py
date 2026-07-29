@@ -39,8 +39,10 @@ from app.backend.observability.session_logger import (
     log_tool_event,
     reset_request_context,
     reset_session_context,
+    reset_turn_context,
     set_request_context,
     set_session_context,
+    set_turn_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -828,20 +830,26 @@ def _collect_request_llm_metrics(session_id: str, request_id: str) -> Dict[str, 
         Dict[str, Any]: LLM 调用记录、调用次数、token 总量和错误计数。
     """
     rows = _read_session_llm_records(session_id, request_id)
+    prompt_tokens = 0
+    completion_tokens = 0
     total_tokens = 0
     llm_calls = 0
     error_types: dict[str, int] = {}
     for row in rows:
         llm_calls += 1
         try:
+            prompt_tokens += int(row.get("prompt_tokens") or 0)
+            completion_tokens += int(row.get("completion_tokens") or 0)
             total_tokens += int(row.get("total_tokens") or 0)
         except (TypeError, ValueError):
-            total_tokens += 0
+            continue
         error_type = str(row.get("error") or "").strip()
         if error_type:
             error_types[error_type] = int(error_types.get(error_type) or 0) + 1
     return {
         "llm_calls": llm_calls,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "llm_rows": rows,
         "error_types": error_types,
@@ -853,10 +861,11 @@ def _merge_llm_metrics_with_telemetry(
 ) -> Dict[str, Any]:
     """LLM 明细日志缺失时，用 A2A telemetry 兜底 token 指标。"""
     metrics = dict(llm_metrics)
-    telemetry_tokens = _to_int_metric(telemetry.get("total_tokens"))
+    for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        telemetry_value = _to_int_metric(telemetry.get(field))
+        if _to_int_metric(metrics.get(field)) <= 0 and telemetry_value > 0:
+            metrics[field] = telemetry_value
     telemetry_calls = _to_int_metric(telemetry.get("llm_calls"))
-    if _to_int_metric(metrics.get("total_tokens")) <= 0 and telemetry_tokens > 0:
-        metrics["total_tokens"] = telemetry_tokens
     if _to_int_metric(metrics.get("llm_calls")) <= 0:
         if telemetry_calls > 0:
             metrics["llm_calls"] = telemetry_calls
@@ -1018,6 +1027,7 @@ def _build_turn_observability_payload(
     return {
         "record_type": "turn_observability",
         "request_id": str(request_id or ""),
+        "trace_id": str(request_id or ""),
         "session_id": str(session_id or ""),
         "user_id": str(user_id or ""),
         "turn_id": f"{session_id}:{user_message_id}",
@@ -1070,6 +1080,8 @@ def _build_turn_observability_payload(
         "processing_steps": processing_steps,
         "tool_observations": tool_observations,
         "llm_calls": int(llm_metrics.get("llm_calls") or 0),
+        "prompt_tokens": int(llm_metrics.get("prompt_tokens") or 0),
+        "completion_tokens": int(llm_metrics.get("completion_tokens") or 0),
         "total_tokens": int(llm_metrics.get("total_tokens") or 0),
         "tool_calls": int(tool_metrics.get("tool_calls") or 0),
         "attempted_tool_actions": int(tool_metrics.get("attempted_tool_actions") or 0),
@@ -1129,6 +1141,7 @@ def _build_turn_memory_update_payload(
     return {
         "record_type": "turn_memory_update",
         "request_id": str(request_id or ""),
+        "trace_id": str(request_id or ""),
         "session_id": str(session_id or ""),
         "turn_id": f"{session_id}:{user_message_id}",
         "user_message_id": int(user_message_id or 0),
@@ -1136,6 +1149,8 @@ def _build_turn_memory_update_payload(
         "updated_at": updated_at,
         "snapshot": snapshot if isinstance(snapshot, dict) else {},
         "llm_calls": int(metrics.get("llm_calls") or 0),
+        "prompt_tokens": int(metrics.get("prompt_tokens") or 0),
+        "completion_tokens": int(metrics.get("completion_tokens") or 0),
         "total_tokens": int(metrics.get("total_tokens") or 0),
         "error_types": (
             metrics.get("error_types")
@@ -1225,6 +1240,7 @@ class SessionStreamService:
         started_perf = time.perf_counter()
         session_tokens = set_session_context(str(session_id or ""), str(user_id or ""))
         request_token = set_request_context(str(request_id or ""))
+        turn_token = set_turn_context(f"{session_id}:{int(user_message_id or 0)}")
         ensure_session_meta(str(session_id or ""), str(user_id or ""))
 
         def build_session_event() -> SessionStreamEvent:
@@ -1414,6 +1430,7 @@ class SessionStreamService:
                 """刷新会话记忆并写入记忆更新观测日志。"""
                 tokens = set_session_context(str(session_id or ""), str(user_id or ""))
                 request_ctx = set_request_context(str(request_id or ""))
+                turn_ctx = set_turn_context(f"{session_id}:{int(user_message_id or 0)}")
                 try:
                     memory_service: SessionMemoryService = (
                         self._get_session_memory_service()
@@ -1439,6 +1456,7 @@ class SessionStreamService:
                     )
                     _append_jsonl(_turn_log_path(), update_payload)
                 finally:
+                    reset_turn_context(turn_ctx)
                     reset_request_context(request_ctx)
                     reset_session_context(tokens)
 
@@ -1572,9 +1590,14 @@ class SessionStreamService:
                                 arguments=arguments,
                                 result_ok=bool(result_obj.get("ok", True)),
                                 has_signal=bool(result_obj.get("result")),
-                                duration_ms=0.0,
+                                duration_ms=float(row.get("duration_ms") or 0.0),
                                 fallback_used=bool(row.get("used_fallback")),
                                 blocked_reason=str(row.get("blocked_reason") or ""),
+                                token_usage=(
+                                    row.get("token_usage")
+                                    if isinstance(row.get("token_usage"), dict)
+                                    else None
+                                ),
                             )
                         log_session_op(
                             session_id=str(session_id or ""),
@@ -1653,5 +1676,6 @@ class SessionStreamService:
                             request_id=request_id,
                             done_emitted=done_emitted,
                         )
+            reset_turn_context(turn_token)
             reset_request_context(request_token)
             reset_session_context(session_tokens)

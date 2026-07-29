@@ -3,23 +3,12 @@
 import os
 from typing import Any, Dict
 
+from app.a2a.telemetry import normalize_token_usage
+
 
 def _normalize_token_usage(metric_obj: Any) -> Dict[str, int]:
     """将模型或工具返回的 token 统计对象规范化为统一的整数计数字段。"""
-    metric = metric_obj if isinstance(metric_obj, dict) else {}
-
-    prompt_tokens = int(metric.get("prompt_tokens") or 0)
-    completion_tokens = int(metric.get("completion_tokens") or 0)
-    total_tokens = int(metric.get("total_tokens") or 0)
-
-    if total_tokens <= 0:
-        total_tokens = prompt_tokens + completion_tokens
-
-    return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-    }
+    return normalize_token_usage(metric_obj)
 
 
 def _extract_token_usage(result: Dict[str, Any]) -> Dict[str, int]:

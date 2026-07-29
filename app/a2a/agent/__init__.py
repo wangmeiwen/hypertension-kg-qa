@@ -47,6 +47,7 @@ async def process_query(
     input_text: str,
     session_id: str = "",
     user_id: str = "",
+    trace_id: str = "",
     strategy: str = "iterative",
     max_turns: int | None = None,
     image_data: str = "",
@@ -62,6 +63,7 @@ async def process_query(
         input_text: 用户提交的原始问题文本。
         session_id: 会话 ID。
         user_id: 用户 ID。
+        trace_id: 当前请求的端到端追踪 ID。
         strategy: 代理策略标识，目前统一走 iterative 入口。
         max_turns: 最大迭代轮数限制，None 表示使用系统默认策略。
         image_data: 可选图片数据，透传给支持视觉输入的执行链路。
@@ -85,6 +87,7 @@ async def process_query(
         input_text=str(input_text or "").strip(),
         session_id=str(session_id or "").strip(),
         user_id=str(user_id or "").strip(),
+        trace_id=str(trace_id or "").strip(),
         strategy=safe_strategy,
         max_turns=max_turns,
         image_data=str(image_data or "").strip(),

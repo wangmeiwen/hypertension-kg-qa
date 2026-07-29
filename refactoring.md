@@ -421,7 +421,7 @@ page/workspace
 
 第一批真实依赖验证：
 
-- MySQL 真实库已应用 `baseline_tables` v1 和 `graph_import_resume_contract` v2，版本、名称和 64 位校验和查询正常。
+- MySQL 真实库已应用 `baseline_tables` v1、`graph_import_resume_contract` v2 和 `graph_import_observability_contract` v3，版本、名称和 64 位校验和查询正常。
 - Neo4j 真实库已建立三个 `hypertension_*_v1` 索引；1748 个现有节点均带 `KnowledgeEntity` 标签。
 - 两个现有 Milvus 集合均通过 v1 schema 校验，文档集合指纹为 `6fd5dd48ba61`，图谱集合指纹为 `478c1ecf0fed`。
 - 真实 MySQL、Neo4j、Milvus 集成测试：3 passed。
@@ -457,7 +457,7 @@ page/workspace
 - 新增管理员只读接口 `/admin/storage/schema-report`，并发返回 MySQL、Neo4j、Milvus 的期望版本、实际版本、待迁移项、哨兵、集合名和完整指纹。
 - 三类存储分别隔离错误；单库不可用或 schema 不兼容时报告整体 `incompatible`，同时保留其他存储的有效诊断结果。
 - 诊断使用轻量 Milvus 客户端直接读取集合描述，不触发 embedding 或 reranker 模型加载。
-- 真实 MySQL、Neo4j、Milvus 联合诊断结果为 `compatible`，实际版本分别为 MySQL v2、Neo4j v1、Milvus 两个集合 v1。
+- 真实 MySQL、Neo4j、Milvus 联合诊断结果为 `compatible`，实际版本分别为 MySQL v3、Neo4j v1、Milvus 两个集合 v1。
 - 空 MySQL 在 CI 初始化步骤执行完整 migration；单元测试覆盖历史库补列、迁移内容漂移、版本超前、历史缺口、Neo4j 重复哨兵和 Milvus 字段/维度不兼容。
 
 第三批质量门禁：
@@ -474,8 +474,8 @@ page/workspace
 
 ### P2：可观测性与安全（进行中）
 
-- request/session/turn/agent/tool/LLM/job 使用统一 trace id。
-- token 和耗时在产生源记录并向上聚合。
+- [x] request/session/turn/agent/tool/LLM/job 使用统一 trace id。
+- [x] token 和耗时在产生源记录并向上聚合。
 - [x] 管理接口增加更细粒度权限、审计和速率限制。
 - 增加依赖扫描、密钥扫描和容器镜像扫描。
 - [x] 对上传文件执行 MIME、扩展名、大小、页数和解压炸弹检查。
@@ -509,6 +509,26 @@ page/workspace
 - Python 规范检查：`ruff check app tests` 通过。
 - Python 类型检查：`mypy app` 检查 154 个源文件，0 errors。
 - Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
+链路观测第三批：
+
+- 请求 ID 作为本地统一 trace ID 写入 API、LLM、会话操作和工具日志；会话流建立显式 `turn_id` 上下文，后台记忆刷新继承同一 request/session/turn。
+- A2A 提交、进度、终态、工具观测和 telemetry 显式携带 trace；修复异步任务注册早于任务状态入表、同步进度回调未等待事件写入的两个竞态。
+- 建立共享 token 契约，统一规范和累加 prompt/completion/total 三项；主控聚合自身决策、终答、历史工具和子代理 token，不再只保留局部 `total_tokens`。
+- LLM 调用在产生源记录 token 与耗时，工具记录保留自身耗时和 token；turn 级记录聚合 prompt/completion/total，API 保留首字节与全流耗时。
+- 图谱和文档后台任务记录 trace 与总耗时，阶段 trace 继承任务 trace；MySQL v3 为持久化图谱导入补充 `trace_id` 与 `duration_ms`。
+- v1/v2 迁移内容保持不可变；真实 MySQL 已应用 v3 并确认两个新字段存在，真实 MySQL、Neo4j、Milvus 集成测试再次通过。
+
+第三批质量门禁：
+
+- 后端自动化测试：144 passed。
+- 真实数据库集成测试：3 passed。
+- Python 格式检查：Black 检查 191 个文件，全部通过。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 155 个源文件，0 errors。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+- 前端 TypeScript、ESLint、边界检查、Stylelint、76 项组件/契约测试和生产构建通过。
+- 前端 Prettier 基线仍有 43 个历史文件待统一，本阶段未混入机械格式化。
 
 ## 每阶段完成标准
 

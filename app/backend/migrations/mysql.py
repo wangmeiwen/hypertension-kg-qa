@@ -229,6 +229,30 @@ MYSQL_MIGRATIONS = (
             ),
         ),
     ),
+    MySQLMigration(
+        version=3,
+        name="graph_import_observability_contract",
+        column_patches=(
+            MySQLColumnPatch(
+                table_name="graph_import_runs",
+                column_name="trace_id",
+                ddl=(
+                    "ALTER TABLE graph_import_runs "
+                    "ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT '' "
+                    "AFTER run_id"
+                ),
+            ),
+            MySQLColumnPatch(
+                table_name="graph_import_runs",
+                column_name="duration_ms",
+                ddl=(
+                    "ALTER TABLE graph_import_runs "
+                    "ADD COLUMN duration_ms INT DEFAULT 0 "
+                    "AFTER finished_at"
+                ),
+            ),
+        ),
+    ),
 )
 MYSQL_SCHEMA_VERSION = MYSQL_MIGRATIONS[-1].version
 

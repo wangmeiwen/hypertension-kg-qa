@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Callable, Optional
 
+from app.backend.observability.session_logger import get_request_id
 from app.backend.repositories.database import execute, fetch_all, fetch_one
 
 
@@ -131,19 +132,20 @@ class GraphImportRepositoryMixin:
         await execute(
             """
             INSERT INTO graph_import_runs (
-                run_id, file_hash, file_name, file_size, status, parser_used,
+                run_id, trace_id, file_hash, file_name, file_size, status, parser_used,
                 parse_warning, parsed_text_length, total_chars, processed_chars,
                 total_chunks, completed_chunks, entity_count, relation_count,
                 docling_failed_pages, pdf_fallback_used, chunk_limit, chunk_strategy_version, last_error
             )
             VALUES (
-                :run_id, :file_hash, :file_name, :file_size, 'running', :parser_used,
+                :run_id, :trace_id, :file_hash, :file_name, :file_size, 'running', :parser_used,
                 :parse_warning, :parsed_text_length, :total_chars, 0,
                 :total_chunks, 0, 0, 0, :docling_failed_pages, :pdf_fallback_used, :chunk_limit, :chunk_strategy_version, NULL
             )
             """,
             {
                 "run_id": run_id,
+                "trace_id": get_request_id(),
                 "file_hash": file_hash,
                 "file_name": file_name,
                 "file_size": file_size,
@@ -200,6 +202,7 @@ class GraphImportRepositoryMixin:
             """
             UPDATE graph_import_runs
             SET file_name = :file_name,
+                trace_id = :trace_id,
                 file_size = :file_size,
                 status = :status,
                 parser_used = :parser_used,
@@ -211,11 +214,14 @@ class GraphImportRepositoryMixin:
                 pdf_fallback_used = :pdf_fallback_used,
                 chunk_limit = :chunk_limit,
                 chunk_strategy_version = :chunk_strategy_version,
+                finished_at = NULL,
+                duration_ms = 0,
                 last_error = CASE WHEN :clear_error = 1 THEN NULL ELSE last_error END
             WHERE run_id = :run_id
             """,
             {
                 "run_id": run_id,
+                "trace_id": get_request_id(),
                 "file_name": file_name,
                 "file_size": file_size,
                 "status": status,
@@ -387,7 +393,12 @@ class GraphImportRepositoryMixin:
             UPDATE graph_import_runs
             SET status = :status,
                 last_error = :last_error,
-                finished_at = CASE WHEN :finished = 1 THEN CURRENT_TIMESTAMP ELSE finished_at END
+                finished_at = CASE WHEN :finished = 1 THEN CURRENT_TIMESTAMP ELSE finished_at END,
+                duration_ms = CASE
+                    WHEN :finished = 1
+                    THEN TIMESTAMPDIFF(MICROSECOND, created_at, CURRENT_TIMESTAMP) DIV 1000
+                    ELSE duration_ms
+                END
             WHERE run_id = :run_id
             """,
             {
@@ -527,12 +538,14 @@ class GraphImportRepositoryMixin:
             )
         return {
             "job_id": f"graph-run-{run_row.get('run_id')}",
+            "trace_id": str(run_row.get("trace_id") or ""),
             "job_type": self.IMPORT_JOB_TYPE,
             "status": run_row.get("status"),
             "progress_text": self._build_graph_run_progress_text(run_row),
             "created_at": self._format_run_timestamp(run_row.get("created_at")),
             "started_at": self._format_run_timestamp(run_row.get("created_at")),
             "finished_at": self._format_run_timestamp(run_row.get("finished_at")),
+            "duration_ms": int(run_row.get("duration_ms") or 0),
             "stage": None,
             "stage_detail": "",
             "stage_started_at": None,

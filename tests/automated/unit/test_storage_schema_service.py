@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backend.dependencies.admin_auth import require_admin_access
-from app.backend.migrations.mysql import MYSQL_MIGRATIONS
+from app.backend.migrations.mysql import MYSQL_MIGRATIONS, MYSQL_SCHEMA_VERSION
 from app.backend.migrations.neo4j import NEO4J_MIGRATIONS
 from app.backend.routers.admin_storage import create_admin_storage_router
 from app.backend.services.storage_schema_service import StorageSchemaService
@@ -79,7 +79,7 @@ def test_storage_schema_report_marks_all_compatible_contracts() -> None:
     report = asyncio.run(_service().get_schema_report())
 
     assert report["data"]["status"] == "compatible"
-    assert report["data"]["stores"]["mysql"]["actual_version"] == 2
+    assert report["data"]["stores"]["mysql"]["actual_version"] == MYSQL_SCHEMA_VERSION
     assert report["data"]["stores"]["neo4j"]["actual_version"] == 1
     assert (
         len(
