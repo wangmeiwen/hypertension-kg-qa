@@ -406,9 +406,39 @@ page/workspace
 - 客户端重连后可从会话历史恢复 `persisted` 对应的消息 ID。
 - `/process`、`/process_with_session` 和前端通过版本化 JSON Schema 与响应头完成契约握手。
 
-### P2：数据库迁移与版本管理
+### P2：数据库迁移与版本管理（进行中）
 
-将启动时建表迁移到正式 migration；为 MySQL、Neo4j 和 Milvus schema 建立显式版本。缓存键绑定文件哈希、解析版本、分块版本、抽取模型版本和 embedding 版本。
+第一批已完成：
+
+- 将 MySQL 的 9 张业务表 DDL 和两项历史补列从仓储启动函数迁出，建立按版本排序、带名称和 SHA-256 校验和的 migration。
+- 新增 `schema_migrations` 表；已应用迁移发生改名、内容漂移或数据库版本高于应用时立即拒绝继续迁移。
+- 建库语句不再硬编码 `hypertension_kg`，改为校验并引用 `MYSQL_DATABASE` 对应库名。
+- Neo4j 建立 v1 migration：为现有节点补齐 `KnowledgeEntity` 基础标签，建立实体身份与规范名索引，并用包含迁移校验和的哨兵索引持久化版本。
+- 后续图谱抽取和后台手工建点统一写入 `KnowledgeEntity` 与 `entity_type`，不再依赖一次性迁移维持 schema。
+- 启动流程只在 Neo4j 健康检查通过时执行迁移；不可用时保持降级启动，迁移异常进入统一启动错误日志。
+- Milvus 文档集合与图谱集合建立显式 v1 schema 合同和稳定指纹；已有集合会校验字段集合、类型、向量维度、主键、auto-id 和动态字段设置，发现不兼容时拒绝加载。
+- 保留已有集合和数据，不为版本化静默删库重建。
+
+第一批真实依赖验证：
+
+- MySQL 真实库已应用 `baseline_tables` v1 和 `graph_import_resume_contract` v2，版本、名称和 64 位校验和查询正常。
+- Neo4j 真实库已建立三个 `hypertension_*_v1` 索引；1748 个现有节点均带 `KnowledgeEntity` 标签。
+- 两个现有 Milvus 集合均通过 v1 schema 校验，文档集合指纹为 `6fd5dd48ba61`，图谱集合指纹为 `478c1ecf0fed`。
+- 真实 MySQL、Neo4j、Milvus 集成测试：3 passed。
+
+第一批质量门禁：
+
+- 后端非数据库自动化测试：120 passed，3 deselected。
+- Python 格式检查：Black 检查 179 个文件，全部通过。
+- Python 规范检查：`ruff check app tests` 通过。
+- Python 类型检查：`mypy app` 检查 148 个源文件，0 errors。
+- Conda `hypertension-qa` 环境执行 `pip check`，无破损依赖。
+
+后续验收：
+
+- 缓存键绑定文件哈希、解析器版本、分块版本、抽取模型版本和 embedding 版本。
+- 为 schema 版本与健康状态增加只读诊断报告，便于部署验收。
+- 增加从空库、历史库和内容漂移库升级的 CI 场景，保持真实依赖测试不把跳过伪装成通过。
 
 ### P2：可观测性与安全
 

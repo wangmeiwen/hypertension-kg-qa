@@ -195,12 +195,16 @@ class GraphCrudMixin:
                     "ok": False,
                     "error": "节点标签非法，仅允许字母数字下划线且不能以数字开头",
                 }
+            properties["entity_type"] = label
 
             if properties:
                 props_text = ", ".join(f"`{key}`: ${key}" for key in properties)
-                query = f"CREATE (n:`{label}` {{{props_text}}}) RETURN id(n) AS id"
+                query = (
+                    f"CREATE (n:KnowledgeEntity:`{label}` {{{props_text}}}) "
+                    "RETURN id(n) AS id"
+                )
             else:
-                query = f"CREATE (n:`{label}`) RETURN id(n) AS id"
+                query = f"CREATE (n:KnowledgeEntity:`{label}`) RETURN id(n) AS id"
             result = await self._await_call(
                 self._neo4j_client.run_cypher, query, properties
             )

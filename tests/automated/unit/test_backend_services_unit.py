@@ -1307,8 +1307,17 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
     async def init_db() -> bool:
         return True
 
-    async def check_db() -> dict[str, bool]:
-        return {"all_running": True}
+    async def check_db() -> dict[str, Any]:
+        return {
+            "all_running": True,
+            "neo4j": {"is_running": True},
+            "milvus": {"is_running": True},
+        }
+
+    async def migrate_neo4j(client) -> tuple[int, ...]:
+        assert isinstance(client, FakeNeo4j)
+        events.append("neo4j_migrate")
+        return (1,)
 
     async def close_iterative_agent() -> None:
         events.append("agent_close")
@@ -1339,6 +1348,7 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
         ),
         database_initializer=init_db,
         database_checker=check_db,
+        neo4j_schema_initializer=migrate_neo4j,
         get_shared_vector_store=lambda: events.append("vector"),
         get_shared_kg_milvus_store=lambda: types.SimpleNamespace(
             ensure_embedder_loaded=lambda: events.append("kg")
@@ -1348,7 +1358,15 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
 
     await service.startup()
     assert runtime.mysql_initialized is True
-    assert {"vector", "kg", "mcp", "a2a", "graph", "retrieval"}.issubset(set(events))
+    assert {
+        "neo4j_migrate",
+        "vector",
+        "kg",
+        "mcp",
+        "a2a",
+        "graph",
+        "retrieval",
+    }.issubset(set(events))
     await service.shutdown()
     assert events[-5:] == [
         "shutdown",

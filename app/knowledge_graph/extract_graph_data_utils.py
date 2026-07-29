@@ -850,7 +850,7 @@ def build_node_queries(
         safe = safe_label(label)
         cypher = f"""
         UNWIND $rows AS row
-        MERGE (n:{safe} {{name: row.name}})
+        MERGE (n:KnowledgeEntity:{safe} {{name: row.name}})
         SET n += row.props
         SET n.canonical_name = CASE
             WHEN row.canonical_name IS NULL OR row.canonical_name = "" THEN n.canonical_name

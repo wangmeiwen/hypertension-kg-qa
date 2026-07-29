@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable
 
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
+from app.backend.migrations.neo4j import apply_neo4j_migrations
 from app.backend.repositories.database import initialize_database
 from app.backend.infrastructure.database_health import check_databases
 from app.core.feature_flags import get_runtime_flag_snapshot
@@ -23,6 +24,7 @@ class StartupRuntimeBehavior:
 
     initialize_database: bool = True
     check_databases: bool = True
+    migrate_neo4j_schema: bool = True
     prewarm_retrieval_resources: bool = True
     bootstrap_mcp: bool = True
     bootstrap_a2a: bool = True
@@ -41,6 +43,7 @@ class StartupRuntimeService:
         behavior: StartupRuntimeBehavior | None = None,
         database_initializer: Callable[..., Any] = initialize_database,
         database_checker: Callable[..., Any] = check_databases,
+        neo4j_schema_initializer: Callable[..., Any] = apply_neo4j_migrations,
         get_shared_vector_store: Callable[[], Any] | None = None,
         get_shared_kg_milvus_store: Callable[[], Any] | None = None,
         neo4j_client: Any = None,
@@ -54,6 +57,7 @@ class StartupRuntimeService:
             behavior: 可选启动/关闭行为开关，主要用于测试隔离。
             database_initializer: MySQL 初始化函数。
             database_checker: 数据库健康检查函数。
+            neo4j_schema_initializer: Neo4j schema 迁移函数。
             get_shared_vector_store: 可选文本向量库预热工厂。
             get_shared_kg_milvus_store: 可选图谱向量库预热工厂。
             neo4j_client: 可选 Neo4j 客户端，便于测试替换。
@@ -67,6 +71,7 @@ class StartupRuntimeService:
         self._behavior = behavior or StartupRuntimeBehavior()
         self._database_initializer = database_initializer
         self._database_checker = database_checker
+        self._neo4j_schema_initializer = neo4j_schema_initializer
         self._get_shared_vector_store = get_shared_vector_store
         self._get_shared_kg_milvus_store = get_shared_kg_milvus_store
         self._neo4j_client = neo4j_client
@@ -85,12 +90,13 @@ class StartupRuntimeService:
             if self._runtime.mysql_initialized is None:
                 self._runtime.mysql_initialized = True
 
+        database_status: dict[str, Any] = {}
         if self._behavior.check_databases:
             logger.info("%s", "=" * 50)
             logger.info("正在检查数据库连接...")
             logger.info("%s", "=" * 50)
-            status = await self._database_checker()
-            if bool(status.get("all_running")):
+            database_status = await self._database_checker()
+            if bool(database_status.get("all_running")):
                 logger.info("Neo4j 运行正常")
                 logger.info("Milvus 运行正常")
             else:
@@ -98,6 +104,32 @@ class StartupRuntimeService:
             logger.info("%s", "=" * 50)
         else:
             logger.info("跳过数据库健康检查")
+
+        neo4j_status = database_status.get("neo4j")
+        neo4j_running = isinstance(neo4j_status, dict) and bool(
+            neo4j_status.get("is_running")
+        )
+        if self._behavior.migrate_neo4j_schema and neo4j_running:
+            try:
+                neo4j = self._neo4j_client
+                if neo4j is None:
+                    from app.knowledge_graph.neo4j_manager import neo4j_client
+
+                    neo4j = neo4j_client
+                applied_versions = await self._neo4j_schema_initializer(neo4j)
+                logger.info(
+                    "Neo4j schema migration 完成: applied_versions=%s",
+                    list(applied_versions),
+                )
+            except Exception as exc:
+                self._log_api_error("startup", "neo4j_schema_migration", exc)
+                logger.warning(
+                    "Neo4j schema migration 失败: error_type=%s error=%s",
+                    type(exc).__name__,
+                    exc,
+                )
+        elif self._behavior.migrate_neo4j_schema:
+            logger.info("Neo4j 不可用，跳过 schema migration")
 
         if self._behavior.prewarm_retrieval_resources:
             logger.info("正在预热共享检索资源...")

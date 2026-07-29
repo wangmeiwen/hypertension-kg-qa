@@ -42,6 +42,10 @@ from app.core.concurrency import LockAcquireTimeout, concurrency_guard
 from app.core.config import Config
 from app.core.perf_logger import log_duration
 from app.knowledge_graph.neo4j_manager import neo4j_client
+from app.rag_core.milvus_schema import (
+    KG_MILVUS_SCHEMA,
+    describe_and_validate_milvus_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +138,12 @@ class KgMilvusStore:
             None
         """
         self.conf = conf or Config()
-        self.collection_name = collection_name or os.getenv(
-            "KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection"
+        self.collection_name = (
+            str(collection_name)
+            if collection_name is not None
+            else os.getenv(
+                "KG_MILVUS_COLLECTION_NAME", "hypertension_kg_graph_collection"
+            )
         )
         self.client = self._get_cached_client(
             str(self.conf.MILVUS_HOST),
@@ -307,6 +315,7 @@ class KgMilvusStore:
             "kg_milvus.ensure_collection", collection=self.collection_name
         ):
             if self.client.has_collection(self.collection_name):
+                self._validate_collection_schema()
                 self.client.load_collection(self.collection_name)
                 return
 
@@ -367,7 +376,22 @@ class KgMilvusStore:
                 schema=schema,
                 index_params=index_params,
             )
+            self._validate_collection_schema()
             self.client.load_collection(self.collection_name)
+
+    def _validate_collection_schema(self) -> None:
+        """校验图谱检索集合与当前 schema 版本兼容。"""
+        fingerprint = describe_and_validate_milvus_schema(
+            self.client,
+            collection_name=self.collection_name,
+            contract=KG_MILVUS_SCHEMA,
+        )
+        logger.info(
+            "Milvus 图谱集合 schema 已验证: collection=%s version=%s fingerprint=%s",
+            self.collection_name,
+            KG_MILVUS_SCHEMA.version,
+            fingerprint[:12],
+        )
 
     def _refresh_vector_field(self) -> None:
         """

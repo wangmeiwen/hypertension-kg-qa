@@ -56,6 +56,10 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import Config  # noqa: E402
 from app.core.perf_logger import log_duration  # noqa: E402
+from app.rag_core.milvus_schema import (  # noqa: E402
+    describe_and_validate_milvus_schema,
+    document_milvus_schema,
+)
 
 conf = Config()
 
@@ -451,6 +455,18 @@ class VectorStore:
             # 记录加载集合的日志
             logger.info(f"已加载集合 {self.collection_name}")
             self._refresh_collection_fields()
+        schema_contract = document_milvus_schema(self.dense_dim)
+        schema_fingerprint = describe_and_validate_milvus_schema(
+            self.client,
+            collection_name=self.collection_name,
+            contract=schema_contract,
+        )
+        logger.info(
+            "Milvus 文档集合 schema 已验证: collection=%s version=%s fingerprint=%s",
+            self.collection_name,
+            schema_contract.version,
+            schema_fingerprint[:12],
+        )
         # 将集合加载到内存，确保可立即查询
         self.client.load_collection(self.collection_name)
 
