@@ -10,11 +10,16 @@ from uuid import uuid4
 from fastapi import UploadFile
 
 from app.backend.domain.job_status import BackgroundJobStatus
+from app.backend.security.upload_policy import inspect_upload
 from app.backend.services.background_job_runtime import BackgroundJobRuntimeMixin
 from app.backend.services.graph_extraction_lane_pool import GraphExtractionLanePool
 from app.backend.services.graph_crud_mixin import GraphCrudMixin
 from app.backend.services.graph_import_cache_mixin import GraphImportCacheMixin
-from app.backend.services.graph_import_parser import GraphImportParser
+from app.backend.services.graph_import_parser import (
+    MAX_GRAPH_IMPORT_FILE_BYTES,
+    SUPPORTED_GRAPH_IMPORT_SUFFIXES,
+    GraphImportParser,
+)
 from app.backend.services.graph_import_repository_mixin import (
     GraphImportRepositoryMixin,
 )
@@ -142,10 +147,13 @@ class GraphAdminService(
         filename = file.filename or "uploaded_file"
         try:
             file_bytes = await file.read()
-            if not file_bytes:
-                return {"ok": False, "error": "上传文件为空"}
-            if len(file_bytes) > 50 * 1024 * 1024:
-                return {"ok": False, "error": "文件大小不能超过 50MB"}
+            inspect_upload(
+                content=file_bytes,
+                filename=filename,
+                declared_mime=file.content_type,
+                allowed_suffixes=SUPPORTED_GRAPH_IMPORT_SUFFIXES,
+                max_bytes=MAX_GRAPH_IMPORT_FILE_BYTES,
+            )
             file_hash = self._compute_file_hash(file_bytes)
             resumable_run = await self._find_resumable_graph_run(
                 file_hash,

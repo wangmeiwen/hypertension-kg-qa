@@ -7,17 +7,33 @@ import hashlib
 import logging
 import traceback
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 from uuid import uuid4
 
 from fastapi import UploadFile
 
 from app.backend.domain.job_status import BackgroundJobStatus
+from app.backend.security.upload_policy import inspect_upload
 from app.core.concurrency import concurrency_guard
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
+
+DOCUMENT_UPLOAD_SUFFIXES = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".pptx",
+    ".ppt",
+    ".html",
+    ".htm",
+    ".txt",
+    ".md",
+    ".jpg",
+    ".jpeg",
+    ".png",
+}
+DOCUMENT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
 
 
 class AdminDocumentsService:
@@ -526,7 +542,12 @@ class AdminDocumentsService:
         response_data["message"] = "任务已提交到后台处理"
         return {"ok": True, "data": response_data}
 
-    def _validate_file(self, file_bytes: bytes, filename: str) -> str:
+    def _validate_file(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        declared_mime: str | None = None,
+    ) -> str:
         """校验上传文件基础约束并返回扩展名。
 
         Args:
@@ -539,33 +560,17 @@ class AdminDocumentsService:
         Raises:
             RuntimeError: 文件名、内容、大小或格式不满足要求。
         """
-        if not filename:
-            raise RuntimeError("文件名不能为空")
-        if not file_bytes:
-            raise RuntimeError("上传文件为空")
-        if len(file_bytes) > 50 * 1024 * 1024:
-            raise RuntimeError("文件大小不能超过 50MB")
-
-        allowed_extensions = {
-            ".pdf",
-            ".docx",
-            ".doc",
-            ".pptx",
-            ".ppt",
-            ".html",
-            ".htm",
-            ".txt",
-            ".md",
-            ".jpg",
-            ".jpeg",
-            ".png",
-        }
-        file_ext = Path(filename).suffix.lower()
-        if file_ext not in allowed_extensions:
-            raise RuntimeError(
-                f"不支持的文件格式: {file_ext}。支持的格式: {', '.join(sorted(allowed_extensions))}"
+        try:
+            inspection = inspect_upload(
+                content=file_bytes,
+                filename=filename,
+                declared_mime=declared_mime,
+                allowed_suffixes=DOCUMENT_UPLOAD_SUFFIXES,
+                max_bytes=DOCUMENT_UPLOAD_MAX_BYTES,
             )
-        return file_ext
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        return inspection.suffix
 
     def _embed_text_document_blocking(  # pragma: no cover - external embedding runtime
         self,
@@ -711,7 +716,7 @@ class AdminDocumentsService:
         filename = file.filename or "uploaded_file"
         try:
             file_bytes = await file.read()
-            self._validate_file(file_bytes, filename)
+            self._validate_file(file_bytes, filename, file.content_type)
             return await self._start_background_job(
                 runner=lambda job_id: self._embed_text_document_job(
                     file_bytes, filename, job_id

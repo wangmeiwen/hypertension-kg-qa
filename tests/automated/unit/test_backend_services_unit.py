@@ -9,6 +9,7 @@ import io
 import json
 import sys
 import types
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,15 @@ pytestmark = pytest.mark.unit
 def upload_file(name: str, body: bytes) -> UploadFile:
     """构造 Starlette UploadFile，供服务层上传接口测试复用。"""
     return UploadFile(filename=name, file=io.BytesIO(body))
+
+
+def ooxml_file(root: str) -> bytes:
+    """构造包含必要容器标识的最小 OOXML 测试文件。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+        archive.writestr(f"{root}/document.xml", b"<document/>")
+    return buffer.getvalue()
 
 
 def test_a2a_event_helpers_parse_task_payloads() -> None:
@@ -306,7 +316,7 @@ async def test_sessions_history_service_validates_and_mutates(
     assert uploaded["ok"] is True
     assert Path(temp_upload_dir / uploaded["data"]["filename"]).exists()
     assert uploaded["data"]["file_id"] == "file-txt"
-    assert (await service.upload_file(upload_file("sheet.xlsx", b"fake-xlsx")))[
+    assert (await service.upload_file(upload_file("sheet.xlsx", ooxml_file("xl"))))[
         "ok"
     ] is True
     assert (await service.upload_file(upload_file("bad.exe", b"x")))["ok"] is False

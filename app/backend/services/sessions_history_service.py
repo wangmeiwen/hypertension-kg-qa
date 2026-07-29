@@ -11,6 +11,7 @@ from fastapi import UploadFile
 import httpx
 
 from app.backend.repositories.session_manager import MessageManager, SessionManager
+from app.backend.security.upload_policy import inspect_upload
 from app.core.config import Config
 
 
@@ -334,8 +335,13 @@ class SessionsHistoryService:
 
         try:
             content = await file.read()
-            if len(content) > ALIYUN_FILE_API_MAX_BYTES:
-                return {"ok": False, "error": "文件大小不能超过 150MB"}
+            inspect_upload(
+                content=content,
+                filename=str(file.filename),
+                declared_mime=file.content_type,
+                allowed_suffixes=CHAT_FILE_API_EXTENSIONS,
+                max_bytes=ALIYUN_FILE_API_MAX_BYTES,
+            )
 
             aliyun_file = await self._upload_to_aliyun_file_api(
                 str(file.filename), content
