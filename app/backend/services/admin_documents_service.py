@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import traceback
 from datetime import datetime, timedelta
@@ -637,7 +638,12 @@ class AdminDocumentsService:
         stage_callback("enter", "embed_vector_store", "正在写入文本向量数据库")
         vector_store = self._get_shared_vector_store()
         embedder = DocumentEmbedder(vector_store=vector_store)
-        embed_result = embedder.embed_docling_sub_chunks(sub_chunks, filename, parsed)
+        embed_result = embedder.embed_docling_sub_chunks(
+            sub_chunks,
+            filename,
+            parsed,
+            source_hash=hashlib.sha256(file_bytes).hexdigest(),
+        )
         collection_stats = embedder.get_collection_stats()
         stage_callback("complete", "embed_vector_store", "文本向量数据库写入完成")
 

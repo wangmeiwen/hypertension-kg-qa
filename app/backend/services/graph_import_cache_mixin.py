@@ -21,11 +21,39 @@ class GraphImportCacheMixin:
     GRAPH_IMPORT_CACHE_VERSION: int
     GRAPH_IMPORT_CHUNK_LIMIT: int
     GRAPH_IMPORT_CHUNK_STRATEGY_VERSION: int
+    GRAPH_IMPORT_PARSER_VERSION: int
+    GRAPH_EXTRACTION_PIPELINE_VERSION: int
+    GRAPH_EXTRACTION_MODEL_SIGNATURE: str
     _utc_now_iso: Callable[[], str]
 
     @staticmethod
     def _compute_file_hash(file_bytes: bytes) -> str:
         return hashlib.sha256(file_bytes).hexdigest()
+
+    @classmethod
+    def _compute_extraction_model_signature(
+        cls,
+        lane_configs: list[dict[str, Any]],
+    ) -> str:
+        """生成不包含密钥的抽取模型配置签名。"""
+        payload = [
+            {
+                "lane_id": int(item["lane_id"]),
+                "model_name": str(item["model_name"]),
+                "source": str(item["source"]),
+            }
+            for item in lane_configs
+        ]
+        encoded = json.dumps(
+            {
+                "pipeline_version": cls.GRAPH_EXTRACTION_PIPELINE_VERSION,
+                "lanes": sorted(payload, key=lambda item: item["lane_id"]),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @classmethod
     def _get_chunk_strategy_signature(cls) -> str:
@@ -85,19 +113,30 @@ class GraphImportCacheMixin:
         prepared["chunk_strategy_version"] = int(payload["chunk_strategy_version"])
         return prepared, None
 
-    @classmethod
     def _get_cache_invalidation_reason(
-        cls,
+        self,
         payload: dict[str, Any],
         file_hash: str,
     ) -> Optional[str]:
-        if int(payload.get("version") or 0) != cls.GRAPH_IMPORT_CACHE_VERSION:
+        if int(payload.get("version") or 0) != self.GRAPH_IMPORT_CACHE_VERSION:
             return "本地缓存版本已过期，已重新解析"
-        if int(payload.get("chunk_limit") or 0) != cls.GRAPH_IMPORT_CHUNK_LIMIT:
+        if int(payload.get("parser_version") or 0) != self.GRAPH_IMPORT_PARSER_VERSION:
+            return "本地缓存解析器版本已过期，已重新解析"
+        if (
+            int(payload.get("extraction_pipeline_version") or 0)
+            != self.GRAPH_EXTRACTION_PIPELINE_VERSION
+        ):
+            return "本地缓存抽取管线版本已过期，已重新解析"
+        if (
+            str(payload.get("extraction_model_signature") or "")
+            != self.GRAPH_EXTRACTION_MODEL_SIGNATURE
+        ):
+            return "本地缓存抽取模型配置已变化，已重新解析"
+        if int(payload.get("chunk_limit") or 0) != self.GRAPH_IMPORT_CHUNK_LIMIT:
             return "本地缓存分块大小与当前策略不一致，已重新分块"
         if (
             int(payload.get("chunk_strategy_version") or 0)
-            != cls.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION
+            != self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION
         ):
             return "本地缓存分块策略已过期，已重新解析"
         if str(payload.get("file_hash") or "") != file_hash:
@@ -116,6 +155,9 @@ class GraphImportCacheMixin:
         payload = {
             "version": self.GRAPH_IMPORT_CACHE_VERSION,
             "file_hash": file_hash,
+            "parser_version": self.GRAPH_IMPORT_PARSER_VERSION,
+            "extraction_pipeline_version": self.GRAPH_EXTRACTION_PIPELINE_VERSION,
+            "extraction_model_signature": self.GRAPH_EXTRACTION_MODEL_SIGNATURE,
             "chunk_limit": self.GRAPH_IMPORT_CHUNK_LIMIT,
             "chunk_strategy_version": self.GRAPH_IMPORT_CHUNK_STRATEGY_VERSION,
             "cached_at": self._utc_now_iso(),

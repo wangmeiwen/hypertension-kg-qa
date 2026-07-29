@@ -568,6 +568,19 @@ class VectorStore:
                     "source": doc.metadata.get("source", "unknown"),
                     "timestamp": doc.metadata.get("timestamp", "unknown"),
                 }
+                for metadata_key in (
+                    "chunk_id",
+                    "parent_index",
+                    "sub_index",
+                    "source_hash",
+                    "parser_version",
+                    "chunk_strategy_version",
+                    "embedding_pipeline_version",
+                    "embedding_model_signature",
+                ):
+                    metadata_value = doc.metadata.get(metadata_key)
+                    if metadata_value is not None:
+                        item[metadata_key] = metadata_value
 
                 dense_vec = _to_float32_vector(embeddings["dense"][i], self.dense_dim)
 
@@ -598,6 +611,27 @@ class VectorStore:
                 ):
                     self.client.upsert(collection_name=self.collection_name, data=data)
                 logger.info(f"已插入或更新 {len(data)} 个文档")
+
+    def delete_obsolete_by_source_hash(
+        self,
+        source_hash: str,
+        *,
+        keep_ids: list[int],
+    ) -> None:
+        """在新版本 upsert 成功后删除同源旧向量。"""
+        if re.fullmatch(r"[0-9a-f]{64}", source_hash) is None:
+            raise ValueError("invalid_document_source_hash")
+        if not keep_ids or any(
+            isinstance(document_id, bool) or document_id < 1 for document_id in keep_ids
+        ):
+            raise ValueError("invalid_document_keep_ids")
+        keep_expression = ",".join(str(document_id) for document_id in sorted(keep_ids))
+        self.client.delete(
+            collection_name=self.collection_name,
+            filter=(
+                f'source_hash == "{source_hash}" ' f"and id not in [{keep_expression}]"
+            ),
+        )
 
     def _reciprocal_rank_fusion(self, dense_results, sparse_results, k=conf.RRF_K):
         """
@@ -667,6 +701,11 @@ class VectorStore:
             "chunk_id",
             "parent_index",
             "sub_index",
+            "source_hash",
+            "parser_version",
+            "chunk_strategy_version",
+            "embedding_pipeline_version",
+            "embedding_model_signature",
         ]
 
     def _resolve_internal_recall_limit(self, k, configured_limit=0):
@@ -1202,6 +1241,13 @@ class VectorStore:
             "chunk_id": entity.get("chunk_id"),
             "parent_index": _safe_int(entity.get("parent_index")),
             "sub_index": _safe_int(entity.get("sub_index")),
+            "source_hash": entity.get("source_hash"),
+            "parser_version": _safe_int(entity.get("parser_version")),
+            "chunk_strategy_version": _safe_int(entity.get("chunk_strategy_version")),
+            "embedding_pipeline_version": _safe_int(
+                entity.get("embedding_pipeline_version")
+            ),
+            "embedding_model_signature": entity.get("embedding_model_signature"),
             "retrieval_method": str(retrieval_method).strip(),
         }
         if score is not None:

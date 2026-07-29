@@ -41,6 +41,13 @@ from app.document_parser.docling_parser import ParsedDocument
 
 # 导入配置
 from app.core.config import Config
+from app.rag_core.document_pipeline import (
+    DOCUMENT_CHUNK_STRATEGY_VERSION,
+    DOCUMENT_EMBEDDING_PIPELINE_VERSION,
+    DOCUMENT_PARSER_VERSION,
+    build_document_chunk_identity,
+    build_embedding_model_signature,
+)
 
 # 导入向量存储
 from app.rag_core.vector_store import VectorStore
@@ -101,7 +108,12 @@ class DocumentEmbedder:
         }
 
     def embed_docling_sub_chunks(
-        self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument
+        self,
+        sub_chunks: List[Dict],
+        file_name: str,
+        parsed: ParsedDocument,
+        *,
+        source_hash: str,
     ) -> Dict:
         """
         嵌入 Docling 子块结果。
@@ -115,9 +127,16 @@ class DocumentEmbedder:
             Dict: 嵌入结果摘要。
         """
         documents = self._convert_docling_sub_chunks_to_documents(
-            sub_chunks, file_name, parsed
+            sub_chunks,
+            file_name,
+            parsed,
+            source_hash=source_hash,
         )
         self.vector_store.add_documents(documents)
+        self.vector_store.delete_obsolete_by_source_hash(
+            source_hash,
+            keep_ids=[int(document.metadata["id"]) for document in documents],
+        )
         return {
             "success": True,
             "file_name": file_name,
@@ -126,6 +145,10 @@ class DocumentEmbedder:
             "tables": len(parsed.tables),
             "images": len(parsed.images),
             "sub_chunks_count": len(sub_chunks),
+            "source_hash": source_hash,
+            "parser_version": DOCUMENT_PARSER_VERSION,
+            "chunk_strategy_version": DOCUMENT_CHUNK_STRATEGY_VERSION,
+            "embedding_pipeline_version": DOCUMENT_EMBEDDING_PIPELINE_VERSION,
             "message": f"Docling 子块嵌入完成，共 {len(sub_chunks)} 个子块",
         }
 
@@ -177,7 +200,12 @@ class DocumentEmbedder:
         return documents
 
     def _convert_docling_sub_chunks_to_documents(
-        self, sub_chunks: List[Dict], file_name: str, parsed: ParsedDocument
+        self,
+        sub_chunks: List[Dict],
+        file_name: str,
+        parsed: ParsedDocument,
+        *,
+        source_hash: str,
     ) -> List[Document]:
         """
         将 Docling 子块转换为 LangChain Document 对象。
@@ -195,13 +223,26 @@ class DocumentEmbedder:
         """
         documents = []
         timestamp = datetime.now().isoformat()
+        embedding_model_signature = build_embedding_model_signature(
+            str(self.conf.EMBEDDING_MODEL_PATH)
+        )
 
         for i, chunk in enumerate(sub_chunks):
-            unique_str = f"{file_name}_docling_{i}_{chunk['text']}"
-            chunk_id = hashlib.md5(unique_str.encode("utf-8")).hexdigest()
+            document_id, chunk_id = build_document_chunk_identity(
+                file_hash=source_hash,
+                chunk_index=i,
+                text=str(chunk["text"]),
+                parent_chunk_size=int(self.conf.PARENT_CHUNK_SIZE),
+                sub_chunk_size=int(self.conf.SUB_CHUNK_SIZE),
+                parent_chunk_overlap=int(self.conf.PARENT_CHUNK_OVERLAP),
+                sub_chunk_overlap=int(self.conf.SUB_CHUNK_OVERLAP),
+                embedding_model_signature=embedding_model_signature,
+            )
 
             metadata = {
+                "id": document_id,
                 "source": file_name,
+                "source_hash": source_hash,
                 "timestamp": timestamp,
                 "chunk_id": chunk_id,
                 "chunk_index": i,
@@ -215,6 +256,10 @@ class DocumentEmbedder:
                 "docling_pages": len(parsed.pages),
                 "parser": "docling",
                 "chunking_strategy": "hierarchical",
+                "parser_version": DOCUMENT_PARSER_VERSION,
+                "chunk_strategy_version": DOCUMENT_CHUNK_STRATEGY_VERSION,
+                "embedding_pipeline_version": DOCUMENT_EMBEDDING_PIPELINE_VERSION,
+                "embedding_model_signature": embedding_model_signature,
                 "parent_chunk_size": self.conf.PARENT_CHUNK_SIZE,
                 "sub_chunk_size": self.conf.SUB_CHUNK_SIZE,
             }

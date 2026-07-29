@@ -44,9 +44,12 @@ class GraphAdminService(
     EMBED_JOB_TYPE = "graph_embed_milvus"
     SOFT_TIMEOUT_SECONDS = 300
     SOFT_TIMEOUT_REPEAT_SECONDS = 60
-    GRAPH_IMPORT_CACHE_VERSION = 2
+    GRAPH_IMPORT_CACHE_VERSION = 3
+    GRAPH_IMPORT_PARSER_VERSION = 1
     GRAPH_IMPORT_CHUNK_LIMIT = 10000
     GRAPH_IMPORT_CHUNK_STRATEGY_VERSION = 3
+    GRAPH_EXTRACTION_PIPELINE_VERSION = 1
+    GRAPH_EXTRACTION_MODEL_SIGNATURE = ""
     GRAPH_LLM_REQUEST_TIMEOUT_SECONDS = 600
     GRAPH_LLM_MAX_ATTEMPTS = 3
     GRAPH_LLM_MAX_PARALLELISM = 3
@@ -82,6 +85,9 @@ class GraphAdminService(
         self._log_api_error = log_api_error
         self._config = Config()
         self._graph_llm_lane_configs = list(self._config.GRAPH_LLM_LANE_CONFIGS)
+        self.GRAPH_EXTRACTION_MODEL_SIGNATURE = (
+            self._compute_extraction_model_signature(self._graph_llm_lane_configs)
+        )
         self._graph_extraction_lane_pool = GraphExtractionLanePool()
         self._graph_quality_service = GraphQualityService(
             await_call=await_call,

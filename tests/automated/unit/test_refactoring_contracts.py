@@ -62,9 +62,12 @@ class _GraphCrudHarness(GraphCrudMixin):
 
 
 class _GraphCacheHarness(GraphImportCacheMixin):
-    GRAPH_IMPORT_CACHE_VERSION = 2
+    GRAPH_IMPORT_CACHE_VERSION = 3
+    GRAPH_IMPORT_PARSER_VERSION = 1
     GRAPH_IMPORT_CHUNK_LIMIT = 10000
     GRAPH_IMPORT_CHUNK_STRATEGY_VERSION = 2
+    GRAPH_EXTRACTION_PIPELINE_VERSION = 1
+    GRAPH_EXTRACTION_MODEL_SIGNATURE = "model-signature"
 
     @staticmethod
     def _utc_now_iso() -> str:
@@ -296,6 +299,58 @@ def test_graph_import_cache_round_trip(monkeypatch, tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded["_chunks"] == ["text"]
     assert loaded["cache_used"] is True
+
+    monkeypatch.setattr(
+        _GraphCacheHarness,
+        "GRAPH_EXTRACTION_MODEL_SIGNATURE",
+        "changed-model-signature",
+    )
+    invalidated, reason = service._load_graph_import_cache("file-hash")
+    assert invalidated is None
+    assert reason == "本地缓存抽取模型配置已变化，已重新解析"
+
+
+def test_graph_extraction_signature_is_ordered_and_secret_free() -> None:
+    first = _GraphCacheHarness._compute_extraction_model_signature(
+        [
+            {
+                "lane_id": 2,
+                "model_name": "model-b",
+                "source": "GRAPH_LLM_2_*",
+                "api_key": "secret-b",
+                "base_url": "https://provider-b.example",
+            },
+            {
+                "lane_id": 1,
+                "model_name": "model-a",
+                "source": "GRAPH_LLM_1_*",
+                "api_key": "secret-a",
+                "base_url": "https://provider-a.example",
+            },
+        ]
+    )
+    reordered_with_rotated_secrets = (
+        _GraphCacheHarness._compute_extraction_model_signature(
+            [
+                {
+                    "lane_id": 1,
+                    "model_name": "model-a",
+                    "source": "GRAPH_LLM_1_*",
+                    "api_key": "rotated-a",
+                    "base_url": "https://new-provider-a.example",
+                },
+                {
+                    "lane_id": 2,
+                    "model_name": "model-b",
+                    "source": "GRAPH_LLM_2_*",
+                    "api_key": "rotated-b",
+                    "base_url": "https://new-provider-b.example",
+                },
+            ]
+        )
+    )
+
+    assert first == reordered_with_rotated_secrets
 
 
 def test_graph_import_parser_splits_plain_text_and_reuses_cache(
