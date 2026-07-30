@@ -71,6 +71,7 @@ flowchart LR
 ├─ requirements.txt         # Python 依赖
 ├─ project_retrospective.md # 项目演进、问题与经验复盘
 ├─ refactoring.md           # 重构边界、已完成工作与后续路线
+├─ error_summary.md         # 开源发布与 CI 错误复盘
 └─ README.md
 ```
 
@@ -78,6 +79,7 @@ flowchart LR
 
 - [project_retrospective.md](./project_retrospective.md)：项目演进、问题与经验总结；
 - [refactoring.md](./refactoring.md)：重构决策、当前边界和后续验收标准；
+- [error_summary.md](./error_summary.md)：开源发布、CI 失败根因与预防措施；
 - [OPEN_SOURCE_AUDIT.md](./OPEN_SOURCE_AUDIT.md)：开源治理、数据授权与仓库卫生审计；
 - [CONTRIBUTING.md](./CONTRIBUTING.md)：开发、测试和贡献流程；
 - [SECURITY.md](./SECURITY.md)：安全漏洞私有报告流程。
