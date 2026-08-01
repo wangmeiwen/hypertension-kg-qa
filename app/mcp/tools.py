@@ -36,6 +36,7 @@ from app.rag_core.runtime_resources import (
     get_shared_kg_milvus_store,
     get_shared_vector_store,
 )
+from app.rag_core.vector_store import VectorStore
 
 current_dir = Path(__file__).resolve().parent
 src_dir = current_dir.parent
@@ -300,7 +301,19 @@ class RagSearchTool:
             conf: 系统配置对象。
         """
         self.conf = conf
-        self.vector_store = get_shared_vector_store(conf)
+        self._vector_store: Optional[VectorStore] = None
+
+    @property
+    def vector_store(self) -> VectorStore:
+        """首次真正检索时再加载文本向量与重排模型。"""
+        if self._vector_store is None:
+            self._vector_store = get_shared_vector_store(self.conf)
+        return self._vector_store
+
+    @vector_store.setter
+    def vector_store(self, value: VectorStore) -> None:
+        """允许测试注入轻量向量库。"""
+        self._vector_store = value
 
     async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         """执行向量检索并返回片段命中结果。
@@ -614,7 +627,7 @@ class KgEntityRelationSearchTool:
                 "collection_name": result.get("collection_name"),
                 "retrieval_meta": result.get("retrieval_meta"),
             }
-            evidence = [
+            entity_evidence = [
                 build_kg_evidence(
                     item,
                     tool_name="kg_entity_relation_search",
@@ -624,7 +637,7 @@ class KgEntityRelationSearchTool:
                 for item in entities
                 if isinstance(item, dict)
             ]
-            evidence.extend(
+            relationship_evidence = [
                 build_kg_evidence(
                     item,
                     tool_name="kg_entity_relation_search",
@@ -633,7 +646,13 @@ class KgEntityRelationSearchTool:
                 )
                 for item in relationships
                 if isinstance(item, dict)
-            )
+            ]
+            evidence = [
+                *relationship_evidence[:2],
+                *entity_evidence[:4],
+                *relationship_evidence[2:],
+                *entity_evidence[4:],
+            ]
             response = {
                 key: value
                 for key, value in result.items()

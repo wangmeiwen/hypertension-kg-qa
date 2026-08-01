@@ -15,6 +15,24 @@
 
 第三方资料、模型和数据不因被本项目读取而适用仓库的 Apache-2.0 许可证。
 
+## 当前本地图谱实验基线
+
+当前实验只使用指南正文的前 20 页，不再把 98 页全文作为导入数据。PDF 仍受
+`.gitignore` 保护，不随仓库分发。取得有权使用的完整 PDF 后，可在
+`hypertension-qa` Conda 环境中生成同样的本地数据集：
+
+```powershell
+conda run -n hypertension-qa python tests/scripts/crop_pdf_pages.py `
+  path/to/full_guideline.pdf `
+  data/中国高血压防治指南2024.pdf `
+  --pages 20 `
+  --overwrite
+```
+
+本轮校验后的 20 页文件 SHA-256 为
+`669D02309AEC874E5F707FF3A2C23399619D8D041E1608F19D8DD81AE6819F93`。
+哈希只用于确认本地实验输入一致，不表示项目有权再分发该文件。
+
 ## 本地目录建议
 
 ```text

@@ -222,6 +222,7 @@ primary_prompt = PromptTemplate(
         "3. 严格去重：同名同类型实体只保留一个。\n"
         "4. 若同一实体同时有中文名和英文缩写，name 保留正文主名，另一个放入 canonical_name 或 attributes.alias。\n"
         "5. 若文本中有指南、文献、数据库、PMID、DOI、URL、章节号、发布机构等来源信息，尽量创建 Guideline 或 Source 实体，并建立来源关系。\n\n"
+        "6. 每个输出实体必须至少作为一条 relations 的 subject 或 object；不要输出没有关系的孤立名词。\n\n"
         "【抽取范围】\n"
         "面向高血压领域，抽取以下内容：\n"
         "- 疾病及其表型\n"
@@ -417,6 +418,7 @@ omission_judge_prompt = PromptTemplate(
     template=(
         "你是知识图谱抽取质检专家。\n"
         "给定原文与当前抽取结果，判断是否还存在明确可抽取但未抽取的实体或关系。\n"
+        "只有能组成有效“实体-关系-实体”三元组的事实才算遗漏，孤立实体不算遗漏。\n"
         "仅输出 YES 或 NO，不要输出其他内容。\n\n"
         "原文：\n{text}\n\n"
         "当前抽取结果：\n{draft_json}"
@@ -436,7 +438,8 @@ supplement_prompt = PromptTemplate(
         '若无增量，返回：{{"entities": [], "relations": []}}\n\n'
         "一致性要求：\n"
         "1. 新关系中的 subject/object 必须在增量 entities 或当前结果 entities 中存在。\n"
-        "2. 仅保留文本中明确表达的事实，禁止常识补全。\n\n"
+        "2. 仅保留文本中明确表达的事实，禁止常识补全。\n"
+        "3. 每个增量实体必须至少参与一条当前或增量关系，禁止输出孤立实体。\n\n"
         "当前抽取结果（仅供参考去重）：\n{draft_json}\n\n"
         "原文：\n{text}\n\n"
         "输出必须严格符合：\n{format_instructions}"
@@ -852,6 +855,11 @@ def build_node_queries(
         UNWIND $rows AS row
         MERGE (n:KnowledgeEntity:{safe} {{name: row.name}})
         SET n += row.props
+        SET n.aliases = CASE
+            WHEN row.props.alias IS NULL OR row.props.alias = "" THEN coalesce(n.aliases, [])
+            WHEN row.props.alias IN coalesce(n.aliases, []) THEN n.aliases
+            ELSE coalesce(n.aliases, []) + row.props.alias
+        END
         SET n.canonical_name = CASE
             WHEN row.canonical_name IS NULL OR row.canonical_name = "" THEN n.canonical_name
             ELSE row.canonical_name
@@ -901,11 +909,17 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
         UNWIND $rows AS row
         MATCH (a:{source_label} {{name: row.subj}})
         MATCH (b:{target_label} {{name: row.obj}})
-        MERGE (a)-[r:{rel_label} {{
-            source_id: row.source_id,
-            source_chunk_index: row.source_chunk_index
-        }}]->(b)
+        MERGE (a)-[r:{rel_label}]->(b)
         SET r += row.props
+        SET r.source_ids = CASE
+            WHEN row.source_id IN coalesce(r.source_ids, []) THEN r.source_ids
+            ELSE coalesce(r.source_ids, []) + row.source_id
+        END
+        SET r.source_chunk_indices = CASE
+            WHEN row.source_chunk_index IN coalesce(r.source_chunk_indices, [])
+            THEN r.source_chunk_indices
+            ELSE coalesce(r.source_chunk_indices, []) + row.source_chunk_index
+        END
         """
         queries.append((cypher.strip(), {"rows": rows}))
 

@@ -61,19 +61,49 @@ def test_graph_staging_normalizes_aliases_and_reports_connectivity() -> None:
     assert [item["name"] for item in result["entities"]] == [
         "高血压",
         "氨氯地平",
-        "中国高血压防治指南",
     ]
     assert result["entities"][0]["attributes"]["alias"] == "高血压病"
     assert result["entities"][0]["attributes"]["source_id"] == "sha256:guide"
     assert result["relations"][0]["subject"] == "高血压"
     assert result["relations"][0]["attributes"]["source_id"] == "sha256:guide"
-    assert result["relations"][0]["attributes"]["quality_policy_version"] == 1
+    assert result["relations"][0]["attributes"]["quality_policy_version"] == 2
     assert result["metrics"]["duplicate_entities"] == 1
     assert result["metrics"]["duplicate_relations"] == 1
-    assert result["metrics"]["isolated_node_rate"] == 0.333333
-    assert result["metrics"]["largest_connected_component_ratio"] == 0.666667
+    assert result["metrics"]["isolated_node_rate"] == 0.0
+    assert result["metrics"]["largest_connected_component_ratio"] == 1.0
     assert result["metrics"]["relationship_source_coverage_rate"] == 1.0
-    assert result["metrics"]["confidence_coverage_rate"] == 0.5
+    assert result["metrics"]["confidence_coverage_rate"] == 0.666667
+
+
+def test_graph_staging_keeps_policy_canonical_name_over_model_hint() -> None:
+    result = stage_graph_extraction(
+        {
+            "entities": [
+                {
+                    "name": "踝臂血压指数",
+                    "type": "Indicator",
+                    "canonical_name": "ABI",
+                },
+                {"name": "高血压", "type": "Disease"},
+            ],
+            "relations": [
+                {
+                    "subject": "高血压",
+                    "subject_type": "Disease",
+                    "relation": "HAS_INDICATOR",
+                    "object": "踝臂血压指数",
+                    "object_type": "Indicator",
+                }
+            ],
+        },
+        _source_context(),
+    )
+
+    indicator = next(
+        entity for entity in result["entities"] if entity["type"] == "Indicator"
+    )
+    assert indicator["name"] == "踝臂血压指数"
+    assert indicator["canonical_name"] == "踝臂血压指数"
 
 
 def test_graph_staging_rejects_invalid_direction_endpoint_and_attributes() -> None:
@@ -121,15 +151,16 @@ def test_graph_staging_rejects_invalid_direction_endpoint_and_attributes() -> No
         _source_context(),
     )
 
-    assert result["entities"][0]["attributes"]["year"] == 2024
+    assert result["entities"] == []
     assert result["relations"] == []
     assert {issue["reason"] for issue in result["rejected"]} == {
         "unsupported_entity_type",
         "invalid_confidence",
         "invalid_relation_direction",
         "relation_endpoint_missing",
+        "isolated_entity",
     }
-    assert result["metrics"]["rejected_entities"] == 2
+    assert result["metrics"]["rejected_entities"] == 4
     assert result["metrics"]["rejected_relations"] == 3
 
 
@@ -169,6 +200,73 @@ def test_graph_staging_resolves_relation_endpoints_from_declared_canonical_name(
 
     assert result["relations"][0]["subject"] == "原发性高血压"
     assert result["metrics"]["rejected_relations"] == 0
+
+
+def test_graph_staging_resolves_domain_abbreviations_deterministically() -> None:
+    result = stage_graph_extraction(
+        {
+            "entities": [
+                {"name": "CKD", "type": "Disease"},
+                {"name": "慢性肾病", "type": "Disease"},
+                {"name": "eGFR", "type": "Indicator"},
+                {"name": "估算肾小球滤过率", "type": "Indicator"},
+            ],
+            "relations": [
+                {
+                    "subject": "CKD",
+                    "subject_type": "Disease",
+                    "relation": "HAS_INDICATOR",
+                    "object": "eGFR",
+                    "object_type": "Indicator",
+                }
+            ],
+        },
+        _source_context(),
+    )
+
+    assert [(item["name"], item["type"]) for item in result["entities"]] == [
+        ("慢性肾脏病", "Disease"),
+        ("估算肾小球滤过率", "Indicator"),
+    ]
+    assert result["metrics"]["duplicate_entities"] == 2
+
+
+def test_graph_staging_merges_domain_synonyms_before_writing() -> None:
+    result = stage_graph_extraction(
+        {
+            "entities": [
+                {"name": "孤立性舒张期高血压", "type": "Phenotype"},
+                {"name": "单纯舒张期高血压", "type": "Phenotype"},
+                {"name": "高血压", "type": "Disease"},
+                {"name": "踝/臂血压指数", "type": "Indicator"},
+                {"name": "踝臂血压指数", "type": "Indicator"},
+            ],
+            "relations": [
+                {
+                    "subject": "高血压",
+                    "subject_type": "Disease",
+                    "relation": "HAS_PHENOTYPE",
+                    "object": "孤立性舒张期高血压",
+                    "object_type": "Phenotype",
+                },
+                {
+                    "subject": "高血压",
+                    "subject_type": "Disease",
+                    "relation": "HAS_INDICATOR",
+                    "object": "踝/臂血压指数",
+                    "object_type": "Indicator",
+                },
+            ],
+        },
+        _source_context(),
+    )
+
+    assert {(item["name"], item["type"]) for item in result["entities"]} == {
+        ("高血压", "Disease"),
+        ("单纯舒张期高血压", "Phenotype"),
+        ("踝臂血压指数", "Indicator"),
+    }
+    assert result["metrics"]["duplicate_entities"] == 2
 
 
 def test_graph_query_building_only_uses_staging_records(monkeypatch) -> None:
@@ -215,6 +313,7 @@ def test_graph_query_building_only_uses_staging_records(monkeypatch) -> None:
     relation_query, relation_params = result["relation_queries"][0]
     assert relation_params["rows"][0]["subj"] == "高血压"
     assert relation_params["rows"][0]["source_id"] == "sha256:guide"
-    assert "source_chunk_index: row.source_chunk_index" in relation_query
+    assert "MERGE (a)-[r:COMMON_DRUG]->(b)" in relation_query
+    assert "source_chunk_indices" in relation_query
     assert result["quality"]["rejected"][0]["reason"] == "invalid_relation_direction"
     assert any(event[0][1] == "graph_quality_staging" for event in events)

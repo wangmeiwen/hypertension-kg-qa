@@ -583,8 +583,25 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
     assert service._json_loads('{"a":1}', {}) == {"a": 1}
     assert service._json_loads("bad", {"fallback": True}) == {"fallback": True}
     assert GraphExtractionLanePool.normalize_chunk_status("unknown") == "pending"
+    assert service._normalize_chunk_status("succeeded") == "succeeded"
+    assert service._clone_lane_statuses([{"status": "ready"}]) == [{"status": "ready"}]
+    assert service._resume_requires_graph_state(
+        [{"status": "succeeded", "entity_count": 2, "relation_count": 1}]
+    )
+    assert not service._resume_requires_graph_state(
+        [
+            {"status": "succeeded", "entity_count": 0, "relation_count": 0},
+            {"status": "failed", "entity_count": 2, "relation_count": 1},
+        ]
+    )
     assert service._format_resume_message(3)
     assert GraphExtractionLanePool.classify_lane_error("403 forbidden") == "permanent"
+    assert (
+        GraphExtractionLanePool.classify_lane_error(
+            "AllocationQuota.FreeTierOnly: Free quota exhausted"
+        )
+        == "permanent"
+    )
     assert (
         GraphExtractionLanePool.count_active_lanes(
             [{"status": "ready"}, {"status": "failed"}]

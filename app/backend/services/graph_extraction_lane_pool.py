@@ -25,6 +25,8 @@ class GraphExtractionLanePool:
             "401 unauthorized",
             "403 forbidden",
             "404 not found",
+            "allocationquota",
+            "free quota exhausted",
         )
         if any(marker in error_text for marker in permanent_markers):
             return "permanent"

@@ -443,6 +443,12 @@ def test_graph_lane_pool_classifies_and_updates_lane_state() -> None:
     assert (
         GraphExtractionLanePool.classify_lane_error("401 Unauthorized") == "permanent"
     )
+    assert (
+        GraphExtractionLanePool.classify_lane_error(
+            "AllocationQuota.FreeTierOnly: Free quota exhausted"
+        )
+        == "permanent"
+    )
     assert GraphExtractionLanePool.classify_lane_error("429 rate limit") == "transient"
     assert GraphExtractionLanePool.count_active_lanes(statuses) == 0
     assert GraphExtractionLanePool.count_viable_lanes(statuses) == 1

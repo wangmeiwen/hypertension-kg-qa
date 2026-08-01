@@ -258,6 +258,21 @@ def test_rag_search_tool_returns_shared_evidence_contract() -> None:
     assert invalid_result["error"] == "unsupported_retrieval_mode:invalid"
 
 
+def test_rag_search_tool_loads_vector_store_lazily(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "app.mcp.tools.get_shared_vector_store",
+        lambda conf: calls.append(conf),
+    )
+    conf = SimpleNamespace()
+
+    tool = RagSearchTool(conf)
+
+    assert calls == []
+    _ = tool.vector_store
+    assert calls == [conf]
+
+
 def test_kg_query_tool_returns_shared_evidence_contract() -> None:
     class Neo4jClientStub:
         async def run_cypher(
@@ -359,11 +374,11 @@ def test_kg_entity_relation_tool_returns_shared_evidence_contract() -> None:
     assert "disambiguated_entities" not in result
     assert len(result["evidence"]) == 2
     assert all(set(item) == EVIDENCE_FIELDS for item in result["evidence"])
-    assert result["evidence"][0]["source_id"] == "entity-1"
-    assert result["evidence"][1]["source_id"] == "relation-1"
-    assert result["evidence"][1]["provenance"]["kind"] == "relationship"
+    assert result["evidence"][0]["source_id"] == "relation-1"
+    assert result["evidence"][1]["source_id"] == "entity-1"
+    assert result["evidence"][0]["provenance"]["kind"] == "relationship"
     assert (
-        result["evidence"][1]["provenance"]["context"]["collection_name"]
+        result["evidence"][0]["provenance"]["context"]["collection_name"]
         == "kg_collection"
     )
 

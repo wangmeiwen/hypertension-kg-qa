@@ -32,7 +32,10 @@ from docling.document_converter import (
 )
 from docling.datamodel.base_models import ConversionStatus, InputFormat
 from docling.datamodel.document import ConversionResult
-from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
+from docling.datamodel.pipeline_options import (
+    AcceleratorOptions,
+    ThreadedPdfPipelineOptions,
+)
 from langchain_docling import DoclingLoader
 
 logger = logging.getLogger(__name__)
@@ -162,16 +165,27 @@ class DoclingParser:
             )
 
     def _build_pdf_pipeline_options(self) -> ThreadedPdfPipelineOptions:
-        """构建启用 GLM OCR 插件的 PDF/Image pipeline 选项。
+        """构建低内存 PDF/Image pipeline 选项。
 
         Returns:
             ThreadedPdfPipelineOptions: Docling PDF pipeline 配置。
         """
+        common_options: Dict[str, Any] = {
+            "accelerator_options": AcceleratorOptions(num_threads=2, device="auto"),
+            "do_ocr": self.enable_image_ocr,
+            "ocr_batch_size": 1,
+            "layout_batch_size": 1,
+            "table_batch_size": 1,
+            "queue_max_size": 2,
+        }
+        if not self.enable_image_ocr:
+            return ThreadedPdfPipelineOptions(**common_options)
+
         from app.document_parser.docling_glm_ocr_plugin import GlmVisionOcrOptions
 
         return ThreadedPdfPipelineOptions(
+            **common_options,
             allow_external_plugins=True,
-            do_ocr=self.enable_image_ocr,
             ocr_options=GlmVisionOcrOptions(),
         )
 
@@ -181,9 +195,6 @@ class DoclingParser:
         Returns:
             DocumentConverter: 启用或禁用外部 OCR 插件的转换器实例。
         """
-        if not self.enable_image_ocr:
-            return DocumentConverter()
-
         pdf_options = self._build_pdf_pipeline_options()
         image_options = self._build_pdf_pipeline_options()
         return DocumentConverter(

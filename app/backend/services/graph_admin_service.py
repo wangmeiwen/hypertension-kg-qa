@@ -50,15 +50,39 @@ class GraphAdminService(
     SOFT_TIMEOUT_SECONDS = 300
     SOFT_TIMEOUT_REPEAT_SECONDS = 60
     GRAPH_IMPORT_CACHE_VERSION = 3
-    GRAPH_IMPORT_PARSER_VERSION = 1
-    GRAPH_IMPORT_CHUNK_LIMIT = 10000
-    GRAPH_IMPORT_CHUNK_STRATEGY_VERSION = 3
-    GRAPH_EXTRACTION_PIPELINE_VERSION = 1
+    GRAPH_IMPORT_PARSER_VERSION = 2
+    GRAPH_IMPORT_CHUNK_LIMIT = 6000
+    GRAPH_IMPORT_CHUNK_STRATEGY_VERSION = 4
+    GRAPH_EXTRACTION_PIPELINE_VERSION = 6
     GRAPH_EXTRACTION_MODEL_SIGNATURE = ""
     GRAPH_LLM_REQUEST_TIMEOUT_SECONDS = 600
-    GRAPH_LLM_MAX_ATTEMPTS = 3
+    GRAPH_LLM_MAX_ATTEMPTS = 4
     GRAPH_LLM_MAX_PARALLELISM = 3
-    GRAPH_LLM_TRANSIENT_BACKOFF_SECONDS = 15
+    GRAPH_LLM_TRANSIENT_BACKOFF_SECONDS = 60
+
+    @staticmethod
+    def _normalize_chunk_status(status: Any) -> str:
+        """向持久化 mixin 暴露 lane 的分块状态归一化规则。"""
+        return GraphExtractionLanePool.normalize_chunk_status(status)
+
+    @staticmethod
+    def _clone_lane_statuses(
+        lane_statuses: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """向持久化 mixin 暴露 lane 状态快照复制规则。"""
+        return GraphExtractionLanePool.clone_lane_statuses(lane_statuses)
+
+    @staticmethod
+    def _resume_requires_graph_state(chunks: list[dict[str, Any]]) -> bool:
+        """判断断点是否声称已有必须存在于 Neo4j 的成功写入。"""
+        return any(
+            str(chunk.get("status") or "") == "succeeded"
+            and (
+                int(chunk.get("entity_count") or 0) > 0
+                or int(chunk.get("relation_count") or 0) > 0
+            )
+            for chunk in chunks
+        )
 
     def __init__(
         self,
@@ -349,6 +373,44 @@ class GraphAdminService(
         if resumable_run:
             run_id = str(resumable_run.get("run_id") or "")
             existing_chunks = await self._load_graph_import_chunks(run_id)
+            if existing_chunks and self._resume_requires_graph_state(existing_chunks):
+                graph_rows = await self._await_call(
+                    self._neo4j_client.run_cypher,
+                    """
+                    MATCH (n)
+                    WHERE n.source_hash = $file_hash
+                    WITH count(n) AS node_count
+                    OPTIONAL MATCH ()-[r]->()
+                    WHERE r.source_id = $file_hash
+                       OR $file_hash IN coalesce(r.source_ids, [])
+                    RETURN node_count, count(r) AS relationship_count
+                    """,
+                    {"file_hash": file_hash},
+                )
+                graph_state = (
+                    graph_rows[0]
+                    if isinstance(graph_rows, list)
+                    and graph_rows
+                    and isinstance(graph_rows[0], dict)
+                    else {}
+                )
+                node_count = int(graph_state.get("node_count") or 0)
+                relationship_count = int(graph_state.get("relationship_count") or 0)
+                if node_count == 0 and relationship_count == 0:
+                    resume_compatible = False
+                    incompatibility_reason = (
+                        "旧断点包含成功写入记录，但 Neo4j 中不存在对应来源数据，"
+                        "已放弃断点并从第 1 块重新导入"
+                    )
+                    await self._set_graph_run_status(
+                        run_id,
+                        "failed",
+                        last_error=incompatibility_reason,
+                        finished=True,
+                    )
+                    cache_invalidated_reason = incompatibility_reason
+                    resumable_run = None
+                    existing_chunks = []
             if existing_chunks and len(existing_chunks) != total_chunks:
                 resume_compatible = False
                 incompatibility_reason = (

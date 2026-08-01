@@ -117,6 +117,27 @@ class GraphImportParser:
             f"当前环境无法使用 Docling，且该格式无内置回退解析器: {suffix}"
         )
 
+    @staticmethod
+    def _requires_image_ocr(raw_bytes: bytes, suffix: str) -> bool:
+        """仅在 PDF 缺少可用文本层或输入为图片时启用外部图片 OCR。"""
+        if suffix in {".jpg", ".jpeg", ".png"}:
+            return True
+        if suffix != ".pdf":
+            return False
+
+        import fitz  # type: ignore[import-untyped]
+
+        document = fitz.open(stream=raw_bytes, filetype="pdf")
+        try:
+            if len(document) == 0:
+                return True
+            text_pages = sum(
+                1 for page in document if len(page.get_text("text").strip()) >= 40
+            )
+            return text_pages / len(document) < 0.8
+        finally:
+            document.close()
+
     def parse_and_split(
         self,
         file_bytes: bytes,
@@ -188,9 +209,10 @@ class GraphImportParser:
             try:
                 from app.document_parser.docling_parser import DoclingParser
 
+                enable_image_ocr = self._requires_image_ocr(file_bytes, suffix)
                 parser = DoclingParser(
-                    enable_image_ocr=True,
-                    strict_image_ocr=True,
+                    enable_image_ocr=enable_image_ocr,
+                    strict_image_ocr=enable_image_ocr,
                     progress_callback=stage_callback,
                 )
                 parsed = parser.parse_bytes(file_bytes, filename)

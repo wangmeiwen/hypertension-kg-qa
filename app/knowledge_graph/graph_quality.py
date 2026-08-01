@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, TypedDict
 
-GRAPH_QUALITY_POLICY_VERSION = 1
+GRAPH_QUALITY_POLICY_VERSION = 2
 
 
 class GraphSourceContext(TypedDict):
@@ -198,16 +198,62 @@ _RELATION_SIGNATURES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 
 _ALIASES = {
+    ("Disease", "hypertension"): "高血压",
     ("Disease", "高血压病"): "高血压",
+    ("Disease", "ckd"): "慢性肾脏病",
+    ("Disease", "慢性肾病"): "慢性肾脏病",
+    ("Disease", "copd"): "慢性阻塞性肺疾病",
+    ("Disease", "cardiovascular disease"): "心血管疾病",
+    ("Disease", "hfpef"): "射血分数保留的心力衰竭",
+    ("Phenotype", "孤立性舒张期高血压"): "单纯舒张期高血压",
+    ("Phenotype", "孤立性收缩期高血压"): "单纯收缩期高血压",
+    ("RiskFactor", "年龄"): "增龄",
+    ("RiskFactor", "不良生活习惯"): "不良生活方式",
+    ("RiskFactor", "腹型肥胖"): "腹部肥胖",
+    ("RiskFactor", "高盐饮食"): "高钠膳食",
+    ("RiskFactor", "高钠饮食"): "高钠膳食",
+    ("RiskFactor", "低钾饮食"): "低钾膳食",
+    ("DrugClass", "acei"): "ACEI",
     ("DrugClass", "ace抑制剂"): "ACEI",
     ("DrugClass", "血管紧张素转换酶抑制剂"): "ACEI",
+    ("DrugClass", "arb"): "ARB",
     ("DrugClass", "血管紧张素ⅱ受体阻滞剂"): "ARB",
     ("DrugClass", "血管紧张素ii受体阻滞剂"): "ARB",
     ("DrugClass", "血管紧张素ⅱ受体拮抗剂"): "ARB",
     ("DrugClass", "血管紧张素ii受体拮抗剂"): "ARB",
+    ("DrugClass", "ccb"): "CCB",
     ("DrugClass", "钙通道阻滞剂"): "CCB",
+    ("DrugClass", "arni"): "血管紧张素受体脑啡肽酶抑制剂",
+    ("DrugClass", "mra"): "盐皮质激素受体拮抗剂",
     ("MeasurementMethod", "动态血压监测"): "ABPM",
+    ("MeasurementMethod", "abpm"): "ABPM",
     ("MeasurementMethod", "家庭血压监测"): "HBPM",
+    ("MeasurementMethod", "hbpm"): "HBPM",
+    ("Indicator", "abi"): "踝臂血压指数",
+    ("Indicator", "踝/臂血压指数"): "踝臂血压指数",
+    ("Indicator", "踝肱指数"): "踝臂血压指数",
+    ("Indicator", "egfr"): "估算肾小球滤过率",
+    ("Indicator", "估算的肾小球滤过率"): "估算肾小球滤过率",
+    ("Indicator", "lvmi"): "左心室质量指数",
+    ("Indicator", "pwv"): "脉搏波传导速度",
+    ("Indicator", "颈动脉imt"): "颈动脉内膜中层厚度",
+    ("PatientProfile", "老年人群"): "老年人",
+    (
+        "PatientProfile",
+        "合并ckd的高血压患者",
+    ): "合并慢性肾脏病的高血压患者",
+    (
+        "Guideline",
+        "中国高血压防治指南 (2024年修订版)",
+    ): "中国高血压防治指南（2024年修订版）",
+    (
+        "Guideline",
+        "中国高血压防治指南(2024年修订版)",
+    ): "中国高血压防治指南（2024年修订版）",
+    (
+        "Guideline",
+        "《中国高血压防治指南(2024年修订版)》",
+    ): "中国高血压防治指南（2024年修订版）",
 }
 
 
@@ -221,11 +267,20 @@ def _lookup_key(value: Any) -> str:
     return _normalized_text(value).casefold()
 
 
+_CANONICAL_NAMES = {
+    (entity_type, _lookup_key(canonical_name)): canonical_name
+    for (entity_type, _), canonical_name in _ALIASES.items()
+}
+
+
 def _canonical_name(entity_type: str, name: Any, canonical_name: Any = "") -> str:
     normalized_name = _normalized_text(name)
     mapped_name = _ALIASES.get((entity_type, _lookup_key(normalized_name)))
     if mapped_name is not None:
         return mapped_name
+    preferred_name = _CANONICAL_NAMES.get((entity_type, _lookup_key(normalized_name)))
+    if preferred_name is not None:
+        return preferred_name
     normalized_canonical = _normalized_text(canonical_name)
     return normalized_canonical if normalized_canonical else normalized_name
 
@@ -360,6 +415,7 @@ def stage_graph_extraction(
     rejected: list[GraphQualityIssue] = []
     entity_keys: set[tuple[str, str]] = set()
     entity_records: dict[tuple[str, str], dict[str, Any]] = {}
+    entity_indices: dict[tuple[str, str], int] = {}
     entity_aliases: dict[tuple[str, str], str] = {}
     duplicate_entities = 0
 
@@ -435,6 +491,7 @@ def stage_graph_extraction(
             "attributes": _with_provenance(attributes, context),
         }
         entity_records[entity_key] = entity_record
+        entity_indices[entity_key] = index
         accepted_entities.append(entity_record)
 
     relation_keys: set[tuple[str, str, str, str, str]] = set()
@@ -532,6 +589,29 @@ def stage_graph_extraction(
         }
         relation_records[relation_key] = relation_record
         accepted_relations.append(relation_record)
+
+    connected_entity_keys = {
+        key
+        for relation in accepted_relations
+        for key in (
+            (relation["subject"], relation["subject_type"]),
+            (relation["object"], relation["object_type"]),
+        )
+    }
+    isolated_entity_keys = entity_keys - connected_entity_keys
+    for entity_key in sorted(isolated_entity_keys, key=entity_indices.__getitem__):
+        rejected.append(
+            {
+                "record_type": "entity",
+                "record_index": entity_indices[entity_key],
+                "reason": "isolated_entity",
+            }
+        )
+    accepted_entities = [
+        entity
+        for entity in accepted_entities
+        if (entity["name"], entity["type"]) in connected_entity_keys
+    ]
 
     rejected_entities = sum(1 for issue in rejected if issue["record_type"] == "entity")
     rejected_relations = sum(

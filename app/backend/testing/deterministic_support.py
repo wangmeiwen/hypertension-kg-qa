@@ -19,6 +19,7 @@ from app.backend.domain.stream_events import (
     stream_event_json_line,
 )
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
+from app.knowledge_graph.graph_quality import GRAPH_QUALITY_POLICY_VERSION
 
 MEDICAL_DISCLAIMER = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
 
@@ -1117,7 +1118,7 @@ class DeterministicGraphAdminService:
                 ),
                 "quality_policy_covered_relationship_count": total_relationships,
                 "quality_policy_coverage_rate": (1.0 if total_relationships else 0.0),
-                "quality_policy_version": 1,
+                "quality_policy_version": GRAPH_QUALITY_POLICY_VERSION,
             },
         }
 

@@ -572,23 +572,47 @@ class KgMilvusStore:
             List[Dict[str, Any]]: 实体行数据列表
         """
         rows: List[Dict[str, Any]] = []
-        target_labels = labels
-        if not target_labels:
-            result = await neo4j_client.run_cypher("""
-                MATCH (n)
-                UNWIND labels(n) AS label
-                RETURN DISTINCT label
+        if labels:
+            node_batches = [
+                (
+                    label,
+                    await neo4j_client.run_cypher(f"""
+                        MATCH (n:{label})
+                        RETURN n, id(n) AS node_id,
+                               n.entity_type AS entity_type,
+                               labels(n) AS node_labels
+                        """),
+                )
+                for label in labels
+            ]
+        else:
+            nodes = await neo4j_client.run_cypher("""
+                MATCH (n:KnowledgeEntity)
+                RETURN n, id(n) AS node_id,
+                       n.entity_type AS entity_type,
+                       labels(n) AS node_labels
                 """)
-            target_labels = [record["label"] for record in result]
+            node_batches = [("", nodes)]
 
-        for label in target_labels:
-            nodes = await neo4j_client.run_cypher(f"""
-                MATCH (n:{label})
-                RETURN n, id(n) AS node_id
-                """)
+        seen_node_ids: set[int] = set()
+        for requested_label, nodes in node_batches:
             for node_data in nodes:
                 node = node_data["n"]
                 node_id = node_data["node_id"]
+                if node_id in seen_node_ids:
+                    continue
+                seen_node_ids.add(node_id)
+                node_labels = node_data.get("node_labels")
+                domain_labels = [
+                    str(item)
+                    for item in node_labels or []
+                    if str(item) != "KnowledgeEntity"
+                ]
+                label = str(
+                    node_data.get("entity_type")
+                    or requested_label
+                    or (domain_labels[0] if domain_labels else "KnowledgeEntity")
+                )
                 name = str(node.get("name") or f"{label}_{node_id}")
                 text = f"实体 {name}，类型 {label}。属性：{str(dict(node))}"
                 doc_id = hashlib.md5(
@@ -628,15 +652,32 @@ class KgMilvusStore:
         rels = await neo4j_client.run_cypher("""
             MATCH (a)-[r]->(b)
             RETURN id(a) AS from_id, labels(a) AS from_labels, a.name AS from_name,
+                   a.entity_type AS from_entity_type,
                    type(r) AS rel_type, properties(r) AS rel_props,
-                   id(b) AS to_id, labels(b) AS to_labels, b.name AS to_name
+                   id(b) AS to_id, labels(b) AS to_labels, b.name AS to_name,
+                   b.entity_type AS to_entity_type
             """)
 
         for rel in rels:
             from_name = str(rel.get("from_name") or f"node_{rel.get('from_id')}")
             to_name = str(rel.get("to_name") or f"node_{rel.get('to_id')}")
-            from_label = (rel.get("from_labels") or ["Unknown"])[0]
-            to_label = (rel.get("to_labels") or ["Unknown"])[0]
+            from_labels = [
+                str(item)
+                for item in rel.get("from_labels") or []
+                if str(item) != "KnowledgeEntity"
+            ]
+            to_labels = [
+                str(item)
+                for item in rel.get("to_labels") or []
+                if str(item) != "KnowledgeEntity"
+            ]
+            from_label = str(
+                rel.get("from_entity_type")
+                or (from_labels[0] if from_labels else "Unknown")
+            )
+            to_label = str(
+                rel.get("to_entity_type") or (to_labels[0] if to_labels else "Unknown")
+            )
             rel_type = str(rel.get("rel_type") or "RELATED_TO")
             rel_props = rel.get("rel_props") or {}
 
@@ -867,6 +908,113 @@ class KgMilvusStore:
         matched = sum(1 for term in terms if str(term).lower() in haystack)
         return matched / max(1, len(terms))
 
+    @staticmethod
+    def _query_ngram_overlap_score(query: str, text: str) -> float:
+        """用短字符片段衡量中文问题与关系文本的局部重合度。"""
+        compact_query = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", query).lower()
+        compact_text = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", text).lower()
+        if len(compact_query) < 2 or not compact_text:
+            return 0.0
+        grams = {
+            compact_query[index : index + size]
+            for size in (2, 3, 4)
+            for index in range(len(compact_query) - size + 1)
+        }
+        if not grams:
+            return 0.0
+        return sum(1 for gram in grams if gram in compact_text) / len(grams)
+
+    @staticmethod
+    def _relation_intent_score(query: str, relation_type: str) -> float:
+        """按问题中的关系意图提升对应图谱边，避免实体词面压过关系语义。"""
+        query_text = str(query or "").lower()
+        relation = str(relation_type or "").strip().upper()
+        source_intent = any(
+            term in query_text for term in ("指南", "来源", "出处", "支持", "依据")
+        )
+        if source_intent and relation in {
+            "FROM_GUIDELINE",
+            "FROM_SOURCE",
+            "SUPPORTED_BY",
+        }:
+            return 1.0
+        return 0.0
+
+    def _select_relationship_path_rows(
+        self,
+        rows: List[Dict[str, Any]],
+        *,
+        query: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """优先保留一组相连且贴近问题的关系边，再补齐普通高分关系。"""
+        safe_limit = max(1, int(limit))
+        relationships = [
+            row
+            for row in rows
+            if str(row.get("item_type") or "").strip() == "relationship"
+        ]
+        if not relationships:
+            return []
+
+        selected = [relationships[0]]
+        selected_ids = {str(relationships[0].get("doc_id") or "")}
+        first_source = str(relationships[0].get("source_name") or "").strip()
+        first_target = str(relationships[0].get("target_name") or "").strip()
+        endpoints = {first_source, first_target}
+        endpoints.discard("")
+
+        connected = [
+            row
+            for row in relationships[1:]
+            if (
+                str(row.get("source_name") or "").strip() in endpoints
+                or str(row.get("target_name") or "").strip() in endpoints
+            )
+        ]
+        if connected and safe_limit > 1:
+            forward_connected = [
+                row
+                for row in connected
+                if str(row.get("source_name") or "").strip() == first_target
+                and str(row.get("target_name") or "").strip() != first_source
+            ]
+            path_candidates = forward_connected if forward_connected else connected
+            best_connected = max(
+                path_candidates,
+                key=lambda row: (
+                    self._relation_intent_score(
+                        query,
+                        str(row.get("relation_type") or ""),
+                    ),
+                    self._query_ngram_overlap_score(
+                        query,
+                        " ".join(
+                            str(row.get(field) or "")
+                            for field in (
+                                "source_name",
+                                "relation_type",
+                                "target_name",
+                                "text",
+                            )
+                        ),
+                    ),
+                    self._to_score(row.get("hybrid_score")),
+                ),
+            )
+            selected.append(best_connected)
+            selected_ids.add(str(best_connected.get("doc_id") or ""))
+
+        for row in relationships:
+            doc_id = str(row.get("doc_id") or "")
+            if doc_id in selected_ids:
+                continue
+            selected.append(row)
+            selected_ids.add(doc_id)
+            if len(selected) >= safe_limit:
+                break
+        return selected[:safe_limit]
+
     async def _search_vector_rows(
         self, query_text: str, limit: int
     ) -> List[Dict[str, Any]]:
@@ -1026,6 +1174,51 @@ class KgMilvusStore:
         )
         return rows if isinstance(rows, list) else []
 
+    async def _expand_relation_neighbors(
+        self,
+        entity_names: List[str],
+        *,
+        limit: int,
+        max_hops: int,
+    ) -> List[Dict[str, Any]]:
+        """从命中实体出发按层扩展关系，并标记每条关系的最短跳数。"""
+        safe_limit = max(1, min(int(limit), 200))
+        safe_hops = max(1, min(int(max_hops), 3))
+        frontier = [str(item).strip() for item in entity_names if str(item).strip()]
+        visited_entities = {
+            self._normalize_entity_name(item) for item in frontier if item
+        }
+        expanded_by_id: Dict[str, Dict[str, Any]] = {}
+
+        for hop in range(1, safe_hops + 1):
+            if not frontier:
+                break
+            rows = await self._query_relation_neighbors(frontier, limit=safe_limit)
+            next_frontier: List[str] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                doc_id = str(row.get("doc_id") or "").strip()
+                if not doc_id:
+                    continue
+                existing = expanded_by_id.get(doc_id)
+                if existing is None or hop < int(existing["graph_hop"]):
+                    expanded_by_id[doc_id] = {**row, "graph_hop": hop}
+                for field in ("source_name", "target_name"):
+                    entity_name = str(row.get(field) or "").strip()
+                    normalized = self._normalize_entity_name(entity_name)
+                    if (
+                        not entity_name
+                        or not normalized
+                        or normalized in visited_entities
+                    ):
+                        continue
+                    visited_entities.add(normalized)
+                    next_frontier.append(entity_name)
+            frontier = list(dict.fromkeys(next_frontier))
+
+        return list(expanded_by_id.values())[:safe_limit]
+
     def _normalize_entity_name(self, name: str) -> str:
         """
         规范化实体名用于别名匹配。
@@ -1089,7 +1282,8 @@ class KgMilvusStore:
             """
             MATCH (n)
             WHERE coalesce(n.name, '') IN $names OR coalesce(n.canonical_name, '') IN $names
-            RETURN n.name AS name, n.canonical_name AS canonical_name, n.alias AS alias
+            RETURN n.name AS name, n.canonical_name AS canonical_name,
+                   n.alias AS alias, n.aliases AS aliases
             """,
             {"names": seeds},
         )
@@ -1112,6 +1306,7 @@ class KgMilvusStore:
                     alias_map[normalized_key] = canonical_name
 
             aliases = self._parse_aliases(row.get("alias"))
+            aliases.extend(self._parse_aliases(row.get("aliases")))
             for alias in aliases:
                 normalized_alias = self._normalize_entity_name(alias)
                 if normalized_alias:
@@ -1643,7 +1838,7 @@ class KgMilvusStore:
             if not existing.get("text") and row.get("text"):
                 existing["text"] = row.get("text")
 
-        # 基于高分实体扩展关系，补齐图结构证据（参考RAGFlow的n-hop补边思路）。
+        # 从高分实体执行两跳关系扩展，为复合问题保留连续图路径。
         seed_entities = [
             str(item.get("name") or "").strip()
             for item in sorted(
@@ -1658,12 +1853,13 @@ class KgMilvusStore:
         ]
         neighbor_rows: List[Dict[str, Any]] = []
         if seed_entities:
-            neighbor_rows = await self._query_relation_neighbors(
+            neighbor_rows = await self._expand_relation_neighbors(
                 seed_entities,
                 limit=max(
                     int(self.neighbor_limit_min),
                     min(int(effective_expansion_limit), int(self.neighbor_limit_max)),
                 ),
+                max_hops=2,
             )
 
         for row in neighbor_rows:
@@ -1675,6 +1871,11 @@ class KgMilvusStore:
                     **row,
                     "vector_score": 0.0,
                 }
+            else:
+                existing_hop = merged[doc_id].get("graph_hop")
+                row_hop = row.get("graph_hop")
+                if existing_hop is None and row_hop is not None:
+                    merged[doc_id]["graph_hop"] = row_hop
 
         ranked_rows: List[Dict[str, Any]] = []
         for row in merged.values():
@@ -1682,10 +1883,14 @@ class KgMilvusStore:
                 str(row.get("text") or ""), terms
             )
             vector_score = self._to_score(row.get("vector_score"))
-            hybrid_score = (
+            base_score = (
                 1.0 - safe_lexical_weight
             ) * vector_score + safe_lexical_weight * lexical_score
+            graph_hop = int(row.get("graph_hop") or 0)
+            graph_score = 1.0 / graph_hop if graph_hop > 0 else 0.0
+            hybrid_score = max(base_score, graph_score * 0.35)
             row["lexical_score"] = lexical_score
+            row["graph_score"] = graph_score
             row["hybrid_score"] = hybrid_score
             ranked_rows.append(row)
 
@@ -1694,7 +1899,6 @@ class KgMilvusStore:
         )
 
         entities: List[Dict[str, Any]] = []
-        relationships: List[Dict[str, Any]] = []
         for row in ranked_rows:
             item_type = str(row.get("item_type") or "").strip()
             base = {
@@ -1710,20 +1914,31 @@ class KgMilvusStore:
                 entities.append(
                     {**base, "name": row.get("name"), "label": row.get("label")}
                 )
-            elif item_type == "relationship" and len(relationships) < safe_top_k:
-                relationships.append(
-                    {
-                        **base,
-                        "source_name": row.get("source_name"),
-                        "source_label": row.get("source_label"),
-                        "relation_type": row.get("relation_type"),
-                        "target_name": row.get("target_name"),
-                        "target_label": row.get("target_label"),
-                    }
-                )
-
-            if len(entities) >= safe_top_k and len(relationships) >= safe_top_k:
+            if len(entities) >= safe_top_k:
                 break
+
+        relationship_rows = self._select_relationship_path_rows(
+            ranked_rows,
+            query=query,
+            limit=safe_top_k,
+        )
+        relationships = [
+            {
+                "doc_id": row.get("doc_id"),
+                "score": round(self._to_score(row.get("hybrid_score")), 6),
+                "vector_score": round(self._to_score(row.get("vector_score")), 6),
+                "lexical_score": round(self._to_score(row.get("lexical_score")), 6),
+                "text": row.get("text"),
+                "timestamp": row.get("timestamp"),
+                "source_name": row.get("source_name"),
+                "source_label": row.get("source_label"),
+                "relation_type": row.get("relation_type"),
+                "target_name": row.get("target_name"),
+                "target_label": row.get("target_label"),
+                "graph_hop": row.get("graph_hop"),
+            }
+            for row in relationship_rows
+        ]
 
         disambiguation_result: Dict[str, Any] = {
             "entities": entities,
@@ -1795,6 +2010,18 @@ class KgMilvusStore:
                 "query_terms": terms,
                 "vector_rows": len(primary_rows) + len(keyword_rows),
                 "expanded_rows": len(neighbor_rows),
+                "expanded_hops": {
+                    "1": sum(
+                        1
+                        for row in neighbor_rows
+                        if int(row.get("graph_hop") or 0) == 1
+                    ),
+                    "2": sum(
+                        1
+                        for row in neighbor_rows
+                        if int(row.get("graph_hop") or 0) == 2
+                    ),
+                },
                 "merged_rows": len(merged),
                 "lexical_weight": safe_lexical_weight,
                 "force_supplement_required": bool(

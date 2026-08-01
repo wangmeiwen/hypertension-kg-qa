@@ -33,7 +33,7 @@ def test_graph_quality_snapshot_computes_global_metrics() -> None:
                 "source_id": "guide-a",
                 "source_chunk_index": 1,
                 "confidence": 0.8,
-                "quality_policy_version": 1,
+                "quality_policy_version": 2,
             },
             {
                 "source_node_id": 2,
@@ -67,7 +67,7 @@ def test_graph_quality_snapshot_counts_dangling_relationship_projection() -> Non
                 "source_id": "guide-a",
                 "source_chunk_index": 1,
                 "confidence": 0.5,
-                "quality_policy_version": 1,
+                "quality_policy_version": 2,
             }
         ],
         captured_at="2026-07-29T09:00:00+00:00",
@@ -107,7 +107,7 @@ class _QualityNeo4jStub:
                     "source_id": "guide-a",
                     "source_chunk_index": 1,
                     "confidence": 0.9,
-                    "quality_policy_version": 1,
+                    "quality_policy_version": 2,
                 }
             ]
         raise AssertionError(f"unexpected query: {query}")
