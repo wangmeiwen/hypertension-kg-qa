@@ -71,6 +71,13 @@ Thumbs.db
 /tmp/
 /app/frontend/runtime_cache/
 /runtime_cache/
+
+# Local process and retrospective documents
+/OPEN_SOURCE_AUDIT.md
+/error_summary.md
+/graph_experiment_report.md
+/project_retrospective.md
+/refactoring.md
 /docs/
 
 # Test coverage
