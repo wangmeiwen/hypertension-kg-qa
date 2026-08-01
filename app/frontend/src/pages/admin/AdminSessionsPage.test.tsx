@@ -39,11 +39,27 @@ describe("AdminSessionsPage", () => {
       critical_not_ready: [],
     });
     adminClientMocks.getAdminSessions.mockResolvedValue({
-      data: [{ id: "s1", user_id: "u1", title: "复诊会话", message_count: 2, created_at: "2026-01-01", updated_at: "2026-01-01" }],
+      data: [
+        {
+          id: "s1",
+          user_id: "u1",
+          title: "复诊会话",
+          message_count: 2,
+          created_at: "2026-01-01",
+          updated_at: "2026-01-01",
+        },
+      ],
       total: 1,
     });
     adminClientMocks.getAdminSessionMessages.mockResolvedValue({
-      session: { id: "s1", user_id: "u1", title: "复诊会话", message_count: 2, created_at: "2026-01-01", updated_at: "2026-01-01" },
+      session: {
+        id: "s1",
+        user_id: "u1",
+        title: "复诊会话",
+        message_count: 2,
+        created_at: "2026-01-01",
+        updated_at: "2026-01-01",
+      },
       messages: [{ id: 1, role: "user", content: "高血压怎么管理？", created_at: "2026-01-01" }],
     });
     adminClientMocks.clearAdminSessionMessages.mockResolvedValue(undefined);
@@ -68,7 +84,9 @@ describe("AdminSessionsPage", () => {
     renderWithProviders(<AdminSessionsPage />);
     await user.click(await screen.findByTestId("admin-open-session-s1"));
     await user.click(await screen.findByRole("button", { name: "清空消息" }));
-    await waitFor(() => expect(adminClientMocks.clearAdminSessionMessages).toHaveBeenCalledWith("s1"));
+    await waitFor(() =>
+      expect(adminClientMocks.clearAdminSessionMessages).toHaveBeenCalledWith("s1"),
+    );
 
     await user.click(screen.getByRole("button", { name: "删除会话" }));
     await waitFor(() => expect(adminClientMocks.deleteAdminSession).toHaveBeenCalledWith("s1"));
@@ -80,7 +98,11 @@ describe("AdminSessionsPage", () => {
     renderWithProviders(<AdminSessionsPage />);
     await user.click(await screen.findByTestId("admin-delete-session-s1"));
 
-    expect(await screen.findByText("确认删除这个会话吗？该操作会删除会话、消息和相关运行日志，且不可恢复。")).toBeVisible();
+    expect(
+      await screen.findByText(
+        "确认删除这个会话吗？该操作会删除会话、消息和相关运行日志，且不可恢复。",
+      ),
+    ).toBeVisible();
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "删除" }));
 
     await waitFor(() => expect(adminClientMocks.deleteAdminSession).toHaveBeenCalledWith("s1"));

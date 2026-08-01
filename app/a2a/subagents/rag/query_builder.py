@@ -26,10 +26,16 @@ def _normalize_refine_terms(arguments: dict[str, Any]) -> list[str]:
     """从参数中提取 refine_terms 并转为规范列表。"""
     if not isinstance(arguments, dict):
         return []
-    return _normalize_query_terms(arguments.get("refine_terms") if isinstance(arguments.get("refine_terms"), list) else [])
+    return _normalize_query_terms(
+        arguments.get("refine_terms")
+        if isinstance(arguments.get("refine_terms"), list)
+        else []
+    )
 
 
-def _compose_query(question: str, query_terms: list[str], refine_terms: list[str]) -> str:
+def _compose_query(
+    question: str, query_terms: list[str], refine_terms: list[str]
+) -> str:
     """组合最终 RAG 查询文本，支持问句、扩展词和细化词。"""
     base = str(question or "").strip()
     if not base and query_terms:
@@ -66,7 +72,9 @@ def build_rag_payload(
     top_k = int(conf.RAG_SEARCH_TOP_K_DEFAULT)
     top_k = max(1, min(top_k, conf.RAG_SEARCH_TOP_K_MAX))
     payload = {
-        "query": _compose_query(str(args.get("query") or q).strip(), terms, refine_terms),
+        "query": _compose_query(
+            str(args.get("query") or q).strip(), terms, refine_terms
+        ),
         "top_k": top_k,
     }
     if "source_filter" in args:

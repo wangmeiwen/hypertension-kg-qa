@@ -3,21 +3,20 @@
 用于解决 schema 不匹配问题或更新集合结构
 """
 
-import os
 import sys
 from pathlib import Path
 
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+from pymilvus import DataType, MilvusClient
 
-from pymilvus import MilvusClient, DataType
+# 添加项目根目录到路径
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
 
 # 导入配置
 try:
-    from app.core.config import Config
+    from app.core.config import Config  # noqa: E402
 except ImportError:
-    from config.config import Config
+    from config.config import Config  # noqa: E402
 
 
 def get_milvus_config():
@@ -31,7 +30,7 @@ def get_milvus_config():
         "host": conf.MILVUS_HOST,
         "port": conf.MILVUS_PORT,
         "database": conf.MILVUS_DATABASE_NAME,
-        "collection_name": conf.MILVUS_COLLECTION_NAME
+        "collection_name": conf.MILVUS_COLLECTION_NAME,
     }
 
 
@@ -55,9 +54,7 @@ def drop_collection(client: MilvusClient, collection_name: str) -> bool:
 
 
 def create_collection_with_schema(
-    client: MilvusClient,
-    collection_name: str,
-    dense_dim: int = 1024
+    client: MilvusClient, collection_name: str, dense_dim: int = 1024
 ) -> bool:
     """
     创建 Milvus 集合并设置 Schema
@@ -74,12 +71,22 @@ def create_collection_with_schema(
         # 添加字段
         schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
         schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dense_dim)
-        schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
-        schema.add_field(field_name="parent_id", datatype=DataType.VARCHAR, max_length=100)
-        schema.add_field(field_name="parent_content", datatype=DataType.VARCHAR, max_length=65535)
+        schema.add_field(
+            field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dense_dim
+        )
+        schema.add_field(
+            field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR
+        )
+        schema.add_field(
+            field_name="parent_id", datatype=DataType.VARCHAR, max_length=100
+        )
+        schema.add_field(
+            field_name="parent_content", datatype=DataType.VARCHAR, max_length=65535
+        )
         schema.add_field(field_name="source", datatype=DataType.VARCHAR, max_length=50)
-        schema.add_field(field_name="timestamp", datatype=DataType.VARCHAR, max_length=50)
+        schema.add_field(
+            field_name="timestamp", datatype=DataType.VARCHAR, max_length=50
+        )
         schema.add_field(field_name="page_num", datatype=DataType.INT64)
         schema.add_field(field_name="start_page", datatype=DataType.INT64)
         schema.add_field(field_name="end_page", datatype=DataType.INT64)
@@ -93,7 +100,7 @@ def create_collection_with_schema(
             index_name="dense_index",
             index_type="IVF_FLAT",
             metric_type="IP",
-            params={"nlist": 128}
+            params={"nlist": 128},
         )
 
         # 稀疏向量索引
@@ -102,19 +109,19 @@ def create_collection_with_schema(
             index_name="sparse_index",
             index_type="SPARSE_INVERTED_INDEX",
             metric_type="IP",
-            params={"drop_ratio_build": 0.2}
+            params={"drop_ratio_build": 0.2},
         )
 
         # 创建集合
         client.create_collection(
-            collection_name=collection_name,
-            schema=schema,
-            index_params=index_params
+            collection_name=collection_name, schema=schema, index_params=index_params
         )
 
         print(f"✅ 已创建集合: {collection_name}")
         print(f"   - 稠密向量维度: {dense_dim}")
-        print(f"   - 字段: id, text, dense_vector, sparse_vector, parent_id, parent_content, source, timestamp, page_num, start_page, end_page")
+        print(
+            "   - 字段: id, text, dense_vector, sparse_vector, parent_id, parent_content, source, timestamp, page_num, start_page, end_page"
+        )
         return True
 
     except Exception as e:
@@ -146,16 +153,17 @@ def recreate_collection(dense_dim: int = 1024, skip_confirm: bool = False):
 
     # 确认操作
     if not skip_confirm:
-        confirm = input(f"\n⚠️  警告: 这将删除集合 '{collection_name}' 中的所有数据！\n是否继续? (yes/no): ")
-        if confirm.lower() not in ['yes', 'y']:
+        confirm = input(
+            f"\n⚠️  警告: 这将删除集合 '{collection_name}' 中的所有数据！\n是否继续? (yes/no): "
+        )
+        if confirm.lower() not in ["yes", "y"]:
             print("❌ 操作已取消")
             return False
 
     try:
         # 创建客户端
         client = MilvusClient(
-            uri=f"http://{config['host']}:{config['port']}",
-            db_name=config["database"]
+            uri=f"http://{config['host']}:{config['port']}", db_name=config["database"]
         )
 
         # 删除现有集合
@@ -165,7 +173,7 @@ def recreate_collection(dense_dim: int = 1024, skip_confirm: bool = False):
         if create_collection_with_schema(client, collection_name, dense_dim):
             # 加载集合
             client.load_collection(collection_name)
-            print(f"✅ 集合已加载到内存")
+            print("✅ 集合已加载到内存")
             print("\n📝 提示: 现在可以重新上传文档进行嵌入")
             return True
         else:
@@ -186,26 +194,15 @@ def main():
 
     parser = argparse.ArgumentParser(description="Milvus 集合管理工具")
     parser.add_argument(
-        "--recreate", "-r",
-        action="store_true",
-        help="删除并重新创建集合"
+        "--recreate", "-r", action="store_true", help="删除并重新创建集合"
     )
     parser.add_argument(
-        "--drop-only", "-d",
-        action="store_true",
-        help="仅删除集合，不重新创建"
+        "--drop-only", "-d", action="store_true", help="仅删除集合，不重新创建"
     )
     parser.add_argument(
-        "--dim", "-D",
-        type=int,
-        default=1024,
-        help="稠密向量维度 (默认: 1024)"
+        "--dim", "-D", type=int, default=1024, help="稠密向量维度 (默认: 1024)"
     )
-    parser.add_argument(
-        "--yes", "-y",
-        action="store_true",
-        help="跳过确认提示"
-    )
+    parser.add_argument("--yes", "-y", action="store_true", help="跳过确认提示")
 
     args = parser.parse_args()
 
@@ -215,8 +212,7 @@ def main():
     elif args.drop_only:
         config = get_milvus_config()
         client = MilvusClient(
-            uri=f"http://{config['host']}:{config['port']}",
-            db_name=config["database"]
+            uri=f"http://{config['host']}:{config['port']}", db_name=config["database"]
         )
         drop_collection(client, config["collection_name"])
     else:

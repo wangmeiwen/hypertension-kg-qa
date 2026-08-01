@@ -14,7 +14,6 @@ from app.core.config import Config
 from app.rag_core.kg_milvus_store import KgMilvusStore
 from app.rag_core.vector_store import VectorStore
 
-
 _VECTOR_LOCK = Lock()
 _KG_LOCK = Lock()
 _VECTOR_STORES: Dict[str, VectorStore] = {}
@@ -105,4 +104,3 @@ def get_shared_kg_milvus_store(conf: Optional[Config] = None) -> KgMilvusStore:
             )
             _KG_STORES[key] = store
     return store
-

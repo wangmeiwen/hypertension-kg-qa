@@ -56,7 +56,7 @@ class OrchestratorExecutor:
             input_text: 当前用户问题。
             session_id: 会话 ID，用于关联记忆和历史检索索引。
             user_id: 用户 ID，当前透传给控制器。
-            trace_id: 兼容旧接口的追踪 ID，当前由上层链路处理。
+            trace_id: 当前请求的端到端追踪 ID。
             strategy: 兼容旧接口的策略名，当前统一使用控制器策略。
             max_turns: 主控最大决策轮数。
             image_data: 可选图片数据，透传给最终回答生成阶段。
@@ -68,18 +68,25 @@ class OrchestratorExecutor:
         Returns:
             包含回答、证据摘要、处理步骤和遥测信息的编排结果。
         """
-        _ = trace_id
         _ = strategy
         _ = original_input_text
         safe_max_turns = self._resolve_max_turns(max_turns)
         safe_memory_context = memory_context if isinstance(memory_context, dict) else {}
+        safe_trace_id = str(trace_id).strip()
+
+        def traced_progress(event: dict[str, Any]) -> None:
+            if progress_callback is None:
+                return
+            progress_callback({**event, "trace_id": safe_trace_id})
+
         return await self.controller.run(
             input_text=str(input_text or "").strip(),
             session_id=str(session_id or "").strip(),
             user_id=str(user_id or "").strip(),
+            trace_id=safe_trace_id,
             max_turns=safe_max_turns,
             image_data=str(image_data or "").strip(),
             file_id=str(file_id or "").strip(),
             memory_context=safe_memory_context,
-            progress_callback=progress_callback,
+            progress_callback=traced_progress,
         )

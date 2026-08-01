@@ -69,10 +69,18 @@ describe("SessionListPanel", () => {
     await user.clear(screen.getByTestId("session-rename-input-s1"));
     await user.type(screen.getByTestId("session-rename-input-s1"), "复诊计划");
     await user.tab();
-    await waitFor(() => expect(sessionClientMocks.updateSession).toHaveBeenCalledWith("s1", expect.any(String), "复诊计划"));
+    await waitFor(() =>
+      expect(sessionClientMocks.updateSession).toHaveBeenCalledWith(
+        "s1",
+        expect.any(String),
+        "复诊计划",
+      ),
+    );
 
     await user.click(screen.getByTestId("session-delete-button-s1"));
-    await waitFor(() => expect(sessionClientMocks.deleteSession).toHaveBeenCalledWith("s1", expect.any(String)));
+    await waitFor(() =>
+      expect(sessionClientMocks.deleteSession).toHaveBeenCalledWith("s1", expect.any(String)),
+    );
   });
 
   it("selects a session and clears stale messages", async () => {

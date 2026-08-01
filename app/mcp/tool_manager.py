@@ -57,7 +57,15 @@ class ToolManager:
 
         try:
             import yaml  # type: ignore[import-untyped]
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             logger.error(
                 "PyYAML 未安装，无法解析 MCP 工具配置: error_type=%s error=%s",
                 type(exc).__name__,
@@ -114,7 +122,11 @@ class ToolManager:
             configured_blacklist = []
 
         runtime_blacklist = extra_blacklist or []
-        blacklist_set = {str(item).strip() for item in configured_blacklist + runtime_blacklist if str(item).strip()}
+        blacklist_set = {
+            str(item).strip()
+            for item in configured_blacklist + runtime_blacklist
+            if str(item).strip()
+        }
 
         registered = []
         skipped = []
@@ -133,7 +145,11 @@ class ToolManager:
                 continue
 
             canonical = f"{server_name}::{tool_name}"
-            if alias in blacklist_set or tool_name in blacklist_set or canonical in blacklist_set:
+            if (
+                alias in blacklist_set
+                or tool_name in blacklist_set
+                or canonical in blacklist_set
+            ):
                 skipped.append({"tool": canonical, "reason": "blacklisted"})
                 continue
 
@@ -142,7 +158,9 @@ class ToolManager:
                 skipped.append({"tool": canonical, "reason": "tool_not_in_registry"})
                 continue
 
-            description = str(item.get("description") or builtin.get("description") or "")
+            description = str(
+                item.get("description") or builtin.get("description") or ""
+            )
             input_schema = item.get("input_schema") or builtin.get("input_schema") or {}
             handler = builtin.get("handler")
             if not callable(handler):

@@ -12,7 +12,9 @@ def create_graph_public_router(service: GraphPublicService) -> APIRouter:
     router = APIRouter()
 
     @router.get("/graph/visualization")
-    async def graph_visualization(keyword: str = "", limit: int = 200) -> dict[str, object]:
+    async def graph_visualization(
+        keyword: str = "", limit: int = 200
+    ) -> dict[str, object]:
         """查询图谱可视化节点与边数据。"""
         return await service.graph_visualization(keyword=keyword, limit=limit)
 

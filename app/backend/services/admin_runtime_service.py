@@ -54,7 +54,12 @@ class AdminRuntimeService:
             包含 API 延迟、事件循环延迟、A2A 队列和运行时开关的数据。
         """
         safe_days = max(1, min(int(days), 7))
-        target_paths = ["/agent/run", "/process_with_session", "/mcp/invoke", "/admin/graph/"]
+        target_paths = [
+            "/agent/run",
+            "/process_with_session",
+            "/mcp/invoke",
+            "/admin/graph/",
+        ]
         api_report = generate_api_baseline_report(safe_days, target_paths)
         event_loop_lag = await self._measure_event_loop_lag(samples=20, interval_ms=20)
         queue_snapshot = await self._build_a2a_runtime_snapshot(limit_per_service=200)
@@ -75,7 +80,10 @@ class AdminRuntimeService:
 
     async def admin_qa_queue_status(self) -> dict[str, Any]:
         """获取 A2A 任务状态快照。"""
-        return {"ok": True, "data": await self._build_a2a_runtime_snapshot(limit_per_service=200)}
+        return {
+            "ok": True,
+            "data": await self._build_a2a_runtime_snapshot(limit_per_service=200),
+        }
 
     async def admin_cancel_qa_job(self, job_id: str) -> dict[str, Any]:
         """取消指定 A2A 问答任务。
@@ -88,17 +96,31 @@ class AdminRuntimeService:
         """
         service = self._get_a2a()
         result = await service.acancel_task(job_id, "manual_cancel")
-        if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
+        if (
+            not bool(result.get("ok"))
+            and str(result.get("error") or "") == "task_not_found"
+        ):
             return {"ok": False, "error": "job_not_found_or_finished"}
-        state = str((((result.get("task") or {}).get("status") or {}).get("state")) or "")
-        return {"ok": True, "message": "cancel_requested", "job_id": job_id, "status": state}
+        state = str(
+            (((result.get("task") or {}).get("status") or {}).get("state")) or ""
+        )
+        return {
+            "ok": True,
+            "message": "cancel_requested",
+            "job_id": job_id,
+            "status": state,
+        }
 
     async def admin_get_stats(self) -> dict[str, Any]:
         """获取会话和消息数量统计数据。"""
         sessions_row = await fetch_one("SELECT COUNT(*) as count FROM sessions")
         messages_row = await fetch_one("SELECT COUNT(*) as count FROM messages")
-        today_sessions_row = await fetch_one("SELECT COUNT(*) as count FROM sessions WHERE DATE(created_at) = CURDATE()")
-        today_messages_row = await fetch_one("SELECT COUNT(*) as count FROM messages WHERE DATE(created_at) = CURDATE()")
+        today_sessions_row = await fetch_one(
+            "SELECT COUNT(*) as count FROM sessions WHERE DATE(created_at) = CURDATE()"
+        )
+        today_messages_row = await fetch_one(
+            "SELECT COUNT(*) as count FROM messages WHERE DATE(created_at) = CURDATE()"
+        )
         stats = {
             "session_count": int((sessions_row or {}).get("count") or 0),
             "message_count": int((messages_row or {}).get("count") or 0),

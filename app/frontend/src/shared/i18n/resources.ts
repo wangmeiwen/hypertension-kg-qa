@@ -154,7 +154,8 @@ export const resources = {
         sessionMessages: "会话消息",
         clearMessages: "清空消息",
         deleteSession: "删除会话",
-        deleteSessionConfirm: "确认删除这个会话吗？该操作会删除会话、消息和相关运行日志，且不可恢复。",
+        deleteSessionConfirm:
+          "确认删除这个会话吗？该操作会删除会话、消息和相关运行日志，且不可恢复。",
         observabilitySummary: "观测概览",
         flowLanes: {
           orchestrator: "主控编排",
@@ -197,7 +198,7 @@ export const resources = {
           jobs: "最近任务",
           embedStatus: "向量库状态",
           searchPlaceholder: "搜索节点名称或标题",
-          jsonHint: "请输入 JSON 对象，例如 {\"name\":\"高血压\"}",
+          jsonHint: '请输入 JSON 对象，例如 {"name":"高血压"}',
           createSuccess: "节点已创建。",
           updateSuccess: "节点已更新。",
           deleteSuccess: "节点已删除。",
@@ -265,7 +266,8 @@ export const resources = {
         unknownError: "Unknown error",
         errorBoundary: {
           title: "Page error",
-          description: "The current page failed to render. Refresh the page or return to the chat workspace.",
+          description:
+            "The current page failed to render. Refresh the page or return to the chat workspace.",
           refreshPage: "Refresh page",
           backToChat: "Back to chat",
         },
@@ -283,7 +285,8 @@ export const resources = {
       chat: {
         eyebrow: "Clinical Q&A",
         title: "Ask the hypertension copilot",
-        description: "Run session-based Q&A, upload supporting files, and preserve traceable reasoning in each session.",
+        description:
+          "Run session-based Q&A, upload supporting files, and preserve traceable reasoning in each session.",
         newSession: "New session",
         sessionReady: "Session ready",
         askHint: "Ask a question or upload a supporting file.",
@@ -318,7 +321,8 @@ export const resources = {
       graph: {
         eyebrow: "Knowledge Graph",
         title: "Explore the hypertension graph",
-        description: "Search entities, inspect relationships, and trace surrounding clinical context.",
+        description:
+          "Search entities, inspect relationships, and trace surrounding clinical context.",
         keyword: "Keyword",
         keywordPlaceholder: "Search entity names or keywords",
         limit: "Limit",
@@ -344,13 +348,15 @@ export const resources = {
           fitView: "Fit view",
           legendLabel: "Graph legend",
           viewDetail: "View detail",
-          helpText: "Hover to inspect neighborhoods, click to pin a node, and click again to open detail.",
+          helpText:
+            "Hover to inspect neighborhoods, click to pin a node, and click again to open detail.",
         },
       },
       admin: {
         eyebrow: "Operations",
         title: "Admin console",
-        description: "Inspect sessions, system readiness, agent observability, graph operations, and document embedding jobs.",
+        description:
+          "Inspect sessions, system readiness, agent observability, graph operations, and document embedding jobs.",
         login: "Admin login",
         logout: "Sign out",
         loginHint: "Default credentials: admin / admin123",
@@ -388,7 +394,8 @@ export const resources = {
         sessionMessages: "Session messages",
         clearMessages: "Clear messages",
         deleteSession: "Delete session",
-        deleteSessionConfirm: "Delete this session? This removes messages and related run logs and cannot be undone.",
+        deleteSessionConfirm:
+          "Delete this session? This removes messages and related run logs and cannot be undone.",
         observabilitySummary: "Observability summary",
         flowLanes: {
           orchestrator: "Orchestrator",
@@ -431,7 +438,7 @@ export const resources = {
           jobs: "Recent jobs",
           embedStatus: "Vector status",
           searchPlaceholder: "Search node names or titles",
-          jsonHint: "Enter a JSON object, for example {\"name\":\"Hypertension\"}",
+          jsonHint: 'Enter a JSON object, for example {"name":"Hypertension"}',
           createSuccess: "Node created.",
           updateSuccess: "Node updated.",
           deleteSuccess: "Node deleted.",
@@ -445,7 +452,8 @@ export const resources = {
           noNodeProperties: "This node has no properties.",
         },
         documentsTitle: "Document embedding",
-        documentsDescription: "Parse files into chunks and push them into the vector store while tracking job progress.",
+        documentsDescription:
+          "Parse files into chunks and push them into the vector store while tracking job progress.",
         documentsWorkspace: {
           uploadTitle: "Upload and submit",
           statsTitle: "Vector store stats",

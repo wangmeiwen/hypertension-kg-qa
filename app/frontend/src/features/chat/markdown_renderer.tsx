@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
-const INLINE_TOKEN_REGEX = /(\*\*[^*]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
+const INLINE_TOKEN_REGEX =
+  /(\*\*[^*]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
 const MEDICAL_DISCLAIMER_TEXTS = [
   "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。",
   "回答仅供信息参考，不能替代临床诊断或紧急医疗处置。",
@@ -31,7 +32,10 @@ const isMarkdownTableSeparator = (line: string): boolean => {
 };
 
 const parseMarkdownTableRow = (line: string): string[] => {
-  const cleaned = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cleaned = String(line || "")
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "");
   return cleaned.split("|").map((cell) => cell.trim());
 };
 
@@ -115,7 +119,7 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
         <pre key={`code-${blocks.length}`} className="md-code-block">
           {lang ? <div className="md-code-lang">{lang}</div> : null}
           <code>{codeLines.join("\n")}</code>
-        </pre>
+        </pre>,
       );
       continue;
     }
@@ -128,7 +132,7 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
       blocks.push(
         <div key={`h-${blocks.length}`} className={headingClass}>
           {renderInlineMarkdown(headingText, `h-${blocks.length}`)}
-        </div>
+        </div>,
       );
       i += 1;
       continue;
@@ -144,7 +148,7 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
       blocks.push(
         <blockquote key={`quote-${blocks.length}`} className="md-quote">
           {renderInlineMarkdown(quoteText, `quote-${blocks.length}`)}
-        </blockquote>
+        </blockquote>,
       );
       continue;
     }
@@ -158,9 +162,11 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
       blocks.push(
         <ul key={`ul-${blocks.length}`} className="md-list">
           {items.map((item, idx) => (
-            <li key={`ul-item-${idx}`}>{renderInlineMarkdown(item, `ul-${blocks.length}-${idx}`)}</li>
+            <li key={`ul-item-${idx}`}>
+              {renderInlineMarkdown(item, `ul-${blocks.length}-${idx}`)}
+            </li>
           ))}
-        </ul>
+        </ul>,
       );
       continue;
     }
@@ -174,9 +180,11 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
       blocks.push(
         <ol key={`ol-${blocks.length}`} className="md-list md-ordered-list">
           {items.map((item, idx) => (
-            <li key={`ol-item-${idx}`}>{renderInlineMarkdown(item, `ol-${blocks.length}-${idx}`)}</li>
+            <li key={`ol-item-${idx}`}>
+              {renderInlineMarkdown(item, `ol-${blocks.length}-${idx}`)}
+            </li>
           ))}
-        </ol>
+        </ol>,
       );
       continue;
     }
@@ -197,7 +205,9 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
             <thead>
               <tr>
                 {headerCells.map((cell, idx) => (
-                  <th key={`th-${idx}`}>{renderInlineMarkdown(cell, `th-${blocks.length}-${idx}`)}</th>
+                  <th key={`th-${idx}`}>
+                    {renderInlineMarkdown(cell, `th-${blocks.length}-${idx}`)}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -206,27 +216,30 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
                 <tr key={`tr-${rowIdx}`}>
                   {headerCells.map((_, colIdx) => (
                     <td key={`td-${rowIdx}-${colIdx}`}>
-                      {renderInlineMarkdown(row[colIdx] || "", `td-${blocks.length}-${rowIdx}-${colIdx}`)}
+                      {renderInlineMarkdown(
+                        row[colIdx] || "",
+                        `td-${blocks.length}-${rowIdx}-${colIdx}`,
+                      )}
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </div>,
       );
       continue;
     }
 
     const paragraphLines: string[] = [];
     while (
-      i < lines.length
-      && lines[i].trim()
-      && !/^```\s*([^`]*)\s*$/.test(lines[i])
-      && !/^(#{1,6})\s+/.test(lines[i])
-      && !/^>\s?/.test(lines[i])
-      && !/^[-*+]\s+/.test(lines[i])
-      && !/^\d+\.\s+/.test(lines[i])
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^```\s*([^`]*)\s*$/.test(lines[i]) &&
+      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !/^>\s?/.test(lines[i]) &&
+      !/^[-*+]\s+/.test(lines[i]) &&
+      !/^\d+\.\s+/.test(lines[i])
     ) {
       paragraphLines.push(lines[i].trim());
       i += 1;
@@ -234,9 +247,12 @@ export const renderMarkdownContent = (content: string): ReactNode[] | string => 
 
     const paragraphText = paragraphLines.join(" ");
     blocks.push(
-      <p key={`p-${blocks.length}`} className={`md-paragraph${getDisclaimerBlockClass(paragraphText)}`}>
+      <p
+        key={`p-${blocks.length}`}
+        className={`md-paragraph${getDisclaimerBlockClass(paragraphText)}`}
+      >
         {renderInlineMarkdown(paragraphText, `p-${blocks.length}`)}
-      </p>
+      </p>,
     );
   }
 

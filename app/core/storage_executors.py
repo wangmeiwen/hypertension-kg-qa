@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
-async def run_in_mysql_executor(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+async def run_in_mysql_executor(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
     """在 MySQL 逻辑入口执行函数调用。
 
     历史上此处可接线程池执行器；当前实现为直接调用，
@@ -22,7 +24,9 @@ async def run_in_mysql_executor(func: Callable[..., Any], *args: Any, **kwargs: 
     return func(*args, **kwargs)
 
 
-async def run_in_neo4j_executor(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+async def run_in_neo4j_executor(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
     """在 Neo4j 逻辑入口执行函数调用。
 
     与 `run_in_mysql_executor` 一样，当前不切换执行器，
@@ -39,7 +43,9 @@ async def run_in_neo4j_executor(func: Callable[..., Any], *args: Any, **kwargs: 
     return func(*args, **kwargs)
 
 
-async def run_in_milvus_executor(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+async def run_in_milvus_executor(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
     """在 Milvus 逻辑入口执行函数调用。
 
     该函数用于统一 Milvus 调用路径，当前实现为直连调用，

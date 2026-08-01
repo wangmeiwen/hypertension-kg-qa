@@ -22,7 +22,6 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -45,9 +44,15 @@ def _resolve_worker_count() -> int:
             parsed_worker_count = int(raw_worker_count)
             if parsed_worker_count > 0:
                 return parsed_worker_count
-            logger.warning("[qa_job_queue] invalid QA_JOB_WORKER_COUNT=%s, fallback to cpu-based value", raw_worker_count)
+            logger.warning(
+                "[qa_job_queue] invalid QA_JOB_WORKER_COUNT=%s, fallback to cpu-based value",
+                raw_worker_count,
+            )
         except ValueError:
-            logger.warning("[qa_job_queue] invalid QA_JOB_WORKER_COUNT=%s, fallback to cpu-based value", raw_worker_count)
+            logger.warning(
+                "[qa_job_queue] invalid QA_JOB_WORKER_COUNT=%s, fallback to cpu-based value",
+                raw_worker_count,
+            )
 
     cpu_cores = os.cpu_count()
     if cpu_cores is None:
@@ -199,7 +204,9 @@ class QAJobQueueManager:
             raise RuntimeError("job_id_required")
 
         now_ts = time.time()
-        timeout_seconds = int(job.get("timeout_seconds") or self.default_timeout_seconds)
+        timeout_seconds = int(
+            job.get("timeout_seconds") or self.default_timeout_seconds
+        )
         job["timeout_seconds"] = timeout_seconds
         idempotency_key = _build_idempotency_key(job)
         if idempotency_key:
@@ -255,7 +262,12 @@ class QAJobQueueManager:
             if not job_info:
                 return False
 
-            if str(job_info.get("status") or "") in {"done", "failed", "cancelled", "timeout"}:
+            if str(job_info.get("status") or "") in {
+                "done",
+                "failed",
+                "cancelled",
+                "timeout",
+            }:
                 return False
 
             job_info["cancel_requested"] = True
@@ -314,7 +326,9 @@ class QAJobQueueManager:
                     "job_id": str(j.get("job_id") or ""),
                     "queue_key": str(j.get("queue_key") or ""),
                     "submitted_at": j.get("submitted_at"),
-                    "timeout_seconds": int(j.get("timeout_seconds") or self.default_timeout_seconds),
+                    "timeout_seconds": int(
+                        j.get("timeout_seconds") or self.default_timeout_seconds
+                    ),
                 }
                 for j in queued_jobs
             ]
@@ -352,7 +366,9 @@ class QAJobQueueManager:
                 return True, reason
 
             deadline_ts = job_info.get("deadline_ts")
-            if isinstance(deadline_ts, (int, float)) and time.time() > float(deadline_ts):
+            if isinstance(deadline_ts, (int, float)) and time.time() > float(
+                deadline_ts
+            ):
                 return True, "timeout"
 
         return False, ""
@@ -375,7 +391,10 @@ class QAJobQueueManager:
             job_info["finished_at"] = time.time()
             self._completed_jobs += 1
             idempotency_key = str(job_info.get("idempotency_key") or "").strip()
-            if idempotency_key and self._idempotency_index.get(idempotency_key) == job_id:
+            if (
+                idempotency_key
+                and self._idempotency_index.get(idempotency_key) == job_id
+            ):
                 self._idempotency_index.pop(idempotency_key, None)
             self._job_payloads.pop(job_id, None)
             self._persist_state_locked()
@@ -400,7 +419,10 @@ class QAJobQueueManager:
             job_info["finished_at"] = time.time()
             self._failed_jobs += 1
             idempotency_key = str(job_info.get("idempotency_key") or "").strip()
-            if idempotency_key and self._idempotency_index.get(idempotency_key) == job_id:
+            if (
+                idempotency_key
+                and self._idempotency_index.get(idempotency_key) == job_id
+            ):
                 self._idempotency_index.pop(idempotency_key, None)
             self._job_payloads.pop(job_id, None)
             self._persist_state_locked()
@@ -426,7 +448,10 @@ class QAJobQueueManager:
             job_info["finished_at"] = time.time()
             self._cancelled_jobs += 1
             idempotency_key = str(job_info.get("idempotency_key") or "").strip()
-            if idempotency_key and self._idempotency_index.get(idempotency_key) == job_id:
+            if (
+                idempotency_key
+                and self._idempotency_index.get(idempotency_key) == job_id
+            ):
                 self._idempotency_index.pop(idempotency_key, None)
             self._job_payloads.pop(job_id, None)
             self._persist_state_locked()
@@ -483,7 +508,9 @@ class QAJobQueueManager:
                         self._job_queue.task_done()
                         continue
 
-                    timeout_seconds = int(job_info.get("timeout_seconds") or self.default_timeout_seconds)
+                    timeout_seconds = int(
+                        job_info.get("timeout_seconds") or self.default_timeout_seconds
+                    )
                     now_ts = time.time()
                     job_info["status"] = "running"
                     job_info["started_at"] = now_ts
@@ -495,14 +522,24 @@ class QAJobQueueManager:
                 if self._handler is None:
                     raise RuntimeError("job_handler_not_set")
                 self._handler(job)
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+            ) as exc:
                 should_retry = False
                 retry_payload: Optional[dict[str, Any]] = None
                 with self._lock:
                     job_info = self._job_registry.get(job_id)
                     if job_info:
                         retry_count = int(job_info.get("retry_count") or 0)
-                        max_retries = int(job_info.get("max_retries") or self.max_retries)
+                        max_retries = int(
+                            job_info.get("max_retries") or self.max_retries
+                        )
                         if retry_count < max_retries:
                             should_retry = True
                             job_info["retry_count"] = retry_count + 1
@@ -518,7 +555,11 @@ class QAJobQueueManager:
 
                 if should_retry and retry_payload is not None:
                     self._job_queue.put(retry_payload)
-                    logger.warning("[qa_job_worker_retry] job_id=%s retry_count=%s", job_id, self._job_registry.get(job_id, {}).get("retry_count"))
+                    logger.warning(
+                        "[qa_job_worker_retry] job_id=%s retry_count=%s",
+                        job_id,
+                        self._job_registry.get(job_id, {}).get("retry_count"),
+                    )
                 else:
                     if job_id:
                         self.mark_failed(job_id, str(exc))
@@ -568,10 +609,14 @@ class QAJobQueueManager:
             if not job_id:
                 continue
 
-            timeout_seconds = int(info.get("timeout_seconds") or self.default_timeout_seconds)
+            timeout_seconds = int(
+                info.get("timeout_seconds") or self.default_timeout_seconds
+            )
             retry_count = int(info.get("retry_count") or 0)
             max_retries = int(info.get("max_retries") or self.max_retries)
-            idempotency_key = str(info.get("idempotency_key") or payload.get("idempotency_key") or "").strip()
+            idempotency_key = str(
+                info.get("idempotency_key") or payload.get("idempotency_key") or ""
+            ).strip()
             payload["timeout_seconds"] = timeout_seconds
             payload["idempotency_key"] = idempotency_key
             info["status"] = "queued"
@@ -593,7 +638,9 @@ class QAJobQueueManager:
 
         self._active_jobs = {}
         if restored_count:
-            logger.info("[qa_job_queue] restored %s pending jobs from disk", restored_count)
+            logger.info(
+                "[qa_job_queue] restored %s pending jobs from disk", restored_count
+            )
         self._persist_state_locked()
 
     def _persist_state_locked(self) -> None:
@@ -632,7 +679,9 @@ class QAJobQueueManager:
 
         tmp_file = self._state_file.with_suffix(".tmp")
         try:
-            tmp_file.write_text(json.dumps(state_data, ensure_ascii=False), encoding="utf-8")
+            tmp_file.write_text(
+                json.dumps(state_data, ensure_ascii=False), encoding="utf-8"
+            )
             tmp_file.replace(self._state_file)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             logger.warning("[qa_job_queue] persist state failed: %s", str(exc))
@@ -643,4 +692,3 @@ qa_job_manager = QAJobQueueManager(
     default_timeout_seconds=240,
     max_retries=_resolve_max_retries(),
 )
-

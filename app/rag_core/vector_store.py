@@ -21,20 +21,26 @@ Milvus 向量存储与检索模块
 """
 
 # 导入 BGE-M3 嵌入函数，用于生成文档和查询的向量表示
-import torch.cuda
-from milvus_model.hybrid import BGEM3EmbeddingFunction
-# 导入 Milvus 相关类，用于操作向量数据库
-from pymilvus import MilvusClient, DataType
-# 导入 Document 类，用于创建文档对象
-from langchain_core.documents import Document
-# 导入 CrossEncoder，用于重排序和 NLI 判断
-from sentence_transformers import CrossEncoder
-import uuid
-import sys
+import logging
 import os
 import re
-import numpy as np
+import sys
+import uuid
 from threading import Lock
+
+import numpy as np
+import torch.cuda
+from milvus_model.hybrid import BGEM3EmbeddingFunction  # type: ignore[import-untyped]
+
+# 导入 Milvus 相关类，用于操作向量数据库
+from pymilvus import DataType, MilvusClient  # type: ignore[import-untyped]
+
+# 导入 Document 类，用于创建文档对象
+from langchain_core.documents import Document
+
+# 导入 CrossEncoder，用于重排序和 NLI 判断
+from sentence_transformers import CrossEncoder
+
 # 获取当前文件所在目录的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -45,12 +51,15 @@ sys.path.insert(0, rag_qa_path)
 project_root = os.path.dirname(rag_qa_path)
 sys.path.insert(0, project_root)
 
-import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from app.core.perf_logger import log_duration
-from app.core.config import Config
+from app.core.config import Config  # noqa: E402
+from app.core.perf_logger import log_duration  # noqa: E402
+from app.rag_core.milvus_schema import (  # noqa: E402
+    describe_and_validate_milvus_schema,
+    document_milvus_schema,
+)
 
 conf = Config()
 
@@ -72,7 +81,9 @@ def _to_float32_vector(vec, expected_dim):
     if arr.ndim != 1:
         arr = arr.reshape(-1)
     if expected_dim and arr.shape[0] != int(expected_dim):
-        raise ValueError(f"dense vector dim mismatch: got {arr.shape[0]}, expected {expected_dim}")
+        raise ValueError(
+            f"dense vector dim mismatch: got {arr.shape[0]}, expected {expected_dim}"
+        )
     return arr
 
 
@@ -103,7 +114,15 @@ def _safe_int(value, default=None):
         if not text:
             return default
         return int(text)
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OSError,
+        ImportError,
+    ):
         return default
 
 
@@ -133,7 +152,9 @@ class VectorStore:
             model = cls._RERANKER_CACHE.get(key)
             if model is None:
                 with log_duration("milvus.load_reranker", path=model_path):
-                    model = CrossEncoder(model_path, device=device, local_files_only=True)
+                    model = CrossEncoder(
+                        model_path, device=device, local_files_only=True
+                    )
                 cls._RERANKER_CACHE[key] = model
         return model
 
@@ -180,7 +201,9 @@ class VectorStore:
         with cls._CLIENT_LOCK:
             client = cls._CLIENT_CACHE.get(key)
             if client is None:
-                with log_duration("milvus.connect", host=host, port=port, database=database):
+                with log_duration(
+                    "milvus.connect", host=host, port=port, database=database
+                ):
                     client = MilvusClient(uri=f"http://{host}:{port}", db_name=database)
                 cls._CLIENT_CACHE[key] = client
         return client
@@ -197,11 +220,13 @@ class VectorStore:
         """
         return self.client.search(**search_kwargs, search_params=search_params)
 
-    def __init__(self,
-                 collection_name=conf.MILVUS_COLLECTION_NAME,
-                 host=conf.MILVUS_HOST,
-                 port=conf.MILVUS_PORT,
-                 database=conf.MILVUS_DATABASE_NAME):
+    def __init__(
+        self,
+        collection_name=conf.MILVUS_COLLECTION_NAME,
+        host=conf.MILVUS_HOST,
+        port=conf.MILVUS_PORT,
+        database=conf.MILVUS_DATABASE_NAME,
+    ):
         """
         初始化向量存储。
 
@@ -215,7 +240,7 @@ class VectorStore:
             None。
         """
         with log_duration("milvus.vector_store_init", collection=collection_name):
-            logger.info('===='*20)
+            logger.info("====" * 20)
         # 设置 Milvus 集合名称
         self.collection_name = collection_name
         # 设置 Milvus 主机地址
@@ -227,17 +252,17 @@ class VectorStore:
         # 设置日志记录器
         self.logger = logger
         # 检查CUDA是否可用
-        self.device ='cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         # 日志提醒使用的是什么设备
         self.logger.info(f"使用设置：{self.device}")
         # 初始化 BGE-Reranker 模型，用于重排序检索结果
         reranker_path = conf.RERANKER_MODEL_PATH
         # 将 Windows 反斜杠转换为正斜杠，避免 Hugging Face 模型加载错误
-        reranker_path = reranker_path.replace('\\', '/')
+        reranker_path = reranker_path.replace("\\", "/")
         # 如果是相对路径，基于项目根目录解析
         if not os.path.isabs(reranker_path):
             reranker_path = os.path.join(project_root, reranker_path)
-            reranker_path = reranker_path.replace('\\', '/')
+            reranker_path = reranker_path.replace("\\", "/")
         # 检查 reranker 模型是否存在，不存在则警告
         if not os.path.exists(reranker_path):
             self.logger.warning("未找到 Reranker 模型: %s", reranker_path)
@@ -245,11 +270,11 @@ class VectorStore:
         # 初始化 BGE-M3 嵌入函数，使用 CPU 设备，不启用 FP16
         m3_path = conf.EMBEDDING_MODEL_PATH
         # 将 Windows 反斜杠转换为正斜杠，避免 Hugging Face 模型加载错误
-        m3_path = m3_path.replace('\\', '/')
+        m3_path = m3_path.replace("\\", "/")
         # 如果是相对路径，基于项目根目录解析
         if not os.path.isabs(m3_path):
             m3_path = os.path.join(project_root, m3_path)
-            m3_path = m3_path.replace('\\', '/')
+            m3_path = m3_path.replace("\\", "/")
         if not os.path.exists(m3_path):
             self.logger.warning("Embedding model not found at %s.", m3_path)
         self.embedding_function = self._get_cached_embedding_function(
@@ -267,7 +292,9 @@ class VectorStore:
         )
         self.collection_fields = set()
         # 调用方法创建或加载 Milvus 集合
-        with log_duration("milvus.create_or_load_collection", collection=self.collection_name):
+        with log_duration(
+            "milvus.create_or_load_collection", collection=self.collection_name
+        ):
             self._create_or_load_collection()
 
     def _refresh_collection_fields(self):
@@ -283,10 +310,26 @@ class VectorStore:
         self.collection_fields = set()
         try:
             desc = self.client.describe_collection(collection_name=self.collection_name)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ):
             try:
                 desc = self.client.describe_collection(self.collection_name)
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e2:
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+            ) as e2:
                 logger.warning(
                     "获取集合字段失败: error_type=%s error=%s",
                     type(e2).__name__,
@@ -301,7 +344,9 @@ class VectorStore:
                 if isinstance(field, dict):
                     name = field.get("name") or field.get("field_name")
                 else:
-                    name = getattr(field, "name", None) or getattr(field, "field_name", None)
+                    name = getattr(field, "name", None) or getattr(
+                        field, "field_name", None
+                    )
                 if name:
                     self.collection_fields.add(name)
         except Exception as e:
@@ -328,19 +373,35 @@ class VectorStore:
             # 添加 ID 字段，作为主键，INT64 类型（与代码中生成的整数ID一致）
             schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
             # 添加文本字段，VARCHAR 类型，最大长度 65535
-            schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
+            schema.add_field(
+                field_name="text", datatype=DataType.VARCHAR, max_length=65535
+            )
             # 添加稠密向量字段，FLOAT_VECTOR 类型，维度由嵌入函数指定
-            schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=self.dense_dim)
+            schema.add_field(
+                field_name="dense_vector",
+                datatype=DataType.FLOAT_VECTOR,
+                dim=self.dense_dim,
+            )
             # 添加稀疏向量字段，SPARSE_FLOAT_VECTOR 类型
-            schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+            schema.add_field(
+                field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR
+            )
             # 添加父块 ID 字段，VARCHAR 类型，最大长度 100
-            schema.add_field(field_name="parent_id", datatype=DataType.VARCHAR, max_length=100)
+            schema.add_field(
+                field_name="parent_id", datatype=DataType.VARCHAR, max_length=100
+            )
             # 添加父块内容字段，VARCHAR 类型，最大长度 65535
-            schema.add_field(field_name="parent_content", datatype=DataType.VARCHAR, max_length=65535)
+            schema.add_field(
+                field_name="parent_content", datatype=DataType.VARCHAR, max_length=65535
+            )
             # 添加学科类别字段，VARCHAR 类型，最大长度 50
-            schema.add_field(field_name="source", datatype=DataType.VARCHAR, max_length=50)
+            schema.add_field(
+                field_name="source", datatype=DataType.VARCHAR, max_length=50
+            )
             # 添加时间戳字段，VARCHAR 类型，最大长度 50
-            schema.add_field(field_name="timestamp", datatype=DataType.VARCHAR, max_length=50)
+            schema.add_field(
+                field_name="timestamp", datatype=DataType.VARCHAR, max_length=50
+            )
             # 添加页码字段，INT64 类型，可为空
             schema.add_field(field_name="page_num", datatype=DataType.INT64)
             # 添加起始页码字段，INT64 类型，可为空
@@ -356,33 +417,56 @@ class VectorStore:
                 index_name="dense_index",
                 index_type="IVF_FLAT",
                 metric_type="IP",
-                params={"nlist": 128} # 簇
+                params={"nlist": 128},  # 簇
             )
 
             # 为稀疏向量字段添加 SPARSE_INVERTED_INDEX 索引，度量类型为内积 (IP)
             index_params.add_index(
                 field_name="sparse_vector",
                 index_name="sparse_index",
-                index_type="SPARSE_INVERTED_INDEX", # 稀疏
+                index_type="SPARSE_INVERTED_INDEX",  # 稀疏
                 metric_type="IP",
-                params={"drop_ratio_build": 0.2} # 搜索忽略
+                params={"drop_ratio_build": 0.2},  # 搜索忽略
             )
 
             # 创建 Milvus 集合，应用定义的 Schema 和索引参数
-            self.client.create_collection(collection_name=self.collection_name, schema=schema,
-                                          index_params=index_params)
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                schema=schema,
+                index_params=index_params,
+            )
             # 记录创建集合的日志
             logger.info(f"已创建集合 {self.collection_name}")
             self.collection_fields = {
-                "id", "text", "dense_vector", "sparse_vector",
-                "parent_id", "parent_content", "source", "timestamp",
-                "page_num", "start_page", "end_page"
+                "id",
+                "text",
+                "dense_vector",
+                "sparse_vector",
+                "parent_id",
+                "parent_content",
+                "source",
+                "timestamp",
+                "page_num",
+                "start_page",
+                "end_page",
             }
         # 如果集合已存在
         else:
             # 记录加载集合的日志
             logger.info(f"已加载集合 {self.collection_name}")
             self._refresh_collection_fields()
+        schema_contract = document_milvus_schema(self.dense_dim)
+        schema_fingerprint = describe_and_validate_milvus_schema(
+            self.client,
+            collection_name=self.collection_name,
+            contract=schema_contract,
+        )
+        logger.info(
+            "Milvus 文档集合 schema 已验证: collection=%s version=%s fingerprint=%s",
+            self.collection_name,
+            schema_contract.version,
+            schema_fingerprint[:12],
+        )
         # 将集合加载到内存，确保可立即查询
         self.client.load_collection(self.collection_name)
 
@@ -396,7 +480,11 @@ class VectorStore:
         Returns:
             None。
         """
-        with log_duration("milvus.add_documents", count=len(documents), collection=self.collection_name):
+        with log_duration(
+            "milvus.add_documents",
+            count=len(documents),
+            collection=self.collection_name,
+        ):
             texts = [doc.page_content for doc in documents]
 
             with log_duration("milvus.embed_documents", count=len(texts)):
@@ -409,11 +497,29 @@ class VectorStore:
                 if user_id is not None and str(user_id).strip() != "":
                     try:
                         doc_id = int(user_id)
-                    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+                    except (
+                        RuntimeError,
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                        AttributeError,
+                        OSError,
+                        ImportError,
+                    ):
                         try:
                             doc_id = uuid.UUID(str(user_id)).int & ((1 << 63) - 1)
-                        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
-                            self.logger.warning("无效 metadata.id=%s，改用 UUID 生成 ID", user_id)
+                        except (
+                            RuntimeError,
+                            ValueError,
+                            TypeError,
+                            KeyError,
+                            AttributeError,
+                            OSError,
+                            ImportError,
+                        ):
+                            self.logger.warning(
+                                "无效 metadata.id=%s，改用 UUID 生成 ID", user_id
+                            )
                             doc_id = _generate_uuid_int64_id()
                 else:
                     doc_id = _generate_uuid_int64_id()
@@ -426,20 +532,28 @@ class VectorStore:
 
                 sparse_vector = {}
                 sparse_emb = embeddings["sparse"]
-                if hasattr(sparse_emb, 'getrow'):
+                if hasattr(sparse_emb, "getrow"):
                     row = sparse_emb.getrow(i)
                 else:
                     row = sparse_emb[i]
 
-                if hasattr(row, 'toarray'):
+                if hasattr(row, "toarray"):
                     row = row.toarray().flatten()
 
-                if hasattr(row, 'indices'):
+                if hasattr(row, "indices"):
                     indices = row.indices
                     values = row.data
                 else:
-                    indices = row.nonzero()[0] if hasattr(row, 'nonzero') else [j for j, v in enumerate(row) if v != 0]
-                    values = [row[j] for j in indices] if not hasattr(row, 'nonzero') else row[row.nonzero()[0]]
+                    indices = (
+                        row.nonzero()[0]
+                        if hasattr(row, "nonzero")
+                        else [j for j, v in enumerate(row) if v != 0]
+                    )
+                    values = (
+                        [row[j] for j in indices]
+                        if not hasattr(row, "nonzero")
+                        else row[row.nonzero()[0]]
+                    )
 
                 for idx, value in zip(indices, values):
                     sparse_vector[idx] = value
@@ -448,10 +562,25 @@ class VectorStore:
                     "id": doc_id,
                     "text": doc.page_content,
                     "parent_id": doc.metadata.get("parent_id", ""),
-                    "parent_content": doc.metadata.get("parent_content", doc.page_content),
+                    "parent_content": doc.metadata.get(
+                        "parent_content", doc.page_content
+                    ),
                     "source": doc.metadata.get("source", "unknown"),
-                    "timestamp": doc.metadata.get("timestamp", "unknown")
+                    "timestamp": doc.metadata.get("timestamp", "unknown"),
                 }
+                for metadata_key in (
+                    "chunk_id",
+                    "parent_index",
+                    "sub_index",
+                    "source_hash",
+                    "parser_version",
+                    "chunk_strategy_version",
+                    "embedding_pipeline_version",
+                    "embedding_model_signature",
+                ):
+                    metadata_value = doc.metadata.get(metadata_key)
+                    if metadata_value is not None:
+                        item[metadata_key] = metadata_value
 
                 dense_vec = _to_float32_vector(embeddings["dense"][i], self.dense_dim)
 
@@ -467,7 +596,9 @@ class VectorStore:
                     item["page_num"] = int(page_num) if page_num is not None else 0
                 if "start_page" in self.collection_fields:
                     start_page = doc.metadata.get("start_page")
-                    item["start_page"] = int(start_page) if start_page is not None else 0
+                    item["start_page"] = (
+                        int(start_page) if start_page is not None else 0
+                    )
                 if "end_page" in self.collection_fields:
                     end_page = doc.metadata.get("end_page")
                     item["end_page"] = int(end_page) if end_page is not None else 0
@@ -475,9 +606,32 @@ class VectorStore:
                 data.append(item)
 
             if data:
-                with log_duration("milvus.upsert", count=len(data), collection=self.collection_name):
+                with log_duration(
+                    "milvus.upsert", count=len(data), collection=self.collection_name
+                ):
                     self.client.upsert(collection_name=self.collection_name, data=data)
                 logger.info(f"已插入或更新 {len(data)} 个文档")
+
+    def delete_obsolete_by_source_hash(
+        self,
+        source_hash: str,
+        *,
+        keep_ids: list[int],
+    ) -> None:
+        """在新版本 upsert 成功后删除同源旧向量。"""
+        if re.fullmatch(r"[0-9a-f]{64}", source_hash) is None:
+            raise ValueError("invalid_document_source_hash")
+        if not keep_ids or any(
+            isinstance(document_id, bool) or document_id < 1 for document_id in keep_ids
+        ):
+            raise ValueError("invalid_document_keep_ids")
+        keep_expression = ",".join(str(document_id) for document_id in sorted(keep_ids))
+        self.client.delete(
+            collection_name=self.collection_name,
+            filter=(
+                f'source_hash == "{source_hash}" ' f"and id not in [{keep_expression}]"
+            ),
+        )
 
     def _reciprocal_rank_fusion(self, dense_results, sparse_results, k=conf.RRF_K):
         """
@@ -518,7 +672,11 @@ class VectorStore:
         # 返回排序后的文档对象列表
         fused_entities = []
         for doc_id, score in sorted_docs:
-            entity = dict(doc_map[doc_id]) if isinstance(doc_map[doc_id], dict) else {"text": str(doc_map[doc_id])}
+            entity = (
+                dict(doc_map[doc_id])
+                if isinstance(doc_map[doc_id], dict)
+                else {"text": str(doc_map[doc_id])}
+            )
             entity["_rrf_score"] = float(score)
             fused_entities.append(entity)
         return fused_entities
@@ -543,6 +701,11 @@ class VectorStore:
             "chunk_id",
             "parent_index",
             "sub_index",
+            "source_hash",
+            "parser_version",
+            "chunk_strategy_version",
+            "embedding_pipeline_version",
+            "embedding_model_signature",
         ]
 
     def _resolve_internal_recall_limit(self, k, configured_limit=0):
@@ -570,7 +733,16 @@ class VectorStore:
         text = str(query or "").strip()
         if not text:
             return False
-        statistical_terms = ("患病率", "加权", "成人", "18岁", "18 岁", "比例", "调查", "统计")
+        statistical_terms = (
+            "患病率",
+            "加权",
+            "成人",
+            "18岁",
+            "18 岁",
+            "比例",
+            "调查",
+            "统计",
+        )
         has_year = any(ch.isdigit() for ch in text)
         return has_year and any(token in text for token in statistical_terms)
 
@@ -668,9 +840,15 @@ class VectorStore:
         if not matched:
             return 0.0
         bonus = (len(matched) / len(terms)) * 0.6
-        if self._is_statistical_query(query) and any(term.endswith("年") or term.isdigit() for term in matched):
+        if self._is_statistical_query(query) and any(
+            term.endswith("年") or term.isdigit() for term in matched
+        ):
             bonus += 0.1
-        if self._is_statistical_query(query) and "患病率" in matched and "高血压" in matched:
+        if (
+            self._is_statistical_query(query)
+            and "患病率" in matched
+            and "高血压" in matched
+        ):
             bonus += 0.12
         return float(bonus)
 
@@ -692,7 +870,9 @@ class VectorStore:
                     [
                         str(metadata.get("parent_id") or "").strip(),
                         str(metadata.get("sub_index") or "").strip(),
-                        str(metadata.get("start_page") or metadata.get("page_num") or "").strip(),
+                        str(
+                            metadata.get("start_page") or metadata.get("page_num") or ""
+                        ).strip(),
                     ]
                 )
                 or str(doc.page_content or "")[:240]
@@ -733,13 +913,25 @@ class VectorStore:
             content_bonus = self._content_match_bonus(query, doc.page_content)
             search_score = float(metadata.get("search_score") or 0.0)
             if self._is_statistical_query(query):
-                final_score = (search_score * 8.0) + (float(page_bonus) * 1.5) + (float(content_bonus) * 1.2) + (float(raw_score) * 0.25)
+                final_score = (
+                    (search_score * 8.0)
+                    + (float(page_bonus) * 1.5)
+                    + (float(content_bonus) * 1.2)
+                    + (float(raw_score) * 0.25)
+                )
             else:
-                final_score = float(raw_score) + (search_score * 0.2) + float(page_bonus) + float(content_bonus)
+                final_score = (
+                    float(raw_score)
+                    + (search_score * 0.2)
+                    + float(page_bonus)
+                    + float(content_bonus)
+                )
             metadata["rerank_score"] = float(raw_score)
             metadata["page_bias_bonus"] = float(page_bonus)
             metadata["content_match_bonus"] = float(content_bonus)
             metadata["final_rank_score"] = float(final_score)
+            retrieval_method = str(metadata["retrieval_method"]).strip()
+            metadata["retrieval_method"] = f"{retrieval_method}_rerank"
             doc.metadata = metadata
             ranked_rows.append((final_score, doc))
         ranked_rows.sort(key=lambda item: item[0], reverse=True)
@@ -772,7 +964,9 @@ class VectorStore:
                 score = metadata.get("final_rank_score", metadata.get("rerank_score"))
                 snippet = str(row.page_content or "")
             elif isinstance(row, dict) and "entity" in row:
-                entity = row.get("entity") if isinstance(row.get("entity"), dict) else {}
+                entity = (
+                    row.get("entity") if isinstance(row.get("entity"), dict) else {}
+                )
                 metadata = entity
                 score = row.get("distance")
                 snippet = str(entity.get("text") or entity.get("parent_content") or "")
@@ -793,7 +987,14 @@ class VectorStore:
                 str(query or "").strip()[:120],
             )
 
-    async def hybrid_search_with_rerank(self, query, k=conf.RETRIEVAL_K, source_filter=None):
+    async def hybrid_search_with_rerank(
+        self,
+        query,
+        k=conf.RETRIEVAL_K,
+        source_filter=None,
+        *,
+        retrieval_mode="rerank",
+    ):
         """
         执行混合检索并返回重排序后的子块文档。
 
@@ -805,21 +1006,35 @@ class VectorStore:
             query: 查询文本。
             k: 检索结果数。
             source_filter: 来源过滤条件。
+            retrieval_mode: dense、sparse、hybrid 或 rerank。
 
         Returns:
             list[Document]: 重排序后的子块文档列表。
         """
-        with log_duration("milvus.hybrid_search_with_rerank", k=k, source_filter=source_filter):
+        if retrieval_mode not in {"dense", "sparse", "hybrid", "rerank"}:
+            raise ValueError(f"unsupported_retrieval_mode:{retrieval_mode}")
+        with log_duration(
+            "milvus.hybrid_search_with_rerank",
+            k=k,
+            source_filter=source_filter,
+            retrieval_mode=retrieval_mode,
+        ):
             final_limit = max(1, int(k or 1))
             internal_limit = self._resolve_internal_recall_limit(final_limit)
-            dense_limit = self._resolve_internal_recall_limit(final_limit, int(conf.RAG_DENSE_INTERNAL_RECALL_TOP_K or 0))
-            sparse_limit = self._resolve_internal_recall_limit(final_limit, int(conf.RAG_SPARSE_INTERNAL_RECALL_TOP_K or 0))
+            dense_limit = self._resolve_internal_recall_limit(
+                final_limit, int(conf.RAG_DENSE_INTERNAL_RECALL_TOP_K or 0)
+            )
+            sparse_limit = self._resolve_internal_recall_limit(
+                final_limit, int(conf.RAG_SPARSE_INTERNAL_RECALL_TOP_K or 0)
+            )
             output_fields = self._build_search_output_fields()
 
             with log_duration("milvus.embed_query"):
                 query_embeddings = self.embedding_function([query])
 
-            dense_query_vector = _to_float32_vector(query_embeddings["dense"][0], self.dense_dim)
+            dense_query_vector = _to_float32_vector(
+                query_embeddings["dense"][0], self.dense_dim
+            )
             sparse_query_vector = {}
             sparse_emb = query_embeddings["sparse"]
             if hasattr(sparse_emb, "getrow"):
@@ -832,13 +1047,25 @@ class VectorStore:
                 indices = row.indices
                 values = row.data
             else:
-                indices = row.nonzero()[0] if hasattr(row, "nonzero") else [j for j, value in enumerate(row) if value != 0]
-                values = [row[j] for j in indices] if not hasattr(row, "nonzero") else row[row.nonzero()[0]]
+                indices = (
+                    row.nonzero()[0]
+                    if hasattr(row, "nonzero")
+                    else [j for j, value in enumerate(row) if value != 0]
+                )
+                values = (
+                    [row[j] for j in indices]
+                    if not hasattr(row, "nonzero")
+                    else row[row.nonzero()[0]]
+                )
             for idx, value in zip(indices, values):
                 sparse_query_vector[int(idx)] = float(value)
 
             filter_expr = f"source == '{source_filter}'" if source_filter else ""
-            dense_field = "dense_vector" if "dense_vector" in self.collection_fields else ("embedding" if "embedding" in self.collection_fields else None)
+            dense_field = (
+                "dense_vector"
+                if "dense_vector" in self.collection_fields
+                else ("embedding" if "embedding" in self.collection_fields else None)
+            )
             sparse_enabled = "sparse_vector" in self.collection_fields
             if dense_field is None:
                 raise ValueError(f"集合 {self.collection_name} 缺少可用向量字段")
@@ -854,19 +1081,41 @@ class VectorStore:
                         "output_fields": output_fields,
                         "filter": filter_expr,
                     },
-                    search_params={"metric_type": dense_metric, "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)}},
+                    search_params={
+                        "metric_type": dense_metric,
+                        "params": {"nprobe": int(conf.MILVUS_SEARCH_NPROBE)},
+                    },
                 )[0]
             self._log_candidate_diagnostics("dense", query, dense_results)
+            dense_sub_chunks = self._dedupe_sub_chunks(
+                [
+                    self._doc_from_hit(hit, retrieval_method="dense")
+                    for hit in dense_results
+                ]
+            )
+            if retrieval_mode == "dense":
+                return dense_sub_chunks[:final_limit]
 
             if not sparse_enabled:
-                sub_chunks = self._dedupe_sub_chunks([self._doc_from_hit(hit) for hit in dense_results])
-                reranked_sub_chunks = self._rerank_sub_chunks(query, sub_chunks, limit=min(len(sub_chunks), internal_limit))
-                self._log_candidate_diagnostics("rerank_dense_only", query, reranked_sub_chunks)
+                if retrieval_mode == "sparse":
+                    return []
+                if retrieval_mode == "hybrid":
+                    return dense_sub_chunks[:final_limit]
+                reranked_sub_chunks = self._rerank_sub_chunks(
+                    query,
+                    dense_sub_chunks,
+                    limit=min(len(dense_sub_chunks), internal_limit),
+                )
+                self._log_candidate_diagnostics(
+                    "rerank_dense_only", query, reranked_sub_chunks
+                )
                 return reranked_sub_chunks[:final_limit]
 
             sparse_results = []
             if sparse_query_vector:
-                with log_duration("milvus.search_sparse", mode="hybrid", limit=sparse_limit):
+                with log_duration(
+                    "milvus.search_sparse", mode="hybrid", limit=sparse_limit
+                ):
                     sparse_results = self._search_with_params(
                         search_kwargs={
                             "collection_name": self.collection_name,
@@ -879,15 +1128,53 @@ class VectorStore:
                         search_params={"metric_type": "IP", "params": {}},
                     )[0]
             self._log_candidate_diagnostics("sparse", query, sparse_results)
+            sparse_sub_chunks = self._dedupe_sub_chunks(
+                [
+                    self._doc_from_hit(hit, retrieval_method="sparse")
+                    for hit in sparse_results
+                ]
+            )
+            if retrieval_mode == "sparse":
+                return sparse_sub_chunks[:final_limit]
 
             logger.info("使用 RRF 算法融合检索结果")
             fused_entities = self._reciprocal_rank_fusion(dense_results, sparse_results)
             self._log_candidate_diagnostics("fused", query, fused_entities)
 
-            sub_chunks = self._dedupe_sub_chunks([self._doc_from_hit(entity) for entity in fused_entities])
-            reranked_sub_chunks = self._rerank_sub_chunks(query, sub_chunks, limit=min(len(sub_chunks), internal_limit))
+            sub_chunks = self._dedupe_sub_chunks(
+                [
+                    self._doc_from_hit(
+                        entity,
+                        retrieval_method=(
+                            "dense_sparse_rrf" if sparse_query_vector else "dense_rrf"
+                        ),
+                    )
+                    for entity in fused_entities
+                ]
+            )
+            if retrieval_mode == "hybrid":
+                return sub_chunks[:final_limit]
+            reranked_sub_chunks = self._rerank_sub_chunks(
+                query, sub_chunks, limit=min(len(sub_chunks), internal_limit)
+            )
             self._log_candidate_diagnostics("rerank", query, reranked_sub_chunks)
             return reranked_sub_chunks[:final_limit]
+
+    async def search_by_mode(
+        self,
+        *,
+        query,
+        k,
+        retrieval_mode,
+        source_filter=None,
+    ):
+        """按显式消融模式执行向量检索。"""
+        return await self.hybrid_search_with_rerank(
+            query=query,
+            k=k,
+            source_filter=source_filter,
+            retrieval_mode=retrieval_mode,
+        )
 
     def _get_unique_parent_docs(self, sub_chunks):
         """
@@ -913,24 +1200,31 @@ class VectorStore:
             # 检查父块内容是否非空且未重复
             if parent_content and parent_content not in parent_contents:
                 # 创建新的 Document 对象，包含父块内容和元数据
-                unique_docs.append(Document(page_content=parent_content, metadata=chunk.metadata))
+                unique_docs.append(
+                    Document(page_content=parent_content, metadata=chunk.metadata)
+                )
                 # 将父块内容添加到去重集合
                 parent_contents.add(parent_content)
             # 返回去重后的父文档列表
         return unique_docs
 
-    def _doc_from_hit(self, hit):
+    def _doc_from_hit(self, hit, *, retrieval_method):
         """
         将 Milvus 命中记录转换为 LangChain Document。
 
         Args:
             hit: Milvus 命中记录。
+            retrieval_method: 命中记录已执行的检索阶段。
 
         Returns:
             Document: 转换后的文档对象。
         """
         hit_obj = hit if isinstance(hit, dict) else {}
-        entity = hit_obj.get("entity") if isinstance(hit_obj.get("entity"), dict) else hit_obj
+        entity = (
+            hit_obj.get("entity")
+            if isinstance(hit_obj.get("entity"), dict)
+            else hit_obj
+        )
         score = hit_obj.get("_rrf_score")
         if score is None:
             score = hit_obj.get("distance")
@@ -947,11 +1241,27 @@ class VectorStore:
             "chunk_id": entity.get("chunk_id"),
             "parent_index": _safe_int(entity.get("parent_index")),
             "sub_index": _safe_int(entity.get("sub_index")),
+            "source_hash": entity.get("source_hash"),
+            "parser_version": _safe_int(entity.get("parser_version")),
+            "chunk_strategy_version": _safe_int(entity.get("chunk_strategy_version")),
+            "embedding_pipeline_version": _safe_int(
+                entity.get("embedding_pipeline_version")
+            ),
+            "embedding_model_signature": entity.get("embedding_model_signature"),
+            "retrieval_method": str(retrieval_method).strip(),
         }
         if score is not None:
             try:
                 metadata["search_score"] = float(score)
-            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                ImportError,
+            ):
                 pass
         return Document(
             page_content=entity.get("text") or "",

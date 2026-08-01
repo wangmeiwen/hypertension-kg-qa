@@ -12,7 +12,11 @@ describe("agentFlow helpers", () => {
 
   it("matches Chinese and English medical disclaimers", () => {
     expect(containsMedicalDisclaimer("以上内容仅供参考，不构成诊断或治疗建议。")).toBe(true);
-    expect(containsMedicalDisclaimer("The response is informational only and should not replace urgent medical care.")).toBe(true);
+    expect(
+      containsMedicalDisclaimer(
+        "The response is informational only and should not replace urgent medical care.",
+      ),
+    ).toBe(true);
     expect(containsMedicalDisclaimer("普通段落")).toBe(false);
   });
 });

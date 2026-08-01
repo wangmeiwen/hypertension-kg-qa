@@ -3,7 +3,6 @@
 提供 Neo4j 异步连接管理、Cypher 执行和全局客户端入口。
 """
 
-
 from __future__ import annotations
 
 import asyncio
@@ -64,7 +63,9 @@ class Neo4jClient:
                 return self._driver
             if self._driver is not None:
                 await self._driver.close()
-            self._driver = AsyncGraphDatabase.driver(self._uri, auth=(self._user, self._password))
+            self._driver = AsyncGraphDatabase.driver(
+                self._uri, auth=(self._user, self._password)
+            )
             self._driver_loop_id = loop_id
             return self._driver
 
@@ -97,7 +98,9 @@ class Neo4jClient:
                 self._driver = None
                 self._driver_loop_id = None
 
-    async def run_cypher(self, query: str, parameters: Optional[Dict] = None) -> List[Dict]:
+    async def run_cypher(
+        self, query: str, parameters: Optional[Dict] = None
+    ) -> List[Dict]:
         """执行单条 Cypher 查询并返回结果列表。
 
         Args:
@@ -127,8 +130,11 @@ class Neo4jClient:
         """
         timeout = int(os.getenv("GRAPH_NEO4J_WRITE_LOCK_TIMEOUT_SECONDS", "300"))
         async with concurrency_guard.keyed_lock("neo4j:write", timeout=timeout):
-            with log_duration("neo4j.run_multiple_cypher", queries=len(queries_with_params)):
+            with log_duration(
+                "neo4j.run_multiple_cypher", queries=len(queries_with_params)
+            ):
                 async with self._driver_session() as session:
+
                     async def _tx(tx):
                         """事务回调：顺序执行批量语句。
 
@@ -143,7 +149,9 @@ class Neo4jClient:
 
                     await session.execute_write(_tx)
 
-    async def run_multiple_cypher_read(self, queries_with_params: List[tuple]) -> List[List[Dict]]:
+    async def run_multiple_cypher_read(
+        self, queries_with_params: List[tuple]
+    ) -> List[List[Dict]]:
         """顺序执行多条读查询并分别返回结果集。
 
         Args:
@@ -153,7 +161,9 @@ class Neo4jClient:
             List[List[Dict]]: 与输入查询顺序对应的结果集列表。
         """
         rows: List[List[Dict]] = []
-        with log_duration("neo4j.run_multiple_cypher_read", queries=len(queries_with_params)):
+        with log_duration(
+            "neo4j.run_multiple_cypher_read", queries=len(queries_with_params)
+        ):
             async with self._driver_session() as session:
                 for query, params in queries_with_params:
                     result = await session.run(query, params or {})
@@ -205,8 +215,16 @@ class Neo4jClient:
             return False
 
 
+def _require_env(name: str) -> str:
+    """读取必需环境变量，缺失时在启动阶段快速失败。"""
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        raise RuntimeError(f"环境变量 {name} 未设置")
+    return value
+
+
 neo4j_client = Neo4jClient(
-    os.getenv("NEO4J_URI"),
-    os.getenv("NEO4J_USER"),
-    os.getenv("NEO4J_PASSWORD"),
+    _require_env("NEO4J_URI"),
+    _require_env("NEO4J_USER"),
+    _require_env("NEO4J_PASSWORD"),
 )

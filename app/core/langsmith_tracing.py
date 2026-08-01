@@ -4,6 +4,7 @@ LangSmith 链路追踪模块
 用于集成 LangSmith 平台，记录和追踪 LLM 调用、工具执行等操作。
 需要设置环境变量 LANGSMITH_TRACING=1 和 LANGSMITH_API_KEY 才能启用。
 """
+
 import logging
 import os
 from typing import Any, Callable, Dict, Optional
@@ -23,40 +24,40 @@ def _is_tracing_enabled() -> bool:
     return bool(str(os.getenv("LANGSMITH_API_KEY") or "").strip())
 
 
+_traceable_impl: Optional[Callable[..., Any]]
+
 # 尝试导入 LangSmith 的 traceable 装饰器，导入失败时提供空实现
 try:
-    from langsmith import traceable as _traceable
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
-    # 降级处理：当 LangSmith 未安装或不可用时，返回空装饰器
-    def _traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-        """提供 LangSmith 不可用时的降级装饰器工厂。
+    from langsmith import traceable as _langsmith_traceable
 
-        当运行环境没有安装 `langsmith` 或导入失败时，
-        该函数返回一个“空装饰器”，保证业务函数可正常执行。
-
-        Args:
-            *args: 与真实 `traceable` 保持兼容的位置参数。
-            **kwargs: 与真实 `traceable` 保持兼容的关键字参数。
-
-        Returns:
-            Callable[[Callable[..., Any]], Callable[..., Any]]: 不改变原函数行为的装饰器。
-        """
-        def _decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            """空装饰器实现。
-
-            直接返回原函数，不注入追踪逻辑。
-
-            Args:
-                func: 被装饰的目标函数。
-
-            Returns:
-                Callable[..., Any]: 原函数本身。
-            """
-            return func
-        return _decorator
+    _traceable_impl = _langsmith_traceable
+except (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    OSError,
+    ImportError,
+):
+    _traceable_impl = None
 
 
-def traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def _noop_traceable(
+    *args: Any, **kwargs: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """提供 LangSmith 不可用时的空装饰器工厂。"""
+    _ = args, kwargs
+
+    def _decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        return func
+
+    return _decorator
+
+
+def traceable(
+    *args: Any, **kwargs: Any
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：标记函数需要被 LangSmith 追踪。
 
     用法:
@@ -71,10 +72,14 @@ def traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Calla
     Returns:
         Callable[[Callable[..., Any]], Callable[..., Any]]: LangSmith traceable 装饰器或降级空装饰器。
     """
-    return _traceable(*args, **kwargs)
+    if _traceable_impl is None:
+        return _noop_traceable(*args, **kwargs)
+    return _traceable_impl(*args, **kwargs)
 
 
-def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional[list[str]] = None) -> None:
+def set_trace_metadata(
+    metadata: Optional[Dict[str, Any]] = None, tags: Optional[list[str]] = None
+) -> None:
     """设置当前追踪运行的元数据和标签。
 
     Args:
@@ -93,6 +98,7 @@ def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional
     try:
         from langsmith import get_current_run_tree
         from langsmith.run_helpers import set_run_metadata
+
         payload: Dict[str, Any] = {}
         if metadata_obj:
             payload.update(metadata_obj)
@@ -102,12 +108,15 @@ def set_trace_metadata(metadata: Optional[Dict[str, Any]] = None, tags: Optional
             # 没有活动 trace 时无需设置 metadata，避免 SDK 输出噪音告警
             if get_current_run_tree() is None:
                 return
-            try:
-                # LangSmith 新版本仅接受关键字参数：set_run_metadata(**metadata)
-                set_run_metadata(**payload)
-            except TypeError:
-                # 兼容旧版本可能使用 set_run_metadata(dict) 的调用方式
-                set_run_metadata(payload)
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
+            set_run_metadata(**payload)
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OSError,
+        ImportError,
+    ) as e:
         logger.warning("设置 LangSmith 追踪元数据失败: %s", e)
         return

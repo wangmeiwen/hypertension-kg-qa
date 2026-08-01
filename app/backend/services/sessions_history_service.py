@@ -10,9 +10,9 @@ import uuid
 from fastapi import UploadFile
 import httpx
 
-from app.backend.repositories.database import MessageManager, SessionManager
+from app.backend.repositories.session_manager import MessageManager, SessionManager
+from app.backend.security.upload_policy import inspect_upload
 from app.core.config import Config
-
 
 CHAT_FILE_API_EXTENSIONS = {
     ".txt",
@@ -67,7 +67,9 @@ class SessionsHistoryService:
         self._log_api_error = log_api_error
 
     @staticmethod
-    def _strip_runtime_message_fields(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _strip_runtime_message_fields(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """移除普通聊天历史不需要返回给浏览器的大字段。
 
         Args:
@@ -76,9 +78,14 @@ class SessionsHistoryService:
         Returns:
             list[dict[str, Any]]: 去掉运行时思考内容后的消息列表。
         """
-        return [{key: value for key, value in message.items() if key != "think_content"} for message in messages]
+        return [
+            {key: value for key, value in message.items() if key != "think_content"}
+            for message in messages
+        ]
 
-    async def _refresh_memory_after_rollback(self, session_id: str, user_id: str, operation: str) -> dict[str, Any]:
+    async def _refresh_memory_after_rollback(
+        self, session_id: str, user_id: str, operation: str
+    ) -> dict[str, Any]:
         """回撤消息后按剩余历史重建会话记忆。
 
         Args:
@@ -156,10 +163,14 @@ class SessionsHistoryService:
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found"}
 
-        messages = self._strip_runtime_message_fields(await self._await_call(MessageManager.get_messages, session_id))
+        messages = self._strip_runtime_message_fields(
+            await self._await_call(MessageManager.get_messages, session_id)
+        )
         return {"ok": True, "data": {**session, "messages": messages}}
 
-    async def update_session(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def update_session(
+        self, session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """更新会话标题。
 
         Args:
@@ -179,12 +190,16 @@ class SessionsHistoryService:
         if not await self._is_session_owner(session_id, user_id):
             return {"ok": False, "error": "session_not_found"}
 
-        success = await self._await_call(SessionManager.update_session_title, session_id, title)
+        success = await self._await_call(
+            SessionManager.update_session_title, session_id, title
+        )
         if not success:
             return {"ok": False, "error": "session_not_found"}
         return {"ok": True}
 
-    async def delete_session(self, session_id: str, user_id: str = "") -> dict[str, Any]:
+    async def delete_session(
+        self, session_id: str, user_id: str = ""
+    ) -> dict[str, Any]:
         """删除用户自己的会话。
 
         Args:
@@ -205,7 +220,9 @@ class SessionsHistoryService:
             return {"ok": False, "error": "session_not_found"}
         return {"ok": True}
 
-    async def add_message(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def add_message(
+        self, session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """添加消息到用户会话。
 
         Args:
@@ -229,7 +246,9 @@ class SessionsHistoryService:
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found"}
 
-        message = await self._await_call(MessageManager.add_message, session_id, role, content, think_content)
+        message = await self._await_call(
+            MessageManager.add_message, session_id, role, content, think_content
+        )
         return {"ok": True, "data": message}
 
     async def get_messages(self, session_id: str, user_id: str = "") -> dict[str, Any]:
@@ -249,10 +268,14 @@ class SessionsHistoryService:
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found"}
 
-        messages = self._strip_runtime_message_fields(await self._await_call(MessageManager.get_messages, session_id))
+        messages = self._strip_runtime_message_fields(
+            await self._await_call(MessageManager.get_messages, session_id)
+        )
         return {"ok": True, "data": messages}
 
-    async def rollback_to_question(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def rollback_to_question(
+        self, session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """回撤会话到指定用户问题，并重建会话记忆。
 
         Args:
@@ -274,11 +297,15 @@ class SessionsHistoryService:
         if not session or str(session.get("user_id") or "") != user_id:
             return {"ok": False, "error": "session_not_found"}
 
-        rollback_result = await self._await_call(MessageManager.rollback_to_question, session_id, raw_message_id)
+        rollback_result = await self._await_call(
+            MessageManager.rollback_to_question, session_id, raw_message_id
+        )
         if not bool(rollback_result.get("ok")):
             return {"ok": False, "error": "question_not_found"}
 
-        memory_result = await self._refresh_memory_after_rollback(session_id, user_id, "rollback_to_question_memory")
+        memory_result = await self._refresh_memory_after_rollback(
+            session_id, user_id, "rollback_to_question_memory"
+        )
         return {
             "ok": True,
             "data": {
@@ -307,11 +334,20 @@ class SessionsHistoryService:
 
         try:
             content = await file.read()
-            if len(content) > ALIYUN_FILE_API_MAX_BYTES:
-                return {"ok": False, "error": "文件大小不能超过 150MB"}
+            inspect_upload(
+                content=content,
+                filename=str(file.filename),
+                declared_mime=file.content_type,
+                allowed_suffixes=CHAT_FILE_API_EXTENSIONS,
+                max_bytes=ALIYUN_FILE_API_MAX_BYTES,
+            )
 
-            aliyun_file = await self._upload_to_aliyun_file_api(str(file.filename), content)
-            aliyun_file_id = str(aliyun_file.get("id") or aliyun_file.get("file_id") or "").strip()
+            aliyun_file = await self._upload_to_aliyun_file_api(
+                str(file.filename), content
+            )
+            aliyun_file_id = str(
+                aliyun_file.get("id") or aliyun_file.get("file_id") or ""
+            ).strip()
             if not aliyun_file_id:
                 return {"ok": False, "error": "阿里 File API 未返回 file_id"}
 
@@ -334,7 +370,9 @@ class SessionsHistoryService:
                     "filename": filename,
                     "original_name": str(file.filename),
                     "url": f"/uploads/{filename}",
-                    "base64": f"data:{mime_type};base64,{base64_data}" if base64_data else "",
+                    "base64": (
+                        f"data:{mime_type};base64,{base64_data}" if base64_data else ""
+                    ),
                     "is_image": file_ext in CHAT_IMAGE_EXTENSIONS,
                     "file_id": aliyun_file_id,
                     "aliyun_file_id": aliyun_file_id,
@@ -342,11 +380,24 @@ class SessionsHistoryService:
                     "purpose": str(aliyun_file.get("purpose") or "file-extract"),
                 },
             }
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError, httpx.HTTPError) as exc:
-            self._log_api_error("/upload_file", "aliyun_file_upload", exc, filename=file.filename)
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+            httpx.HTTPError,
+        ) as exc:
+            self._log_api_error(
+                "/upload_file", "aliyun_file_upload", exc, filename=file.filename
+            )
             return {"ok": False, "error": f"上传失败: {str(exc)}"}
 
-    async def _upload_to_aliyun_file_api(self, filename: str, content: bytes) -> dict[str, Any]:
+    async def _upload_to_aliyun_file_api(
+        self, filename: str, content: bytes
+    ) -> dict[str, Any]:
         """调用阿里 OpenAI 兼容 File API 上传聊天附件。"""
         config = Config()
         api_key = str(config.MODEL_API_KEY or "").strip()
@@ -366,7 +417,9 @@ class SessionsHistoryService:
                 files={"file": (filename, content)},
             )
         if response.status_code >= 400:
-            raise RuntimeError(f"阿里 File API 上传失败: status={response.status_code} body={response.text[:300]}")
+            raise RuntimeError(
+                f"阿里 File API 上传失败: status={response.status_code} body={response.text[:300]}"
+            )
         payload = response.json()
         return payload if isinstance(payload, dict) else {}
 
@@ -398,9 +451,14 @@ class SessionsHistoryService:
             return {"ok": False, "error": "job_not_found"}
 
         result = await service.acancel_task(job_id, "manual_cancel")
-        if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
+        if (
+            not bool(result.get("ok"))
+            and str(result.get("error") or "") == "task_not_found"
+        ):
             return {"ok": False, "error": "job_not_found_or_finished"}
-        current_status = str((((result.get("task") or {}).get("status") or {}).get("state")) or "")
+        current_status = str(
+            (((result.get("task") or {}).get("status") or {}).get("state")) or ""
+        )
 
         return {
             "ok": True,

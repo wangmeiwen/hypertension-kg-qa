@@ -4,7 +4,12 @@ import { useTranslation } from "react-i18next";
 
 import styles from "./SessionListPanel.module.css";
 import { useSessionStore } from "../../entities/session/model/useSessionStore";
-import { createSession, deleteSession, listSessions, updateSession } from "../../shared/api/sessionClient";
+import {
+  createSession,
+  deleteSession,
+  listSessions,
+  updateSession,
+} from "../../shared/api/sessionClient";
 import { formatRelativeTime, truncateText } from "../../shared/lib/format";
 import { reportFrontendError, trackEvent } from "../../shared/lib/observability";
 import { queryKeys } from "../../shared/queries/queryKeys";
@@ -44,7 +49,8 @@ export default function SessionListPanel() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ sessionId, title }: { sessionId: string; title: string }) => updateSession(sessionId, userId, title),
+    mutationFn: ({ sessionId, title }: { sessionId: string; title: string }) =>
+      updateSession(sessionId, userId, title),
     onSuccess: async () => {
       setEditingId(null);
       setDraftTitle("");
@@ -105,7 +111,9 @@ export default function SessionListPanel() {
               autoFocus
             />
           ) : (
-            <div className={styles.title}>{truncateText(session.title || t("chat.newSession"), 20)}</div>
+            <div className={styles.title}>
+              {truncateText(session.title || t("chat.newSession"), 20)}
+            </div>
           )}
           <div className={styles.meta}>
             {formatRelativeTime(session.updated_at || session.created_at, i18n.language)}
@@ -156,7 +164,9 @@ export default function SessionListPanel() {
     >
       {error ? <div className="dangerText">{error}</div> : null}
       {sessionsQuery.isLoading ? <Skeleton>{t("common.loading")}</Skeleton> : null}
-      {!sessionsQuery.isLoading && sessions.length === 0 ? <EmptyState>{t("chat.noMessages")}</EmptyState> : null}
+      {!sessionsQuery.isLoading && sessions.length === 0 ? (
+        <EmptyState>{t("chat.noMessages")}</EmptyState>
+      ) : null}
       <VirtualList
         items={sessions}
         className={styles.list}

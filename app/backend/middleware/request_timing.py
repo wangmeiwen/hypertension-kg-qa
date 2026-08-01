@@ -11,7 +11,12 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 from app.backend.dependencies.request_context import resolve_api_identity
-from app.backend.security.admin_auth import reset_current_admin_token, set_current_admin_token
+from app.backend.security.admin_audit import log_admin_audit_event
+from app.backend.security.admin_auth import (
+    get_current_admin_user,
+    reset_current_admin_token,
+    set_current_admin_token,
+)
 from app.core.langsmith_tracing import set_trace_metadata
 from app.core.perf_logger import log_duration
 from app.backend.observability.session_logger import (
@@ -78,6 +83,16 @@ async def request_timing_middleware(request: Request, call_next):
     request_token = set_request_context(request_id)
     bearer_token = _extract_bearer_token(request.headers.get("Authorization", ""))
     token_handle = set_current_admin_token(bearer_token)
+    current_admin_user = get_current_admin_user()
+    request.state.admin_actor = (
+        current_admin_user if current_admin_user is not None else ""
+    )
+    request.state.admin_permission = (
+        f"auth:{request.url.path.removeprefix('/admin/')}"
+        if request.url.path in {"/admin/login", "/admin/status", "/admin/logout"}
+        else ""
+    )
+    request.state.admin_audit_outcome = ""
     started = time.perf_counter()
     status_code = 500
     error_type = ""
@@ -85,9 +100,42 @@ async def request_timing_middleware(request: Request, call_next):
     logged = False
     is_streaming_response = False
     client_ip = request.client.host if request.client else ""
-    request_timer_ctx = log_duration("http_request", method=request.method, path=request.url.path)
+    request_timer_ctx = log_duration(
+        "http_request", method=request.method, path=request.url.path
+    )
     request_timer_ctx.__enter__()
     request_timer_closed = False
+    admin_audit_logged = False
+
+    def _log_admin_audit(status: int, duration_ms: float) -> None:
+        """为管理端请求记录一次不含敏感正文的审计事件。"""
+        nonlocal admin_audit_logged
+        if admin_audit_logged or not request.url.path.startswith("/admin/"):
+            return
+        outcome = request.state.admin_audit_outcome
+        if not outcome:
+            if status < 400:
+                outcome = "allowed"
+            elif status == 401:
+                outcome = "unauthenticated"
+            elif status == 403:
+                outcome = "denied"
+            elif status == 429:
+                outcome = "rate_limited"
+            else:
+                outcome = "failed"
+        log_admin_audit_event(
+            trace_id=request_id,
+            actor=request.state.admin_actor,
+            method=request.method,
+            path=request.url.path,
+            permission=request.state.admin_permission,
+            outcome=outcome,
+            status_code=status,
+            duration_ms=duration_ms,
+            client_ip=client_ip,
+        )
+        admin_audit_logged = True
 
     def _finish_request_timer(exc: Optional[BaseException] = None) -> None:
         """关闭当前请求的性能计时上下文。
@@ -135,6 +183,7 @@ async def request_timing_middleware(request: Request, call_next):
             user_id=identity["user_id"],
             error_type=stream_error_type or error_type,
         )
+        _log_admin_audit(status_code, stream_total_ms)
         logged = True
         _finish_request_timer()
 
@@ -175,6 +224,7 @@ async def request_timing_middleware(request: Request, call_next):
             user_id=identity["user_id"],
             error_type=error_type,
         )
+        _log_admin_audit(status_code, ttfb_ms)
         logged = True
         _finish_request_timer()
         return response
@@ -205,6 +255,7 @@ async def request_timing_middleware(request: Request, call_next):
                 user_id=identity["user_id"],
                 error_type=error_type,
             )
+            _log_admin_audit(status_code, stream_total_ms)
             logged = True
         _finish_request_timer(exc)
         raise

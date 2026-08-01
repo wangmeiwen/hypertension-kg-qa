@@ -8,8 +8,18 @@ import json
 from typing import Any, AsyncIterator
 
 from app.backend.app_factory import BackendAppTestOverrides
+from app.backend.domain.stream_events import (
+    DoneStreamEvent,
+    JobStreamEvent,
+    PersistedStreamEvent,
+    ProgressStreamEvent,
+    ReplyStreamEvent,
+    SessionStreamEvent,
+    StreamEvent,
+    stream_event_json_line,
+)
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
-
+from app.knowledge_graph.graph_quality import GRAPH_QUALITY_POLICY_VERSION
 
 MEDICAL_DISCLAIMER = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
 
@@ -26,7 +36,9 @@ class DeterministicMcpServer:
 
     async def ainvoke_batch(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """批量回显工具 payload，模拟 MCP 批处理调用。"""
-        return [{"ok": True, "result": row.get("payload") or {}, "meta": {}} for row in rows]
+        return [
+            {"ok": True, "result": row.get("payload") or {}, "meta": {}} for row in rows
+        ]
 
     async def ainvoke(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         """回显单次工具调用，模拟 MCP 工具执行结果。"""
@@ -50,7 +62,12 @@ class DeterministicSessionMemoryService:
 
     async def load_memory(self, session_id: str) -> dict[str, Any]:
         """读取测试内存中的会话记忆快照。"""
-        return json.loads(json.dumps(self._snapshots.get(session_id) or self._empty_snapshot(), ensure_ascii=False))
+        return json.loads(
+            json.dumps(
+                self._snapshots.get(session_id) or self._empty_snapshot(),
+                ensure_ascii=False,
+            )
+        )
 
     async def clear_memory(self, session_id: str) -> None:
         """清理测试内存中的指定会话记忆。"""
@@ -63,7 +80,9 @@ class DeterministicSessionMemoryService:
         self._snapshots[session_id] = snapshot
         return snapshot
 
-    async def build_runtime_context(self, session_id: str, input_text: str, current_message_id: int) -> dict[str, Any]:
+    async def build_runtime_context(
+        self, session_id: str, input_text: str, current_message_id: int
+    ) -> dict[str, Any]:
         """构建确定性的主控运行时记忆上下文。"""
         snapshot = await self.load_memory(session_id)
         return {
@@ -75,7 +94,9 @@ class DeterministicSessionMemoryService:
             },
         }
 
-    async def refresh_after_turn(self, session_id: str, assistant_message_id: int, turn_artifacts: dict[str, Any]) -> dict[str, Any]:
+    async def refresh_after_turn(
+        self, session_id: str, assistant_message_id: int, turn_artifacts: dict[str, Any]
+    ) -> dict[str, Any]:
         """模拟单轮结束后的记忆刷新。"""
         snapshot = await self.load_memory(session_id)
         qa_pairs = list(snapshot["qa_memory"].get("qa_pairs") or [])
@@ -87,7 +108,10 @@ class DeterministicSessionMemoryService:
             }
         )
         updated = {
-            "qa_memory": {"qa_pairs": qa_pairs[-6:], "last_message_id": int(assistant_message_id or 0)},
+            "qa_memory": {
+                "qa_pairs": qa_pairs[-6:],
+                "last_message_id": int(assistant_message_id or 0),
+            },
             "retrieval_memory": snapshot["retrieval_memory"],
             "updated_at": "2026-04-23T10:05:00",
         }
@@ -110,7 +134,8 @@ def _session_title(text: Any) -> str:
 
 def _node_name(node: dict[str, Any]) -> str:
     """从测试图节点中提取展示名称。"""
-    props = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+    properties_value = node.get("properties")
+    props = properties_value if isinstance(properties_value, dict) else {}
     return str(props.get("name") or node.get("id") or "")
 
 
@@ -155,14 +180,18 @@ class DeterministicSessionState:
         self.messages[session_id] = []
         return dict(session)
 
-    def ensure_session(self, session_id: str, user_id: str, title: str = "") -> dict[str, Any]:
+    def ensure_session(
+        self, session_id: str, user_id: str, title: str = ""
+    ) -> dict[str, Any]:
         """返回已有会话或创建一个新会话。"""
         safe_session_id = str(session_id or "").strip()
         if safe_session_id and safe_session_id in self.sessions:
             return dict(self.sessions[safe_session_id])
         return self.create_session(user_id=user_id, title=title or "新建会话")
 
-    def add_message(self, session_id: str, role: str, content: str, think_content: str = "") -> dict[str, Any]:
+    def add_message(
+        self, session_id: str, role: str, content: str, think_content: str = ""
+    ) -> dict[str, Any]:
         """向内存态会话追加消息。"""
         message = {
             "id": self.next_message_id,
@@ -179,11 +208,15 @@ class DeterministicSessionState:
             session["updated_at"] = _fixed_now()
         return dict(message)
 
-    def list_sessions(self, user_id: str = "", limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    def list_sessions(
+        self, user_id: str = "", limit: int = 50, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
         """按用户和分页参数返回内存态会话列表。"""
         rows = list(self.sessions.values())
         if user_id:
-            rows = [row for row in rows if str(row.get("user_id") or "") == str(user_id)]
+            rows = [
+                row for row in rows if str(row.get("user_id") or "") == str(user_id)
+            ]
         rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
         total = len(rows)
         sliced = rows[max(0, offset) : max(0, offset) + max(0, limit)]
@@ -226,26 +259,36 @@ class DeterministicA2AEventStreamService:
         file_id: str = "",
         original_input_text: str = "",
         memory_context: dict[str, Any] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[StreamEvent]:
         """按固定顺序生成 job、msg、reply 和 done 事件。"""
         _ = user_id, session_id, request_id, image_data, file_id, memory_context
         question = str(original_input_text or input_text or "").strip()
         reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}\n\n{MEDICAL_DISCLAIMER}"
-        yield {"type": "job", "job_id": f"job-{session_id or 'deterministic'}"}
-        yield {"type": "msg", "stage": "orchestrator", "msg": "主控编排完成"}
-        yield {"type": "reply", "msg": reply}
-        yield {
-            "type": "done",
-            "status": "done",
-            "msg": "完成",
-            "processing_steps": ["主控编排", "图谱代理", "检索代理"],
-            "tool_observations": [
-                {"agent": "kg", "tool_name": "kg_entity_relation_search", "result": {"ok": True, "result": {"summary": "图谱证据"}}},
-                {"agent": "rag", "tool_name": "rag_search", "result": {"ok": True, "result": {"summary": "检索证据"}}},
+        job_id = f"job-{session_id or 'deterministic'}"
+        yield JobStreamEvent(job_id=job_id, request_id=request_id, task_id=job_id)
+        yield ProgressStreamEvent(
+            stage="orchestrator", msg="主控编排完成", task_id=job_id
+        )
+        yield ReplyStreamEvent(delta=reply, task_id=job_id)
+        yield DoneStreamEvent(
+            status="done",
+            task_id=job_id,
+            processing_steps=["主控编排", "图谱代理", "检索代理"],
+            tool_observations=[
+                {
+                    "agent": "kg",
+                    "tool_name": "kg_entity_relation_search",
+                    "result": {"ok": True, "result": {"summary": "图谱证据"}},
+                },
+                {
+                    "agent": "rag",
+                    "tool_name": "rag_search",
+                    "result": {"ok": True, "result": {"summary": "检索证据"}},
+                },
             ],
-            "evidence_summary": {"supported_points": ["血压监测", "限盐饮食"]},
-            "telemetry": {"llm_calls": 2, "tool_calls": 2, "total_tokens": 128},
-        }
+            evidence_summary={"supported_points": ["血压监测", "限盐饮食"]},
+            telemetry={"llm_calls": 2, "tool_calls": 2, "total_tokens": 128},
+        )
 
     async def generate_data_lines(
         self,
@@ -265,19 +308,25 @@ class DeterministicA2AEventStreamService:
             original_input_text=input_text,
             memory_context={},
         ):
-            yield _json_line(event)
+            yield stream_event_json_line(event)
 
 
 class DeterministicSessionTurnService:
     """确定性会话轮次准备测试服务。"""
 
-    def __init__(self, state: DeterministicSessionState, memory_service: DeterministicSessionMemoryService) -> None:
+    def __init__(
+        self,
+        state: DeterministicSessionState,
+        memory_service: DeterministicSessionMemoryService,
+    ) -> None:
         """注入内存态会话和记忆服务。"""
         self._state = state
         self._memory_service = memory_service
 
     @staticmethod
-    def bind_process_session_trace_metadata(trace_id: str, session_id: str, user_id: str) -> None:
+    def bind_process_session_trace_metadata(
+        trace_id: str, session_id: str, user_id: str
+    ) -> None:
         """测试桩中忽略追踪元数据绑定。"""
         _ = trace_id, session_id, user_id
 
@@ -292,7 +341,9 @@ class DeterministicSessionTurnService:
     ) -> dict[str, Any]:
         """创建或复用会话、写入用户消息并返回运行时上下文。"""
         safe_user_id = str(user_id or "user-test")
-        session = self._state.ensure_session(session_id, safe_user_id, _session_title(input_text))
+        session = self._state.ensure_session(
+            session_id, safe_user_id, _session_title(input_text)
+        )
         content = str(input_text or "")
         if image_data:
             content = f"[图片] {content}"
@@ -302,14 +353,22 @@ class DeterministicSessionTurnService:
                 file_marker = f"{file_marker}; file_id={str(file_id or '').strip()}"
             content = f"[文件:{file_marker}] {content}".strip()
         user_message = self._state.add_message(str(session["id"]), "user", content)
-        runtime_payload = await self._memory_service.build_runtime_context(str(session["id"]), str(input_text or ""), int(user_message["id"]))
+        runtime_payload = await self._memory_service.build_runtime_context(
+            str(session["id"]), str(input_text or ""), int(user_message["id"])
+        )
         return {
             "ok": True,
             "user_id": safe_user_id,
             "session_id": str(session["id"]),
             "user_message_id": int(user_message["id"]),
-            "original_input_text": str(runtime_payload.get("original_input_text") or input_text or ""),
-            "memory_context": runtime_payload.get("memory_context") if isinstance(runtime_payload.get("memory_context"), dict) else {},
+            "original_input_text": str(
+                runtime_payload.get("original_input_text") or input_text or ""
+            ),
+            "memory_context": (
+                runtime_payload.get("memory_context")
+                if isinstance(runtime_payload.get("memory_context"), dict)
+                else {}
+            ),
         }
 
 
@@ -336,20 +395,31 @@ class DeterministicSessionStreamService:
         _ = user_id, image_data, file_id, request_id, memory_context
         question = str(original_input_text or input_text or "").strip()
         reply = f"基于当前测试知识库，建议围绕血压监测、生活方式干预和规范用药评估：{question}\n\n{MEDICAL_DISCLAIMER}"
-        yield _json_line({"type": "session", "session_id": session_id, "user_message_id": int(user_message_id or 0)})
-        yield _json_line({"type": "job", "job_id": f"job-{session_id or 'deterministic'}"})
-        yield _json_line({"type": "msg", "stage": "orchestrator", "msg": "主控编排完成"})
-        yield _json_line({"type": "reply", "msg": reply})
-        assistant = self._state.add_message(session_id, "assistant", reply)
-        yield _json_line(
-            {
-                "type": "persisted",
-                "session_id": session_id,
-                "user_message_id": int(user_message_id or 0),
-                "assistant_message_id": int(assistant["id"]),
-            }
+        job_id = f"job-{session_id or 'deterministic'}"
+        yield stream_event_json_line(
+            SessionStreamEvent(
+                session_id=session_id,
+                user_message_id=int(user_message_id or 0),
+            )
         )
-        yield _json_line({"type": "done", "status": "done", "msg": "完成"})
+        yield stream_event_json_line(
+            JobStreamEvent(job_id=job_id, request_id=request_id, task_id=job_id)
+        )
+        yield stream_event_json_line(
+            ProgressStreamEvent(
+                stage="orchestrator", msg="主控编排完成", task_id=job_id
+            )
+        )
+        yield stream_event_json_line(ReplyStreamEvent(delta=reply, task_id=job_id))
+        assistant = self._state.add_message(session_id, "assistant", reply)
+        yield stream_event_json_line(
+            PersistedStreamEvent(
+                session_id=session_id,
+                user_message_id=int(user_message_id or 0),
+                assistant_message_id=int(assistant["id"]),
+            )
+        )
+        yield stream_event_json_line(DoneStreamEvent(status="done", task_id=job_id))
 
 
 class DeterministicSessionsHistoryService:
@@ -361,7 +431,10 @@ class DeterministicSessionsHistoryService:
 
     async def create_session(self, data: dict[str, Any]) -> dict[str, Any]:
         """创建测试会话。"""
-        session = self._state.create_session(str(data.get("user_id") or "user-test"), str(data.get("title") or "新建会话"))
+        session = self._state.create_session(
+            str(data.get("user_id") or "user-test"),
+            str(data.get("title") or "新建会话"),
+        )
         return {"ok": True, "data": session}
 
     async def list_sessions(self, user_id: str = "", limit: int = 50) -> dict[str, Any]:
@@ -372,11 +445,23 @@ class DeterministicSessionsHistoryService:
     async def get_session(self, session_id: str, user_id: str = "") -> dict[str, Any]:
         """获取测试会话及其消息。"""
         session = self._state.sessions.get(session_id)
-        if session is None or (user_id and str(session.get("user_id") or "") != str(user_id)):
+        if session is None or (
+            user_id and str(session.get("user_id") or "") != str(user_id)
+        ):
             return {"ok": False, "error": "session_not_found"}
-        return {"ok": True, "data": {**session, "messages": [dict(row) for row in self._state.messages.get(session_id, [])]}}
+        return {
+            "ok": True,
+            "data": {
+                **session,
+                "messages": [
+                    dict(row) for row in self._state.messages.get(session_id, [])
+                ],
+            },
+        }
 
-    async def update_session(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def update_session(
+        self, session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """更新测试会话标题。"""
         session = self._state.sessions.get(session_id)
         if session is None:
@@ -385,47 +470,85 @@ class DeterministicSessionsHistoryService:
         session["updated_at"] = _fixed_now()
         return {"ok": True, "data": dict(session)}
 
-    async def delete_session(self, session_id: str, user_id: str = "") -> dict[str, Any]:
+    async def delete_session(
+        self, session_id: str, user_id: str = ""
+    ) -> dict[str, Any]:
         """删除测试会话及其消息。"""
         session = self._state.sessions.get(session_id)
-        if session is None or (user_id and str(session.get("user_id") or "") != str(user_id)):
+        if session is None or (
+            user_id and str(session.get("user_id") or "") != str(user_id)
+        ):
             return {"ok": False, "error": "session_not_found"}
         self._state.sessions.pop(session_id, None)
         self._state.messages.pop(session_id, None)
         return {"ok": True}
 
-    async def add_message(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def add_message(
+        self, session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """向测试会话追加消息。"""
         if session_id not in self._state.sessions:
             return {"ok": False, "error": "session_not_found"}
-        message = self._state.add_message(session_id, str(data.get("role") or "user"), str(data.get("content") or ""))
+        message = self._state.add_message(
+            session_id, str(data.get("role") or "user"), str(data.get("content") or "")
+        )
         return {"ok": True, "data": message}
 
     async def get_messages(self, session_id: str, user_id: str = "") -> dict[str, Any]:
         """读取测试会话消息。"""
         session = self._state.sessions.get(session_id)
-        if session is None or (user_id and str(session.get("user_id") or "") != str(user_id)):
+        if session is None or (
+            user_id and str(session.get("user_id") or "") != str(user_id)
+        ):
             return {"ok": False, "error": "session_not_found"}
-        return {"ok": True, "data": [dict(row) for row in self._state.messages.get(session_id, [])]}
+        return {
+            "ok": True,
+            "data": [dict(row) for row in self._state.messages.get(session_id, [])],
+        }
 
-    async def rollback_to_question(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def rollback_to_question(
+        self, session_id: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """将测试会话消息回撤到指定用户消息。"""
         target_id = int(data.get("message_id") or 0)
         rows = self._state.messages.get(session_id, [])
-        keep_index = next((idx for idx, row in enumerate(rows) if int(row.get("id") or 0) == target_id), -1)
+        keep_index = next(
+            (
+                idx
+                for idx, row in enumerate(rows)
+                if int(row.get("id") or 0) == target_id
+            ),
+            -1,
+        )
         if keep_index < 0:
             return {"ok": False, "error": "message_not_found"}
         question = str(rows[keep_index].get("content") or "")
         self._state.messages[session_id] = rows[: keep_index + 1]
         if session_id in self._state.sessions:
-            self._state.sessions[session_id]["message_count"] = len(self._state.messages[session_id])
-        return {"ok": True, "data": {"question": question, "removed_count": len(rows) - keep_index - 1, "memory_rebuilt": True}}
+            self._state.sessions[session_id]["message_count"] = len(
+                self._state.messages[session_id]
+            )
+        return {
+            "ok": True,
+            "data": {
+                "question": question,
+                "removed_count": len(rows) - keep_index - 1,
+                "memory_rebuilt": True,
+            },
+        }
 
     async def upload_file(self, file: Any) -> dict[str, Any]:
         """模拟文件上传并返回固定结构。"""
         filename = str(getattr(file, "filename", "") or "upload.bin")
         content_type = str(getattr(file, "content_type", "") or "")
-        return {"ok": True, "data": {"filename": filename, "is_image": content_type.startswith("image/"), "base64": ""}}
+        return {
+            "ok": True,
+            "data": {
+                "filename": filename,
+                "is_image": content_type.startswith("image/"),
+                "base64": "",
+            },
+        }
 
     async def cancel_qa_job(self, job_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """模拟取消 QA 任务。"""
@@ -436,7 +559,11 @@ class DeterministicSessionsHistoryService:
 class DeterministicAdminSessionsService:
     """确定性管理员会话测试服务。"""
 
-    def __init__(self, state: DeterministicSessionState, memory_service: DeterministicSessionMemoryService) -> None:
+    def __init__(
+        self,
+        state: DeterministicSessionState,
+        memory_service: DeterministicSessionMemoryService,
+    ) -> None:
         """注入内存态会话状态和记忆服务。"""
         self._state = state
         self._memory_service = memory_service
@@ -454,19 +581,32 @@ class DeterministicAdminSessionsService:
             "updated_at": _fixed_now(),
         }
 
-    async def admin_get_sessions(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def admin_get_sessions(
+        self, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         """返回管理员会话列表测试数据。"""
         rows, total = self._state.list_sessions(limit=limit, offset=offset)
         return {"ok": True, "data": rows, "total": total}
 
     async def admin_get_session_messages(self, session_id: str) -> dict[str, Any]:
         """返回指定会话的管理员消息视图。"""
-        return {"ok": True, "session": self._session_or_default(session_id), "messages": [dict(row) for row in self._state.messages.get(session_id, [])]}
+        return {
+            "ok": True,
+            "session": self._session_or_default(session_id),
+            "messages": [dict(row) for row in self._state.messages.get(session_id, [])],
+        }
 
     async def admin_get_session_observability(self, session_id: str) -> dict[str, Any]:
         """返回指定会话的固定观测详情。"""
         messages = self._state.messages.get(session_id, [])
-        question = next((str(row.get("content") or "") for row in messages if row.get("role") == "user"), "测试问题")
+        question = next(
+            (
+                str(row.get("content") or "")
+                for row in messages
+                if row.get("role") == "user"
+            ),
+            "测试问题",
+        )
         return {
             "ok": True,
             "turns": [
@@ -493,8 +633,22 @@ class DeterministicAdminSessionsService:
                                 "tool_call_results": "工具结果：图谱代理、检索代理",
                             },
                         },
-                        {"event_id": "evt-2", "event_time": _fixed_now(), "lane": "图谱代理", "stage": "tool", "title": "图谱代理", "summary": "图谱证据"},
-                        {"event_id": "evt-3", "event_time": _fixed_now(), "lane": "检索代理", "stage": "tool", "title": "检索代理", "summary": "检索证据"},
+                        {
+                            "event_id": "evt-2",
+                            "event_time": _fixed_now(),
+                            "lane": "图谱代理",
+                            "stage": "tool",
+                            "title": "图谱代理",
+                            "summary": "图谱证据",
+                        },
+                        {
+                            "event_id": "evt-3",
+                            "event_time": _fixed_now(),
+                            "lane": "检索代理",
+                            "stage": "tool",
+                            "title": "检索代理",
+                            "summary": "检索证据",
+                        },
                     ],
                 }
             ],
@@ -506,7 +660,10 @@ class DeterministicAdminSessionsService:
 
     async def admin_rebuild_session_memory(self, session_id: str) -> dict[str, Any]:
         """模拟管理员重建会话记忆。"""
-        return {"ok": True, "data": await self._memory_service.rebuild_from_messages(session_id)}
+        return {
+            "ok": True,
+            "data": await self._memory_service.rebuild_from_messages(session_id),
+        }
 
     async def admin_clear_session_messages(self, session_id: str) -> dict[str, Any]:
         """清空测试会话消息。"""
@@ -525,7 +682,9 @@ class DeterministicAdminSessionsService:
 class DeterministicAdminObservabilityService:
     """确定性管理员可观测性测试服务。"""
 
-    async def admin_agent_observability_summary(self, limit: int = 200) -> dict[str, Any]:
+    async def admin_agent_observability_summary(
+        self, limit: int = 200
+    ) -> dict[str, Any]:
         """返回固定 Agent 可观测性汇总。"""
         _ = limit
         return {
@@ -563,7 +722,13 @@ class DeterministicAdminRuntimeService:
 
     async def admin_runtime_flags(self) -> dict[str, Any]:
         """返回固定运行时开关。"""
-        return {"ok": True, "data": {"flags": {"test_mode": True, "deterministic_backend": True}, "updated_at": _fixed_now()}}
+        return {
+            "ok": True,
+            "data": {
+                "flags": {"test_mode": True, "deterministic_backend": True},
+                "updated_at": _fixed_now(),
+            },
+        }
 
     async def admin_perf_baseline(self, days: int = 1) -> dict[str, Any]:
         """返回固定性能基线。"""
@@ -590,7 +755,15 @@ class DeterministicAdminRuntimeService:
 
     async def admin_get_stats(self) -> dict[str, Any]:
         """返回固定管理员统计数据。"""
-        return {"ok": True, "data": {"total_sessions": 1, "total_messages": 2, "today_sessions": 1, "today_messages": 2}}
+        return {
+            "ok": True,
+            "data": {
+                "total_sessions": 1,
+                "total_messages": 2,
+                "today_sessions": 1,
+                "today_messages": 2,
+            },
+        }
 
 
 class DeterministicA2AService:
@@ -603,12 +776,27 @@ class DeterministicA2AService:
         self._counter = itertools.count(1)
         self._tasks: dict[str, dict[str, Any]] = {}
 
-    def _build_task(self, *, task_id: str, session_id: str, user_id: str, question: str) -> dict[str, Any]:
+    def _build_task(
+        self, *, task_id: str, session_id: str, user_id: str, question: str
+    ) -> dict[str, Any]:
         """构造一个已完成的 A2A task 快照。"""
         final_answer = f"{self._answer_prefix}{question}".strip()
         artifacts = [
             {"name": "final_answer", "parts": [{"kind": "text", "text": final_answer}]},
-            {"name": "processing_steps", "parts": [{"kind": "data", "data": ["主控分析问题", "调用图谱代理", "调用检索代理", "生成最终答案"]}]},
+            {
+                "name": "processing_steps",
+                "parts": [
+                    {
+                        "kind": "data",
+                        "data": [
+                            "主控分析问题",
+                            "调用图谱代理",
+                            "调用检索代理",
+                            "生成最终答案",
+                        ],
+                    }
+                ],
+            },
             {
                 "name": "tool_observations",
                 "parts": [
@@ -619,13 +807,19 @@ class DeterministicA2AService:
                                 "agent": "kg",
                                 "tool_name": "kg_entity_relation_search",
                                 "subquery": question,
-                                "result": {"ok": True, "result": {"summary": "命中高血压与危险因素关系"}},
+                                "result": {
+                                    "ok": True,
+                                    "result": {"summary": "命中高血压与危险因素关系"},
+                                },
                             },
                             {
                                 "agent": "rag",
                                 "tool_name": "rag_search",
                                 "subquery": question,
-                                "result": {"ok": True, "result": {"summary": "命中文档证据 2 条"}},
+                                "result": {
+                                    "ok": True,
+                                    "result": {"summary": "命中文档证据 2 条"},
+                                },
                             },
                         ],
                     }
@@ -663,7 +857,10 @@ class DeterministicA2AService:
             "id": task_id,
             "contextId": session_id,
             "metadata": {"user_id": user_id},
-            "status": {"state": "completed", "message": {"parts": [{"kind": "text", "text": "task_completed"}]}},
+            "status": {
+                "state": "completed",
+                "message": {"parts": [{"kind": "text", "text": "task_completed"}]},
+            },
             "artifacts": artifacts,
         }
 
@@ -671,34 +868,51 @@ class DeterministicA2AService:
         """返回固定 agent card。"""
         return {"name": self._agent_name, "protocolVersion": "0.2.5"}
 
-    async def asend_message(self, message: dict[str, Any], request_id: str) -> dict[str, Any]:
+    async def asend_message(
+        self, message: dict[str, Any], request_id: str
+    ) -> dict[str, Any]:
         """创建确定性已完成任务并返回 task id。"""
         _ = request_id
         task_id = f"task-{next(self._counter)}"
         session_id = str(message.get("contextId") or "session-1")
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        metadata_value = message.get("metadata")
+        metadata = metadata_value if isinstance(metadata_value, dict) else {}
         user_id = str(message.get("userId") or metadata.get("user_id") or "user-test")
         parts = message.get("parts") if isinstance(message.get("parts"), list) else []
-        question = str(parts[0].get("text") if parts and isinstance(parts[0], dict) else "")
-        self._tasks[task_id] = self._build_task(task_id=task_id, session_id=session_id, user_id=user_id, question=question)
+        question = str(
+            parts[0].get("text") if parts and isinstance(parts[0], dict) else ""
+        )
+        self._tasks[task_id] = self._build_task(
+            task_id=task_id, session_id=session_id, user_id=user_id, question=question
+        )
         return {"id": task_id}
 
     async def ahandle_rpc(self, data: dict[str, Any], trace_id: str) -> dict[str, Any]:
         """回显 JSON-RPC trace id。"""
-        return {"jsonrpc": "2.0", "id": data.get("id"), "result": {"trace_id": trace_id}}
+        return {
+            "jsonrpc": "2.0",
+            "id": data.get("id"),
+            "result": {"trace_id": trace_id},
+        }
 
-    async def alist_tasks(self, context_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    async def alist_tasks(
+        self, context_id: str = "", limit: int = 20
+    ) -> list[dict[str, Any]]:
         """列出内存态 A2A 任务。"""
         rows = list(self._tasks.values())
         if context_id:
-            rows = [row for row in rows if str(row.get("contextId") or "") == context_id]
+            rows = [
+                row for row in rows if str(row.get("contextId") or "") == context_id
+            ]
         return rows[:limit]
 
     async def aget_task(self, task_id: str) -> dict[str, Any] | None:
         """读取指定 A2A 任务。"""
         return self._tasks.get(task_id)
 
-    async def aget_task_updates(self, task_id: str, cursor: int) -> dict[str, Any] | None:
+    async def aget_task_updates(
+        self, task_id: str, cursor: int
+    ) -> dict[str, Any] | None:
         """返回固定 task update 流片段。"""
         task = self._tasks.get(task_id)
         if task is None:
@@ -724,7 +938,10 @@ class DeterministicA2AService:
         task = self._tasks.get(task_id)
         if task is None:
             return {"ok": False, "error": "task_not_found"}
-        task["status"] = {"state": "canceled", "message": {"parts": [{"kind": "text", "text": reason or "cancelled"}]}}
+        task["status"] = {
+            "state": "canceled",
+            "message": {"parts": [{"kind": "text", "text": reason or "cancelled"}]},
+        }
         return {"ok": True, "task": task}
 
     async def ashutdown(self) -> None:
@@ -739,8 +956,16 @@ class DeterministicGraphState:
     next_job_id: int = 1
     nodes: dict[int, dict[str, Any]] = field(
         default_factory=lambda: {
-            100: {"id": 100, "labels": ["Disease"], "properties": {"name": "高血压", "code": "I10"}},
-            101: {"id": 101, "labels": ["Drug"], "properties": {"name": "缬沙坦", "code": "ARB"}},
+            100: {
+                "id": 100,
+                "labels": ["Disease"],
+                "properties": {"name": "高血压", "code": "I10"},
+            },
+            101: {
+                "id": 101,
+                "labels": ["Drug"],
+                "properties": {"name": "缬沙坦", "code": "ARB"},
+            },
         }
     )
     relationships: dict[int, dict[str, Any]] = field(
@@ -781,7 +1006,9 @@ class DeterministicGraphPublicService:
         """注入内存态图谱状态。"""
         self._state = state
 
-    async def graph_visualization(self, keyword: str = "", limit: int = 200) -> dict[str, Any]:
+    async def graph_visualization(
+        self, keyword: str = "", limit: int = 200
+    ) -> dict[str, Any]:
         """返回固定图谱可视化数据。"""
         nodes = list(self._state.nodes.values())
         if keyword:
@@ -804,7 +1031,12 @@ class DeterministicGraphPublicService:
             for rel in self._state.relationships.values()
             if rel["source_id"] in node_ids and rel["target_id"] in node_ids
         ]
-        return {"ok": True, "nodes": [_public_node(node) for node in nodes[:limit]], "links": links, "count": len(links)}
+        return {
+            "ok": True,
+            "nodes": [_public_node(node) for node in nodes[:limit]],
+            "links": links,
+            "count": len(links),
+        }
 
     async def get_entity_detail(self, entity_id: str) -> dict[str, Any]:
         """返回固定图谱实体详情和相邻关系。"""
@@ -814,7 +1046,9 @@ class DeterministicGraphPublicService:
         incoming = [
             {
                 "source_id": rel["source_id"],
-                "source_name": self._state.nodes[rel["source_id"]]["properties"].get("name"),
+                "source_name": self._state.nodes[rel["source_id"]]["properties"].get(
+                    "name"
+                ),
                 "source_labels": self._state.nodes[rel["source_id"]]["labels"],
                 "rel_type": rel["rel_type"],
                 "rel_props": rel["rel_props"],
@@ -825,7 +1059,9 @@ class DeterministicGraphPublicService:
         outgoing = [
             {
                 "target_id": rel["target_id"],
-                "target_name": self._state.nodes[rel["target_id"]]["properties"].get("name"),
+                "target_name": self._state.nodes[rel["target_id"]]["properties"].get(
+                    "name"
+                ),
                 "target_labels": self._state.nodes[rel["target_id"]]["labels"],
                 "rel_type": rel["rel_type"],
                 "rel_props": rel["rel_props"],
@@ -834,7 +1070,11 @@ class DeterministicGraphPublicService:
             if rel["source_id"] == node["id"]
         ]
         public_node = _public_node(node)
-        return {"ok": True, "entity": public_node, "relationships": {"incoming": incoming, "outgoing": outgoing}}
+        return {
+            "ok": True,
+            "entity": public_node,
+            "relationships": {"incoming": incoming, "outgoing": outgoing},
+        }
 
 
 class DeterministicGraphAdminService:
@@ -844,17 +1084,61 @@ class DeterministicGraphAdminService:
         """注入内存态图谱状态。"""
         self._state = state
 
+    async def get_graph_quality_report(
+        self, *, max_nodes: int, max_relationships: int
+    ) -> dict[str, Any]:
+        """返回符合生产接口契约的固定图谱质量报告。"""
+        _ = (max_nodes, max_relationships)
+        total_nodes = len(self._state.nodes)
+        total_relationships = len(self._state.relationships)
+        return {
+            "ok": True,
+            "data": {
+                "captured_at": "2026-07-29T09:00:00+00:00",
+                "consistency": "best_effort_read",
+                "total_nodes": total_nodes,
+                "total_relationships": total_relationships,
+                "duplicate_entity_count": 0,
+                "duplicate_entity_rate": 0.0,
+                "unnamed_node_count": 0,
+                "unnamed_node_rate": 0.0,
+                "isolated_node_count": 0,
+                "isolated_node_rate": 0.0,
+                "largest_connected_component_nodes": total_nodes,
+                "largest_connected_component_ratio": 1.0 if total_nodes else 0.0,
+                "dangling_relationship_count": 0,
+                "dangling_relationship_rate": 0.0,
+                "relationship_source_covered_count": total_relationships,
+                "relationship_source_coverage_rate": (
+                    1.0 if total_relationships else 0.0
+                ),
+                "relationship_confidence_covered_count": total_relationships,
+                "relationship_confidence_coverage_rate": (
+                    1.0 if total_relationships else 0.0
+                ),
+                "quality_policy_covered_relationship_count": total_relationships,
+                "quality_policy_coverage_rate": (1.0 if total_relationships else 0.0),
+                "quality_policy_version": GRAPH_QUALITY_POLICY_VERSION,
+            },
+        }
+
     async def get_graph_labels(self) -> dict[str, Any]:
         """返回测试图谱节点标签。"""
-        labels = sorted({label for node in self._state.nodes.values() for label in node["labels"]})
+        labels = sorted(
+            {label for node in self._state.nodes.values() for label in node["labels"]}
+        )
         return {"ok": True, "data": labels}
 
     async def get_graph_relationship_types(self) -> dict[str, Any]:
         """返回测试图谱关系类型。"""
-        rel_types = sorted({rel["rel_type"] for rel in self._state.relationships.values()})
+        rel_types = sorted(
+            {rel["rel_type"] for rel in self._state.relationships.values()}
+        )
         return {"ok": True, "data": rel_types}
 
-    async def get_graph_nodes(self, label: str = "", keyword: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def get_graph_nodes(
+        self, label: str = "", keyword: str = "", limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         """按标签、关键词和分页参数返回测试节点。"""
         rows = list(self._state.nodes.values())
         if label:
@@ -867,7 +1151,11 @@ class DeterministicGraphAdminService:
                 or keyword in str(row["properties"].get("test_run_id") or "")
             ]
         sliced = rows[offset : offset + limit]
-        return {"ok": True, "data": [_public_node(row) for row in sliced], "total": len(rows)}
+        return {
+            "ok": True,
+            "data": [_public_node(row) for row in sliced],
+            "total": len(rows),
+        }
 
     async def get_graph_node(self, node_id: int) -> dict[str, Any]:
         """返回测试图谱节点详情。"""
@@ -875,7 +1163,13 @@ class DeterministicGraphAdminService:
         detail = await public_service.get_entity_detail(str(node_id))
         if not detail.get("ok"):
             return detail
-        return {"ok": True, "data": {"node": detail["entity"], "relationships": detail["relationships"]}}
+        return {
+            "ok": True,
+            "data": {
+                "node": detail["entity"],
+                "relationships": detail["relationships"],
+            },
+        }
 
     async def create_graph_node(self, data: dict[str, Any]) -> dict[str, Any]:
         """在内存态图谱中创建节点。"""
@@ -884,10 +1178,16 @@ class DeterministicGraphAdminService:
             return {"ok": False, "error": "节点标签不能为空"}
         node_id = self._state.next_node_id
         self._state.next_node_id += 1
-        self._state.nodes[node_id] = {"id": node_id, "labels": [label], "properties": dict(data.get("properties") or {})}
+        self._state.nodes[node_id] = {
+            "id": node_id,
+            "labels": [label],
+            "properties": dict(data.get("properties") or {}),
+        }
         return {"ok": True, "data": {"id": node_id, "message": "节点已创建。"}}
 
-    async def update_graph_node(self, node_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    async def update_graph_node(
+        self, node_id: int, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """更新内存态图谱节点属性。"""
         node = self._state.nodes.get(node_id)
         if node is None:
@@ -909,8 +1209,12 @@ class DeterministicGraphAdminService:
     async def create_graph_relationship(self, data: dict[str, Any]) -> dict[str, Any]:
         """在内存态图谱中创建关系。"""
         try:
-            source_id = int(data.get("source_id"))
-            target_id = int(data.get("target_id"))
+            source_id_value = data.get("source_id")
+            target_id_value = data.get("target_id")
+            if source_id_value is None or target_id_value is None:
+                raise ValueError("missing_node_id")
+            source_id = int(source_id_value)
+            target_id = int(target_id_value)
         except (TypeError, ValueError):
             return {"ok": False, "error": "节点 ID 必须为整数"}
         rel_id = self._state.next_rel_id
@@ -958,11 +1262,15 @@ class DeterministicGraphAdminService:
             return {"ok": False, "error": "任务不存在"}
         return {"ok": True, "data": job}
 
-    async def embed_graph_to_milvus(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def embed_graph_to_milvus(
+        self, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """兼容旧接口，提交图谱向量化测试任务。"""
         return await self.submit_graph_embed_milvus_job(data)
 
-    async def submit_graph_embed_milvus_job(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def submit_graph_embed_milvus_job(
+        self, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """创建一个已成功的图谱向量化测试任务。"""
         _ = data
         job = self._state.create_job("graph_embed_milvus", "图谱向量化任务已提交。")
@@ -970,7 +1278,14 @@ class DeterministicGraphAdminService:
 
     async def get_graph_embed_status(self) -> dict[str, Any]:
         """返回固定图谱向量库状态。"""
-        return {"ok": True, "data": {"collection_name": "test_graph_collection", "entities_count": 2, "relationships_count": 1}}
+        return {
+            "ok": True,
+            "data": {
+                "collection_name": "test_graph_collection",
+                "entities_count": 2,
+                "relationships_count": 1,
+            },
+        }
 
 
 class DeterministicAdminDocumentsService:
@@ -1022,7 +1337,12 @@ class DeterministicAdminDocumentsService:
 
     async def get_document_stats(self) -> dict[str, Any]:
         """返回固定文档向量库统计数据。"""
-        return {"ok": True, "success": True, "collection_name": "test_documents_collection", "row_count": 12}
+        return {
+            "ok": True,
+            "success": True,
+            "collection_name": "test_documents_collection",
+            "row_count": 12,
+        }
 
 
 def build_deterministic_test_overrides() -> BackendAppTestOverrides:
@@ -1041,17 +1361,28 @@ def build_deterministic_test_overrides() -> BackendAppTestOverrides:
             close_neo4j_on_shutdown=False,
         ),
         mcp_server=DeterministicMcpServer(),
-        a2a_service=DeterministicA2AService(agent_name="Hypertension Orchestrator Agent", answer_prefix="基于当前测试知识库，建议："),
-        a2a_graph_service=DeterministicA2AService(agent_name="Hypertension Graph Agent", answer_prefix="图谱代理："),
-        a2a_retrieval_service=DeterministicA2AService(agent_name="Hypertension Retrieval Agent", answer_prefix="检索代理："),
+        a2a_service=DeterministicA2AService(
+            agent_name="Hypertension Orchestrator Agent",
+            answer_prefix="基于当前测试知识库，建议：",
+        ),
+        a2a_graph_service=DeterministicA2AService(
+            agent_name="Hypertension Graph Agent", answer_prefix="图谱代理："
+        ),
+        a2a_retrieval_service=DeterministicA2AService(
+            agent_name="Hypertension Retrieval Agent", answer_prefix="检索代理："
+        ),
         session_memory_service=memory_service,
         readiness_service=DeterministicReadinessService(),
         a2a_event_stream_service=DeterministicA2AEventStreamService(),
-        session_turn_service=DeterministicSessionTurnService(session_state, memory_service),
+        session_turn_service=DeterministicSessionTurnService(
+            session_state, memory_service
+        ),
         session_stream_service=DeterministicSessionStreamService(session_state),
         sessions_history_service=DeterministicSessionsHistoryService(session_state),
         admin_runtime_service=DeterministicAdminRuntimeService(),
-        admin_sessions_service=DeterministicAdminSessionsService(session_state, memory_service),
+        admin_sessions_service=DeterministicAdminSessionsService(
+            session_state, memory_service
+        ),
         admin_observability_service=DeterministicAdminObservabilityService(),
         graph_public_service=DeterministicGraphPublicService(graph_state),
         graph_admin_service=DeterministicGraphAdminService(graph_state),

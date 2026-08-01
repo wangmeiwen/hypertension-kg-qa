@@ -6,7 +6,13 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from app.backend.repositories.database import fetch_all, fetch_one, execute, insert_and_get_last_id
+from app.backend.repositories.database import (
+    fetch_all,
+    fetch_one,
+    execute,
+    insert_and_get_last_id,
+)
+from app.backend.repositories.row_utils import to_iso_timestamp
 
 
 class OcrDocumentManager:
@@ -79,7 +85,7 @@ class OcrDocumentManager:
             bool: 更新成功返回 True。
         """
         updates = ["status = :status"]
-        params = {"id": doc_id, "status": status}
+        params: dict[str, str | int] = {"id": doc_id, "status": status}
         if chunk_count is not None:
             updates.append("chunk_count = :chunk_count")
             params["chunk_count"] = int(chunk_count)
@@ -109,7 +115,11 @@ class OcrDocumentManager:
             INSERT INTO ocr_document_pages (document_id, page_num, text_content)
             VALUES (:document_id, :page_num, :text_content)
             """,
-            {"document_id": doc_id, "page_num": int(page_num), "text_content": text_content},
+            {
+                "document_id": doc_id,
+                "page_num": int(page_num),
+                "text_content": text_content,
+            },
         )
         return {
             "id": page_id,
@@ -153,8 +163,8 @@ class OcrDocumentManager:
                 "chunk_count": row.get("chunk_count"),
                 "status": row.get("status"),
                 "error_message": row.get("error_message"),
-                "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
-                "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+                "created_at": to_iso_timestamp(row.get("created_at")),
+                "updated_at": to_iso_timestamp(row.get("updated_at")),
             }
             for row in rows
         ]
@@ -199,13 +209,13 @@ class OcrDocumentManager:
             "chunk_count": doc.get("chunk_count"),
             "status": doc.get("status"),
             "error_message": doc.get("error_message"),
-            "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
-            "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
+            "created_at": to_iso_timestamp(doc.get("created_at")),
+            "updated_at": to_iso_timestamp(doc.get("updated_at")),
             "pages": [
                 {
                     "page_num": row.get("page_num"),
                     "text_content": row.get("text_content"),
-                    "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+                    "created_at": to_iso_timestamp(row.get("created_at")),
                 }
                 for row in pages
             ],
@@ -221,7 +231,9 @@ class OcrDocumentManager:
         Returns:
             bool: 删除成功返回 True。
         """
-        affected = await execute("DELETE FROM ocr_documents WHERE id=:id", {"id": doc_id})
+        affected = await execute(
+            "DELETE FROM ocr_documents WHERE id=:id", {"id": doc_id}
+        )
         return affected > 0
 
     @staticmethod
@@ -323,7 +335,9 @@ class OcrTokenUsageManager:
             "completion_tokens": row["completion_tokens"],
             "total_tokens": row["total_tokens"],
             "page_count": row["page_count"],
-            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+            "created_at": (
+                row["created_at"].isoformat() if row.get("created_at") else None
+            ),
         }
 
     @staticmethod
@@ -373,8 +387,7 @@ class OcrTokenUsageManager:
         Returns:
             dict: 全局汇总统计结果。
         """
-        row = await fetch_one(
-            """
+        row = await fetch_one("""
             SELECT
                 COUNT(*) as total_documents,
                 SUM(prompt_tokens) as total_prompt_tokens,
@@ -384,12 +397,13 @@ class OcrTokenUsageManager:
                 COUNT(DISTINCT user_id) as total_users,
                 COUNT(DISTINCT DATE(created_at)) as total_days
             FROM ocr_token_usage
-            """
-        )
+            """)
         return {
             "total_documents": int((row or {}).get("total_documents") or 0),
             "total_prompt_tokens": int((row or {}).get("total_prompt_tokens") or 0),
-            "total_completion_tokens": int((row or {}).get("total_completion_tokens") or 0),
+            "total_completion_tokens": int(
+                (row or {}).get("total_completion_tokens") or 0
+            ),
             "total_tokens": int((row or {}).get("total_tokens") or 0),
             "total_pages": int((row or {}).get("total_pages") or 0),
             "total_users": int((row or {}).get("total_users") or 0),

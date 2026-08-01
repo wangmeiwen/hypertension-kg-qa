@@ -13,7 +13,14 @@ import {
 import { classifyObservabilityLane } from "../../shared/lib/agentFlow";
 import { formatDateTime, formatDurationMs, truncateText } from "../../shared/lib/format";
 import { queryKeys } from "../../shared/queries/queryKeys";
-import { Button, Card, DataTable, Modal, PageHeader, VirtualList } from "../../shared/ui/primitives";
+import {
+  Button,
+  Card,
+  DataTable,
+  Modal,
+  PageHeader,
+  VirtualList,
+} from "../../shared/ui/primitives";
 import AdminSubnav from "../../widgets/admin/AdminSubnav";
 
 function EventDetailPanel({ event, t }: { event: FlowEvent; t: (key: string) => string }) {
@@ -27,8 +34,12 @@ function EventDetailPanel({ event, t }: { event: FlowEvent; t: (key: string) => 
         <Card title={t("admin.stage")}>
           <div className="stack">
             <div>{event.stage || "-"}</div>
-            <div>{t("admin.eventTime")}: {formatDateTime(event.event_time)}</div>
-            <div>{t("admin.actor")}: {event.actor || "-"}</div>
+            <div>
+              {t("admin.eventTime")}: {formatDateTime(event.event_time)}
+            </div>
+            <div>
+              {t("admin.actor")}: {event.actor || "-"}
+            </div>
           </div>
         </Card>
         <Card title={t("admin.summary")}>
@@ -81,11 +92,20 @@ export default function AdminObservabilityPage() {
 
   const groupedRuns = useMemo(() => {
     // 后端按 run 返回观测记录，前端按 session 聚合成表格行。
-    const grouped = new Map<string, { latest: string; turns: number; llm: number; tools: number; tokens: number }>();
+    const grouped = new Map<
+      string,
+      { latest: string; turns: number; llm: number; tools: number; tokens: number }
+    >();
     for (const run of runsQuery.data || []) {
       const sessionId = String(run.session_id || "").trim();
       if (!sessionId) continue;
-      const previous = grouped.get(sessionId) || { latest: "", turns: 0, llm: 0, tools: 0, tokens: 0 };
+      const previous = grouped.get(sessionId) || {
+        latest: "",
+        turns: 0,
+        llm: 0,
+        tools: 0,
+        tokens: 0,
+      };
       grouped.set(sessionId, {
         latest: String(run.timestamp || previous.latest),
         turns: previous.turns + 1,
@@ -97,12 +117,21 @@ export default function AdminObservabilityPage() {
     return Array.from(grouped.entries()).map(([sessionId, value]) => ({ sessionId, ...value }));
   }, [runsQuery.data]);
 
-  const selectedTurn = turnsQuery.data?.find((turn) => turn.turn_id === selectedTurnId) || turnsQuery.data?.[0];
+  const selectedTurn =
+    turnsQuery.data?.find((turn) => turn.turn_id === selectedTurnId) || turnsQuery.data?.[0];
   // 将 flow_events 拆分到主控、图谱和检索三条泳道展示。
   const lanes = {
-    orchestrator: selectedTurn?.flow_events.filter((event) => classifyObservabilityLane(event) === "orchestrator") || [],
-    graph: selectedTurn?.flow_events.filter((event) => classifyObservabilityLane(event) === "graph") || [],
-    retrieval: selectedTurn?.flow_events.filter((event) => classifyObservabilityLane(event) === "retrieval") || [],
+    orchestrator:
+      selectedTurn?.flow_events.filter(
+        (event) => classifyObservabilityLane(event) === "orchestrator",
+      ) || [],
+    graph:
+      selectedTurn?.flow_events.filter((event) => classifyObservabilityLane(event) === "graph") ||
+      [],
+    retrieval:
+      selectedTurn?.flow_events.filter(
+        (event) => classifyObservabilityLane(event) === "retrieval",
+      ) || [],
   };
 
   const rows = groupedRuns.map((session) => [
@@ -112,14 +141,25 @@ export default function AdminObservabilityPage() {
     String(session.llm),
     String(session.tools),
     String(session.tokens),
-    <Button key={session.sessionId} tone="secondary" onClick={() => { setSelectedSessionId(session.sessionId); setSelectedTurnId(null); }}>
+    <Button
+      key={session.sessionId}
+      tone="secondary"
+      onClick={() => {
+        setSelectedSessionId(session.sessionId);
+        setSelectedTurnId(null);
+      }}
+    >
       {t("admin.observability")}
     </Button>,
   ]);
 
   return (
     <div className={styles.layout}>
-      <PageHeader eyebrow={t("admin.eyebrow")} title={t("admin.observability")} description={t("admin.description")} />
+      <PageHeader
+        eyebrow={t("admin.eyebrow")}
+        title={t("admin.observability")}
+        description={t("admin.description")}
+      />
       <AdminSubnav />
 
       <div className={styles.statsGrid}>
@@ -152,10 +192,18 @@ export default function AdminObservabilityPage() {
         />
       </Card>
 
-      <Modal open={Boolean(selectedSessionId)} onClose={() => { setSelectedSessionId(null); setSelectedEvent(null); }}>
+      <Modal
+        open={Boolean(selectedSessionId)}
+        onClose={() => {
+          setSelectedSessionId(null);
+          setSelectedEvent(null);
+        }}
+      >
         <div className={styles.modalSection}>
           <h2 style={{ margin: 0 }}>{t("admin.observability")}</h2>
-          <div className="muted">{truncateText(messagesQuery.data?.session.title || selectedSessionId || "", 64)}</div>
+          <div className="muted">
+            {truncateText(messagesQuery.data?.session.title || selectedSessionId || "", 64)}
+          </div>
           <div className="inlineMeta">
             {(turnsQuery.data || []).map((turn) => (
               <Button
@@ -187,19 +235,21 @@ export default function AdminObservabilityPage() {
                         estimateSize={104}
                         threshold={100}
                         maxHeight={420}
-                        getKey={(event) => event.event_id || `${lane}-${event.title || event.stage || ""}`}
+                        getKey={(event) =>
+                          event.event_id || `${lane}-${event.title || event.stage || ""}`
+                        }
                         renderItem={(event) => (
-                        <button
-                          type="button"
-                          className={styles.eventItem}
-                          onClick={() => setSelectedEvent(event)}
-                        >
-                          <div>
-                            <strong>{event.title || event.stage || "-"}</strong>
-                          </div>
-                          <div className="muted">{event.summary || "-"}</div>
-                          <div className="muted">{formatDateTime(event.event_time)}</div>
-                        </button>
+                          <button
+                            type="button"
+                            className={styles.eventItem}
+                            onClick={() => setSelectedEvent(event)}
+                          >
+                            <div>
+                              <strong>{event.title || event.stage || "-"}</strong>
+                            </div>
+                            <div className="muted">{event.summary || "-"}</div>
+                            <div className="muted">{formatDateTime(event.event_time)}</div>
+                          </button>
                         )}
                       />
                     ) : (

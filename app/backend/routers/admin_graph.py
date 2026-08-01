@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.graph_admin_service import GraphAdminService
 
 
 def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
     """创建管理员图谱路由。"""
-    router = APIRouter(dependencies=[Depends(require_admin_login)])
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
 
     @router.get("/admin/graph/labels")
     async def get_graph_labels() -> dict[str, Any]:
@@ -24,10 +24,25 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
         """获取所有关系类型。"""
         return await service.get_graph_relationship_types()
 
+    @router.get("/admin/graph/quality-report")
+    async def get_graph_quality_report(
+        max_nodes: int = Query(default=50000, ge=1, le=100000),
+        max_relationships: int = Query(default=100000, ge=1, le=200000),
+    ) -> dict[str, Any]:
+        """生成规模受限的全图质量快照。"""
+        return await service.get_graph_quality_report(
+            max_nodes=max_nodes,
+            max_relationships=max_relationships,
+        )
+
     @router.get("/admin/graph/nodes")
-    async def get_graph_nodes(label: str = "", keyword: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def get_graph_nodes(
+        label: str = "", keyword: str = "", limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         """获取节点列表。"""
-        return await service.get_graph_nodes(label=label, keyword=keyword, limit=limit, offset=offset)
+        return await service.get_graph_nodes(
+            label=label, keyword=keyword, limit=limit, offset=offset
+        )
 
     @router.get("/admin/graph/nodes/{node_id}")
     async def get_graph_node(node_id: int) -> dict[str, Any]:
@@ -85,12 +100,16 @@ def create_admin_graph_router(service: GraphAdminService) -> APIRouter:
         return await service.get_graph_job(job_id=job_id)
 
     @router.post("/admin/graph/embed-to-milvus")
-    async def embed_graph_to_milvus(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    async def embed_graph_to_milvus(
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """将知识图谱嵌入到 Milvus。"""
         return await service.embed_graph_to_milvus(data)
 
     @router.post("/admin/graph/jobs/embed-milvus")
-    async def submit_embed_milvus_job(data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    async def submit_embed_milvus_job(
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """提交图谱嵌入后台任务。"""
         return await service.submit_graph_embed_milvus_job(data)
 

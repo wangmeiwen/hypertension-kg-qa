@@ -26,16 +26,26 @@ from pathlib import Path
 import re
 import threading
 import uuid
-from typing import Any, Optional
+from typing import Any
 
+from app.a2a.telemetry import normalize_token_usage
 from app.core.concurrency import concurrency_guard
 
 logger = logging.getLogger(__name__)
 
 
-_REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
-_SESSION_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("session_id", default="")
-_USER_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", default="")
+_REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_id", default=""
+)
+_SESSION_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "session_id", default=""
+)
+_USER_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "user_id", default=""
+)
+_TURN_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "turn_id", default=""
+)
 
 _WRITE_LOCK = threading.Lock()
 _PHONE_PATTERN = re.compile(r"(?<!\d)(1\d{10})(?!\d)")
@@ -67,7 +77,9 @@ def _utc_now() -> str:
     Returns:
         str: ISO8601 格式 UTC 时间。
     """
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
 
 
 def _project_root() -> Path:
@@ -277,7 +289,14 @@ def _mask_sensitive(value: Any) -> Any:
         masked: dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key).lower()
-            if key_text in {"authorization", "api_key", "apikey", "token", "password", "secret"}:
+            if key_text in {
+                "authorization",
+                "api_key",
+                "apikey",
+                "token",
+                "password",
+                "secret",
+            }:
                 masked[key] = "***"
             else:
                 masked[key] = _mask_sensitive(item)
@@ -303,7 +322,11 @@ def _append_jsonl(file_path: Path, payload: dict[str, Any]) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(_mask_sensitive(payload), ensure_ascii=False, default=str)
     lock_key = _session_artifact_lock_key_for_path(file_path)
-    lock_cm = concurrency_guard.sync_keyed_lock(lock_key) if lock_key else contextlib.nullcontext()
+    lock_cm = (
+        concurrency_guard.sync_keyed_lock(lock_key)
+        if lock_key
+        else contextlib.nullcontext()
+    )
     with lock_cm:
         with _WRITE_LOCK:
             with file_path.open("a", encoding="utf-8") as f:
@@ -362,7 +385,9 @@ def reset_request_context(token: contextvars.Token[str]) -> None:
     _REQUEST_ID_CTX.reset(token)
 
 
-def set_session_context(session_id: str, user_id: str = "") -> tuple[contextvars.Token[str], contextvars.Token[str]]:
+def set_session_context(
+    session_id: str, user_id: str = ""
+) -> tuple[contextvars.Token[str], contextvars.Token[str]]:
     """
     设置会话上下文。
 
@@ -378,7 +403,9 @@ def set_session_context(session_id: str, user_id: str = "") -> tuple[contextvars
     return token_sid, token_uid
 
 
-def reset_session_context(tokens: tuple[contextvars.Token[str], contextvars.Token[str]]) -> None:
+def reset_session_context(
+    tokens: tuple[contextvars.Token[str], contextvars.Token[str]],
+) -> None:
     """
     重置会话上下文。
 
@@ -404,6 +431,21 @@ def get_request_id() -> str:
         str: 请求 ID。
     """
     return _REQUEST_ID_CTX.get()
+
+
+def set_turn_context(turn_id: str) -> contextvars.Token[str]:
+    """设置当前问答轮次 ID。"""
+    return _TURN_ID_CTX.set(str(turn_id))
+
+
+def reset_turn_context(token: contextvars.Token[str]) -> None:
+    """重置当前问答轮次 ID。"""
+    _TURN_ID_CTX.reset(token)
+
+
+def get_turn_id() -> str:
+    """获取当前问答轮次 ID。"""
+    return _TURN_ID_CTX.get()
 
 
 def get_session_id() -> str:
@@ -474,7 +516,9 @@ def ensure_session_meta(session_id: str, user_id: str = "") -> None:
                 "op_event_count": int(existing.get("op_event_count") or 0),
                 "tool_event_count": int(existing.get("tool_event_count") or 0),
             }
-            meta_file.write_text(json.dumps(session_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            meta_file.write_text(
+                json.dumps(session_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
 
 def _bump_session_meta_count(session_id: str, field_name: str) -> None:
@@ -516,7 +560,9 @@ def _bump_session_meta_count(session_id: str, field_name: str) -> None:
                 }
             data[field_name] = int(data.get(field_name) or 0) + 1
             data["latest_request_at"] = _utc_now()
-            meta_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            meta_file.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
 
 def log_api_call(
@@ -560,6 +606,7 @@ def log_api_call(
     payload = {
         "ts": _utc_now(),
         "request_id": str(request_id or ""),
+        "trace_id": str(request_id or ""),
         "method": str(method or ""),
         "path": str(path or ""),
         "status_code": int(status_code),
@@ -614,19 +661,30 @@ def log_llm_call(
     """
     sid = _safe_id(session_id)
     ensure_session_meta(sid, get_user_id())
+    turn_id = get_turn_id()
     max_chars = _max_content_chars()
     req_id = get_request_id()
+    resolved_trace_id = str(trace_id).strip()
+    if not resolved_trace_id:
+        resolved_trace_id = req_id
 
     messages_masked = _mask_sensitive(messages)
     include_content = _include_llm_content()
-    messages_compact = _compact_text(messages_masked, max_chars) if include_content else ""
-    response_compact = _compact_text(response_content, max_chars) if include_content else ""
+    messages_compact = (
+        _compact_text(messages_masked, max_chars) if include_content else ""
+    )
+    response_compact = (
+        _compact_text(response_content, max_chars) if include_content else ""
+    )
 
-    day_file = _sessions_dir() / sid / "llm" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    day_file = (
+        _sessions_dir() / sid / "llm" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    )
     payload = {
         "ts": _utc_now(),
         "request_id": req_id,
-        "trace_id": str(trace_id or ""),
+        "trace_id": resolved_trace_id,
+        "turn_id": turn_id,
         "session_id": sid,
         "user_id": get_user_id(),
         "model": str(model or ""),
@@ -680,12 +738,19 @@ def log_session_op(
     """
     sid = _safe_id(session_id)
     ensure_session_meta(sid, get_user_id())
-    day_file = _sessions_dir() / sid / "ops" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    turn_id = get_turn_id()
+    if not turn_id:
+        turn_id = f"{sid}:{int(turn)}"
+    day_file = (
+        _sessions_dir() / sid / "ops" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    )
     payload = {
         "ts": _utc_now(),
         "request_id": get_request_id(),
+        "trace_id": get_request_id(),
         "session_id": sid,
         "user_id": get_user_id(),
+        "turn_id": turn_id,
         "turn": int(turn),
         "stage": str(stage or ""),
         "action": str(action or ""),
@@ -710,6 +775,7 @@ def log_tool_event(
     duration_ms: float,
     fallback_used: bool = False,
     blocked_reason: str = "",
+    token_usage: dict[str, Any] | None = None,
 ) -> None:
     """
     记录工具调用事件。
@@ -724,27 +790,36 @@ def log_tool_event(
         duration_ms: 耗时毫秒。
         fallback_used: 是否使用回退策略。
         blocked_reason: 阻断原因。
+        token_usage: 工具内部模型调用产生的 token 统计。
 
     Returns:
         None。
     """
     sid = _safe_id(session_id)
     ensure_session_meta(sid, get_user_id())
-    day_file = _sessions_dir() / sid / "tools" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    turn_id = get_turn_id()
+    if not turn_id:
+        turn_id = f"{sid}:{int(turn)}"
+    normalized_tokens = normalize_token_usage(token_usage)
+    day_file = (
+        _sessions_dir() / sid / "tools" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    )
     payload = {
         "ts": _utc_now(),
         "request_id": get_request_id(),
+        "trace_id": get_request_id(),
         "session_id": sid,
         "user_id": get_user_id(),
+        "turn_id": turn_id,
         "turn": int(turn),
         "tool_name": str(tool_name or ""),
         "arguments": _mask_sensitive(arguments),
         "result_ok": bool(result_ok),
         "has_signal": bool(has_signal),
         "duration_ms": round(float(duration_ms), 2),
+        "token_usage": normalized_tokens,
         "fallback_used": bool(fallback_used),
         "blocked_reason": str(blocked_reason or ""),
     }
     _append_jsonl(day_file, payload)
     _bump_session_meta_count(sid, "tool_event_count")
-

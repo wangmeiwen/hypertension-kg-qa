@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import shutil
 import sys
 import uuid
@@ -17,9 +19,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.backend.app_factory import BackendAppTestOverrides, create_app
-from app.backend.dependencies.admin_auth import require_admin_login
-from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
-from app.backend.testing.deterministic_support import build_deterministic_test_overrides
+from app.backend.dependencies.admin_auth import require_admin_access
+from app.backend.services.startup_runtime_service import (
+    StartupRuntimeBehavior,
+)
+from app.backend.testing.deterministic_support import (
+    build_deterministic_test_overrides,
+)
 
 
 async def await_call(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -48,7 +54,9 @@ class MemoryServiceStub:
         self.rebuilt.append(session_id)
         return {"session_id": session_id, "rebuilt": True}
 
-    async def build_runtime_context(self, session_id: str, input_text: str, message_id: int) -> dict[str, Any]:
+    async def build_runtime_context(
+        self, session_id: str, input_text: str, message_id: int
+    ) -> dict[str, Any]:
         return {
             "original_input_text": input_text,
             "memory_context": {"session_id": session_id, "message_id": message_id},
@@ -72,7 +80,9 @@ class A2AServiceStub:
     def get_agent_card(self) -> dict[str, Any]:
         return {"name": "pytest-agent"}
 
-    async def asend_message(self, message: dict[str, Any], request_id: str) -> dict[str, Any]:
+    async def asend_message(
+        self, message: dict[str, Any], request_id: str
+    ) -> dict[str, Any]:
         self.tasks.setdefault(
             "task-1",
             {
@@ -86,9 +96,15 @@ class A2AServiceStub:
         return {"id": "task-1"}
 
     async def ahandle_rpc(self, data: dict[str, Any], trace_id: str) -> dict[str, Any]:
-        return {"jsonrpc": "2.0", "id": data.get("id"), "result": {"trace_id": trace_id}}
+        return {
+            "jsonrpc": "2.0",
+            "id": data.get("id"),
+            "result": {"trace_id": trace_id},
+        }
 
-    async def alist_tasks(self, context_id: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    async def alist_tasks(
+        self, context_id: str = "", limit: int = 20
+    ) -> list[dict[str, Any]]:
         rows = list(self.tasks.values())
         if context_id:
             rows = [row for row in rows if row.get("contextId") == context_id]
@@ -97,7 +113,9 @@ class A2AServiceStub:
     async def aget_task(self, task_id: str) -> dict[str, Any] | None:
         return self.tasks.get(task_id)
 
-    async def aget_task_updates(self, task_id: str, cursor: int) -> dict[str, Any] | None:
+    async def aget_task_updates(
+        self, task_id: str, cursor: int
+    ) -> dict[str, Any] | None:
         if task_id not in self.tasks:
             return None
         return {
@@ -159,7 +177,10 @@ def deterministic_test_overrides() -> BackendAppTestOverrides:
 @pytest.fixture()
 def app_client_factory() -> Callable[..., TestClient]:
     """构建带确定性依赖的 FastAPI TestClient 工厂。"""
-    def _factory(*, overrides: BackendAppTestOverrides | None = None, require_admin: bool = False) -> TestClient:
+
+    def _factory(
+        *, overrides: BackendAppTestOverrides | None = None, require_admin: bool = False
+    ) -> TestClient:
         resolved_overrides = overrides or build_deterministic_test_overrides()
         if overrides is None:
             resolved_overrides.startup_behavior = StartupRuntimeBehavior(
@@ -172,7 +193,7 @@ def app_client_factory() -> Callable[..., TestClient]:
             )
         app = create_app(test_overrides=resolved_overrides)
         if require_admin:
-            app.dependency_overrides[require_admin_login] = lambda: None
+            app.dependency_overrides[require_admin_access] = lambda: None
         return TestClient(app)
 
     return _factory
@@ -186,16 +207,17 @@ def admin_app_client(app_client_factory: Callable[..., TestClient]) -> TestClien
 @pytest.fixture()
 def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
     """返回按测试前缀清理 MySQL 会话数据的异步函数。"""
+
     async def _cleanup(prefix: str) -> None:
-        import asyncmy
+        import aiomysql
 
         like_prefix = f"{prefix}%"
-        conn = await asyncmy.connect(
+        conn = await aiomysql.connect(
             host=os.getenv("MYSQL_HOST", "127.0.0.1"),
             port=int(os.getenv("MYSQL_PORT", "3306")),
             user=os.getenv("MYSQL_USER", "root"),
             password=os.getenv("MYSQL_PASSWORD", ""),
-            database=os.getenv("MYSQL_DATABASE", "hypertension_kg"),
+            db=os.getenv("MYSQL_DATABASE", "hypertension_kg"),
             autocommit=True,
         )
         try:
@@ -213,8 +235,12 @@ def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
 @pytest.fixture()
 def cleanup_session_artifacts() -> Callable[[str], None]:
     """返回清理指定会话本地日志产物的函数。"""
+
     def _cleanup(session_id: str) -> None:
-        safe_id = "".join(ch if (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in str(session_id or "")).strip("_")
+        safe_id = "".join(
+            ch if (ch.isalnum() or ch in {"-", "_"}) else "_"
+            for ch in str(session_id or "")
+        ).strip("_")
         if not safe_id:
             return
         sessions_root = ROOT / "logs" / "sessions" / safe_id

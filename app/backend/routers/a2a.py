@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from app.a2a import A2AService, all_agent_cards
 from app.backend.services.a2a_dispatch_service import A2ADispatchService
@@ -46,16 +46,35 @@ def create_a2a_router(
         )
         try:
             service = get_a2a()
-            return {"ok": True, "agent_card": service.get_agent_card(), "trace_id": trace_id}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            return {
+                "ok": True,
+                "agent_card": service.get_agent_card(),
+                "trace_id": trace_id,
+            }
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             logger.exception(
                 "a2a_agent_card_failed: trace_id=%s error_type=%s error=%s",
                 trace_id,
                 type(exc).__name__,
                 exc,
             )
-            fallback = A2ADispatchService.build_rpc_fallback({"id": None}, trace_id, str(exc))
-            return {"ok": False, "error": f"a2a_card_error:{str(exc)}", "trace_id": trace_id, "rpc": fallback}
+            fallback = A2ADispatchService.build_rpc_fallback(
+                {"id": None}, trace_id, str(exc)
+            )
+            return {
+                "ok": False,
+                "error": f"a2a_card_error:{str(exc)}",
+                "trace_id": trace_id,
+                "rpc": fallback,
+            }
 
     @router.get("/a2a/agents/cards")
     async def a2a_agent_cards(request: Request) -> dict[str, Any]:
@@ -71,14 +90,26 @@ def create_a2a_router(
         )
         try:
             return {"ok": True, "cards": all_agent_cards(), "trace_id": trace_id}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             logger.exception(
                 "a2a_agent_cards_failed: trace_id=%s error_type=%s error=%s",
                 trace_id,
                 type(exc).__name__,
                 exc,
             )
-            return {"ok": False, "error": f"a2a_cards_error:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"a2a_cards_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
 
     @router.post("/a2a/rpc")
     async def a2a_rpc(data: dict, request: Request) -> JSONResponse:
@@ -92,10 +123,14 @@ def create_a2a_router(
             JSON-RPC 响应。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.handle_rpc("orchestrator", data, trace_id, "/a2a/rpc")
+        return await dispatch_service.handle_rpc(
+            "orchestrator", data, trace_id, "/a2a/rpc"
+        )
 
     @router.get("/a2a/tasks")
-    async def a2a_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+    async def a2a_list_tasks(
+        request: Request, context_id: str = "", limit: int = 20
+    ) -> dict[str, Any]:
         """查询主编排 Agent 的任务列表。
 
         Args:
@@ -107,7 +142,9 @@ def create_a2a_router(
             包含任务列表和 trace_id 的结构化结果。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.list_tasks("orchestrator", trace_id, "/a2a/tasks", context_id=context_id, limit=limit)
+        return await dispatch_service.list_tasks(
+            "orchestrator", trace_id, "/a2a/tasks", context_id=context_id, limit=limit
+        )
 
     @router.get("/a2a/tasks/{task_id}")
     async def a2a_get_task(task_id: str, request: Request) -> Any:
@@ -121,7 +158,9 @@ def create_a2a_router(
             任务详情或错误响应。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.get_task("orchestrator", task_id, trace_id, "/a2a/tasks/{task_id}")
+        return await dispatch_service.get_task(
+            "orchestrator", task_id, trace_id, "/a2a/tasks/{task_id}"
+        )
 
     @router.get("/a2a/tasks/{task_id}/events")
     async def a2a_task_events(
@@ -192,10 +231,14 @@ def create_a2a_router(
             JSON-RPC 响应。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.handle_rpc("graph", data, trace_id, "/a2a/graph/rpc")
+        return await dispatch_service.handle_rpc(
+            "graph", data, trace_id, "/a2a/graph/rpc"
+        )
 
     @router.get("/a2a/graph/tasks")
-    async def a2a_graph_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+    async def a2a_graph_list_tasks(
+        request: Request, context_id: str = "", limit: int = 20
+    ) -> dict[str, Any]:
         """查询图谱子 Agent 的任务列表。
 
         Args:
@@ -207,7 +250,9 @@ def create_a2a_router(
             包含任务列表和 trace_id 的结构化结果。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.list_tasks("graph", trace_id, "/a2a/graph/tasks", context_id=context_id, limit=limit)
+        return await dispatch_service.list_tasks(
+            "graph", trace_id, "/a2a/graph/tasks", context_id=context_id, limit=limit
+        )
 
     @router.get("/a2a/graph/tasks/{task_id}")
     async def a2a_graph_get_task(task_id: str, request: Request) -> Any:
@@ -221,7 +266,9 @@ def create_a2a_router(
             任务详情或错误响应。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.get_task("graph", task_id, trace_id, "/a2a/graph/tasks/{task_id}")
+        return await dispatch_service.get_task(
+            "graph", task_id, trace_id, "/a2a/graph/tasks/{task_id}"
+        )
 
     @router.get("/a2a/graph/tasks/{task_id}/events")
     async def a2a_graph_task_events(
@@ -292,10 +339,14 @@ def create_a2a_router(
             JSON-RPC 响应。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.handle_rpc("retrieval", data, trace_id, "/a2a/retrieval/rpc")
+        return await dispatch_service.handle_rpc(
+            "retrieval", data, trace_id, "/a2a/retrieval/rpc"
+        )
 
     @router.get("/a2a/retrieval/tasks")
-    async def a2a_retrieval_list_tasks(request: Request, context_id: str = "", limit: int = 20) -> dict[str, Any]:
+    async def a2a_retrieval_list_tasks(
+        request: Request, context_id: str = "", limit: int = 20
+    ) -> dict[str, Any]:
         """查询检索子 Agent 的任务列表。
 
         Args:
@@ -307,7 +358,13 @@ def create_a2a_router(
             包含任务列表和 trace_id 的结构化结果。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.list_tasks("retrieval", trace_id, "/a2a/retrieval/tasks", context_id=context_id, limit=limit)
+        return await dispatch_service.list_tasks(
+            "retrieval",
+            trace_id,
+            "/a2a/retrieval/tasks",
+            context_id=context_id,
+            limit=limit,
+        )
 
     @router.get("/a2a/retrieval/tasks/{task_id}")
     async def a2a_retrieval_get_task(task_id: str, request: Request) -> Any:
@@ -321,7 +378,9 @@ def create_a2a_router(
             任务详情或错误响应。
         """
         trace_id = get_trace_id(request)
-        return await dispatch_service.get_task("retrieval", task_id, trace_id, "/a2a/retrieval/tasks/{task_id}")
+        return await dispatch_service.get_task(
+            "retrieval", task_id, trace_id, "/a2a/retrieval/tasks/{task_id}"
+        )
 
     @router.get("/a2a/retrieval/tasks/{task_id}/events")
     async def a2a_retrieval_task_events(

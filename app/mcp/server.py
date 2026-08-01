@@ -44,12 +44,24 @@ class MCPServer:
             default="safe",
         )
         self._retry_policy_overrides = self._resolve_retry_policy_overrides()
-        self._enable_circuit_breaker = self._resolve_bool_env("ENABLE_MCP_TOOL_CIRCUIT_BREAKER", True)
-        self._circuit_timeout_threshold = self._resolve_int("MCP_CIRCUIT_TIMEOUT_THRESHOLD", 3, 1, 20)
-        self._circuit_window_seconds = float(self._resolve_int("MCP_CIRCUIT_WINDOW_SECONDS", 60, 10, 600))
-        self._circuit_cooldown_seconds = float(self._resolve_int("MCP_CIRCUIT_COOLDOWN_SECONDS", 30, 5, 300))
-        self._retry_backoff_base_ms = self._resolve_int("MCP_TOOL_RETRY_BACKOFF_BASE_MS", 80, 0, 5000)
-        self._retry_backoff_max_ms = self._resolve_int("MCP_TOOL_RETRY_BACKOFF_MAX_MS", 800, 0, 15000)
+        self._enable_circuit_breaker = self._resolve_bool_env(
+            "ENABLE_MCP_TOOL_CIRCUIT_BREAKER", True
+        )
+        self._circuit_timeout_threshold = self._resolve_int(
+            "MCP_CIRCUIT_TIMEOUT_THRESHOLD", 3, 1, 20
+        )
+        self._circuit_window_seconds = float(
+            self._resolve_int("MCP_CIRCUIT_WINDOW_SECONDS", 60, 10, 600)
+        )
+        self._circuit_cooldown_seconds = float(
+            self._resolve_int("MCP_CIRCUIT_COOLDOWN_SECONDS", 30, 5, 300)
+        )
+        self._retry_backoff_base_ms = self._resolve_int(
+            "MCP_TOOL_RETRY_BACKOFF_BASE_MS", 80, 0, 5000
+        )
+        self._retry_backoff_max_ms = self._resolve_int(
+            "MCP_TOOL_RETRY_BACKOFF_MAX_MS", 800, 0, 15000
+        )
         self._tool_circuit_state: dict[str, dict[str, Any]] = {}
         self._circuit_lock = asyncio.Lock()
         self._cleanup_callbacks: list[Callable[[], Any]] = []
@@ -73,7 +85,9 @@ class MCPServer:
         return default
 
     @staticmethod
-    def _resolve_int(env_name: str, default: int, min_value: int, max_value: int) -> int:
+    def _resolve_int(
+        env_name: str, default: int, min_value: int, max_value: int
+    ) -> int:
         """读取整型环境变量并限制取值。
 
         Args:
@@ -188,7 +202,9 @@ class MCPServer:
             tool_name = str(key or "").strip()
             if not tool_name:
                 continue
-            mapping[tool_name] = self._normalize_retry_policy(str(value or ""), default=self._default_retry_policy)
+            mapping[tool_name] = self._normalize_retry_policy(
+                str(value or ""), default=self._default_retry_policy
+            )
         return mapping
 
     def _resolve_retry_policy(self, tool: MCPTool) -> str:
@@ -340,8 +356,12 @@ class MCPServer:
         now = time.time()
         cutoff = now - self._circuit_window_seconds
         async with self._circuit_lock:
-            state = self._tool_circuit_state.setdefault(tool_key, {"timeouts": [], "opened_at": 0.0})
-            timeout_rows = [float(ts) for ts in state.get("timeouts", []) if float(ts) >= cutoff]
+            state = self._tool_circuit_state.setdefault(
+                tool_key, {"timeouts": [], "opened_at": 0.0}
+            )
+            timeout_rows = [
+                float(ts) for ts in state.get("timeouts", []) if float(ts) >= cutoff
+            ]
             timeout_rows.append(now)
             state["timeouts"] = timeout_rows
             if len(timeout_rows) >= int(self._circuit_timeout_threshold):
@@ -359,11 +379,15 @@ class MCPServer:
         if not self._enable_circuit_breaker:
             return
         async with self._circuit_lock:
-            state = self._tool_circuit_state.setdefault(tool_key, {"timeouts": [], "opened_at": 0.0})
+            state = self._tool_circuit_state.setdefault(
+                tool_key, {"timeouts": [], "opened_at": 0.0}
+            )
             state["timeouts"] = []
             state["opened_at"] = 0.0
 
-    async def _invoke_once(self, tool: MCPTool, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_once(
+        self, tool: MCPTool, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         """执行一次工具调用。
 
         Args:
@@ -377,7 +401,9 @@ class MCPServer:
         try:
             result_obj = tool.handler(payload)
             if inspect.isawaitable(result_obj):
-                result = await asyncio.wait_for(result_obj, timeout=self._tool_timeout_seconds)
+                result = await asyncio.wait_for(
+                    result_obj, timeout=self._tool_timeout_seconds
+                )
             else:
                 # 只保留异步调用链；如果 handler 非 async，直接执行（应逐步清理）。
                 result = result_obj
@@ -426,9 +452,14 @@ class MCPServer:
 
         for attempt in range(1, attempts + 1):
             try:
-                row = await self._invoke_once(tool, payload if isinstance(payload, dict) else {})
+                row = await self._invoke_once(
+                    tool, payload if isinstance(payload, dict) else {}
+                )
                 await self._circuit_reset(canonical_name)
-                row_meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+                row_meta_value = row.get("meta")
+                row_meta = (
+                    dict(row_meta_value) if isinstance(row_meta_value, dict) else {}
+                )
                 row_meta.update(
                     {
                         "attempt": attempt,
@@ -532,4 +563,8 @@ class MCPServer:
                 }
             return await self.ainvoke(tool_name, payload)
 
-        return list(await asyncio.gather(*[_run_one(row if isinstance(row, dict) else {}) for row in safe_calls]))
+        return list(
+            await asyncio.gather(
+                *[_run_one(row if isinstance(row, dict) else {}) for row in safe_calls]
+            )
+        )

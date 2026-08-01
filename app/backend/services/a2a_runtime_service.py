@@ -5,16 +5,11 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.feature_flags import get_runtime_flag_snapshot
-
-if TYPE_CHECKING:
-    from app.a2a import A2AService
-    from app.a2a.agent import GraphSubAgent, RagSubAgent
-
 
 _CYPHER_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
@@ -124,14 +119,25 @@ class A2ARuntimeService:
         meta = metadata if isinstance(metadata, dict) else {}
         session_id = str(context_id or meta.get("session_id") or "").strip()
         safe_user_id = str(user_id or meta.get("user_id") or "").strip()
-        strategy = str(meta.get("strategy") or "iterative").strip().lower() or "iterative"
+        trace_id = str(meta.get("trace_id") or "").strip()
+        strategy = (
+            str(meta.get("strategy") or "iterative").strip().lower() or "iterative"
+        )
         raw_max_turns = meta.get("max_turns")
-        max_turns: Optional[int] = raw_max_turns if isinstance(raw_max_turns, int) and raw_max_turns > 0 else None
+        max_turns: Optional[int] = (
+            raw_max_turns
+            if isinstance(raw_max_turns, int) and raw_max_turns > 0
+            else None
+        )
         image_data = str(meta.get("image_data") or "").strip()
         file_id = str(meta.get("file_id") or "").strip()
-        original_input_text = str(meta.get("original_input_text") or input_text or "").strip()
+        original_input_text = str(
+            meta.get("original_input_text") or input_text or ""
+        ).strip()
         memory_context_obj = meta.get("memory_context")
-        memory_context = memory_context_obj if isinstance(memory_context_obj, dict) else {}
+        memory_context = (
+            memory_context_obj if isinstance(memory_context_obj, dict) else {}
+        )
 
         from app.a2a.agent import process_query
 
@@ -139,6 +145,7 @@ class A2ARuntimeService:
             input_text=str(input_text or ""),
             session_id=session_id,
             user_id=safe_user_id,
+            trace_id=trace_id,
             strategy=strategy,
             max_turns=max_turns,
             image_data=image_data,
@@ -174,7 +181,10 @@ class A2ARuntimeService:
                 args_obj = item.get("arguments")
                 arguments = args_obj if isinstance(args_obj, dict) else {}
                 subquery = str(item.get("subquery") or input_text or "").strip()
-                tool_name = str(item.get("tool_name") or default_tool_name).strip() or default_tool_name
+                tool_name = (
+                    str(item.get("tool_name") or default_tool_name).strip()
+                    or default_tool_name
+                )
                 rows.append(
                     {
                         "subquery_id": int(item.get("subquery_id") or idx),
@@ -190,7 +200,10 @@ class A2ARuntimeService:
         args_obj = metadata.get("arguments")
         arguments = args_obj if isinstance(args_obj, dict) else {}
         subquery = str(metadata.get("subquery") or input_text or "").strip()
-        tool_name = str(metadata.get("tool_name") or default_tool_name).strip() or default_tool_name
+        tool_name = (
+            str(metadata.get("tool_name") or default_tool_name).strip()
+            or default_tool_name
+        )
         return [
             {
                 "subquery_id": 1,
@@ -414,7 +427,9 @@ class A2ARuntimeService:
             )
         return self._runtime.a2a_retrieval_service
 
-    async def build_a2a_runtime_snapshot(self, limit_per_service: int = 200) -> Dict[str, Any]:
+    async def build_a2a_runtime_snapshot(
+        self, limit_per_service: int = 200
+    ) -> Dict[str, Any]:
         """汇总 A2A 运行时任务快照。"""
         services = {
             "orchestrator": self.get_a2a(),
@@ -441,7 +456,9 @@ class A2ARuntimeService:
             "services": result,
         }
 
-    async def measure_event_loop_lag(self, samples: int = 20, interval_ms: int = 20) -> Dict[str, Any]:
+    async def measure_event_loop_lag(
+        self, samples: int = 20, interval_ms: int = 20
+    ) -> Dict[str, Any]:
         """采样估算当前事件循环延迟。"""
         safe_samples = max(5, min(int(samples), 200))
         safe_interval_ms = max(1, min(int(interval_ms), 200))

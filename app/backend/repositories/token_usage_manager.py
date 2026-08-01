@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.backend.repositories.database import fetch_all, fetch_one, insert_and_get_last_id
+from app.backend.repositories.database import (
+    fetch_all,
+    fetch_one,
+    insert_and_get_last_id,
+)
+from app.backend.repositories.row_utils import to_iso_timestamp
 
 
 class TokenUsageManager:
@@ -86,7 +91,9 @@ class TokenUsageManager:
                 "completion_tokens": row["completion_tokens"],
                 "total_tokens": row["total_tokens"],
                 "model_name": row.get("model_name") or "",
-                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+                "created_at": (
+                    row["created_at"].isoformat() if row.get("created_at") else None
+                ),
             }
             for row in rows
         ]
@@ -170,8 +177,8 @@ class TokenUsageManager:
                 "prompt_tokens": row.get("total_prompt_tokens") or 0,
                 "completion_tokens": row.get("total_completion_tokens") or 0,
                 "total_tokens": row.get("total_tokens") or 0,
-                "first_used": row.get("first_used").isoformat() if row.get("first_used") else None,
-                "last_used": row.get("last_used").isoformat() if row.get("last_used") else None,
+                "first_used": to_iso_timestamp(row.get("first_used")),
+                "last_used": to_iso_timestamp(row.get("last_used")),
             }
             for row in rows
         ]
@@ -183,8 +190,7 @@ class TokenUsageManager:
         Returns:
             dict: 总请求数、总 token、会话数、用户数等指标。
         """
-        row = await fetch_one(
-            """
+        row = await fetch_one("""
             SELECT
                 COUNT(*) as total_requests,
                 SUM(prompt_tokens) as total_prompt_tokens,
@@ -194,12 +200,13 @@ class TokenUsageManager:
                 COUNT(DISTINCT user_id) as total_users,
                 COUNT(DISTINCT DATE(created_at)) as total_days
             FROM token_usage
-            """
-        )
+            """)
         return {
             "total_requests": int((row or {}).get("total_requests") or 0),
             "total_prompt_tokens": int((row or {}).get("total_prompt_tokens") or 0),
-            "total_completion_tokens": int((row or {}).get("total_completion_tokens") or 0),
+            "total_completion_tokens": int(
+                (row or {}).get("total_completion_tokens") or 0
+            ),
             "total_tokens": int((row or {}).get("total_tokens") or 0),
             "total_sessions": int((row or {}).get("total_sessions") or 0),
             "total_users": int((row or {}).get("total_users") or 0),

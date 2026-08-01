@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞私有报告
+    url: https://github.com/wangmeiwen/hypertension-kg-qa/security/advisories/new
+    about: 请勿在公开 issue 中披露漏洞或敏感信息
+  - name: 使用与贡献指南
+    url: https://github.com/wangmeiwen/hypertension-kg-qa/blob/main/CONTRIBUTING.md
+    about: 提交问题前请先阅读运行、验证和数据边界

@@ -11,8 +11,25 @@ import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from app.backend.repositories.database import MessageManager
+from pydantic import ValidationError
+
+from app.a2a.models import Evidence
+from app.backend.domain.stream_events import (
+    DoneStreamEvent,
+    ErrorStreamEvent,
+    PersistedStreamEvent,
+    ProgressStreamEvent,
+    ReplyStreamEvent,
+    SessionStreamEvent,
+    stream_event_json_line,
+    validate_stream_event,
+)
+from app.backend.repositories.session_manager import MessageManager
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
+from app.backend.services.session_log_repository import (
+    read_request_records,
+    safe_log_id,
+)
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.perf_logger import log_perf_event
 from app.backend.observability.session_logger import (
@@ -22,15 +39,22 @@ from app.backend.observability.session_logger import (
     log_tool_event,
     reset_request_context,
     reset_session_context,
+    reset_turn_context,
     set_request_context,
     set_session_context,
+    set_turn_context,
 )
 
 logger = logging.getLogger(__name__)
 
 MEDICAL_DISCLAIMER_TEXT = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
 MEDICAL_DISCLAIMER_REQUIRED_MARKERS = ("仅供参考", "不构成诊断")
-MEDICAL_DISCLAIMER_SUPPORT_MARKERS = ("不能替代专业医生意见", "不能替代", "及时就医", "紧急情况")
+MEDICAL_DISCLAIMER_SUPPORT_MARKERS = (
+    "不能替代专业医生意见",
+    "不能替代",
+    "及时就医",
+    "紧急情况",
+)
 
 
 def _sanitize_text(value: Any, max_len: int) -> str:
@@ -138,8 +162,12 @@ def _contains_medical_disclaimer(reply: Any) -> bool:
     normalized_tail = _normalize_disclaimer_text(str(reply or "")[-700:])
     if not normalized_tail:
         return False
-    has_required = all(marker in normalized_tail for marker in MEDICAL_DISCLAIMER_REQUIRED_MARKERS)
-    has_support = any(marker in normalized_tail for marker in MEDICAL_DISCLAIMER_SUPPORT_MARKERS)
+    has_required = all(
+        marker in normalized_tail for marker in MEDICAL_DISCLAIMER_REQUIRED_MARKERS
+    )
+    has_support = any(
+        marker in normalized_tail for marker in MEDICAL_DISCLAIMER_SUPPORT_MARKERS
+    )
     return has_required and has_support
 
 
@@ -185,7 +213,9 @@ def _sanitize_list(value: Any, max_items: int, max_len: int) -> List[str]:
     return rows
 
 
-def _extract_section_sentences(reply: str, title: str, next_titles: tuple[str, ...], max_items: int = 2) -> List[str]:
+def _extract_section_sentences(
+    reply: str, title: str, next_titles: tuple[str, ...], max_items: int = 2
+) -> List[str]:
     """从结构化回答段落中提取若干句子。
 
     Args:
@@ -227,7 +257,9 @@ def _extract_section_sentences(reply: str, title: str, next_titles: tuple[str, .
     return rows
 
 
-def _extract_answered_points(evidence_summary: Dict[str, Any], full_reply: str) -> List[str]:
+def _extract_answered_points(
+    evidence_summary: Dict[str, Any], full_reply: str
+) -> List[str]:
     """提取本轮回答覆盖的关键点。
 
     Args:
@@ -237,7 +269,9 @@ def _extract_answered_points(evidence_summary: Dict[str, Any], full_reply: str) 
     Returns:
         List[str]: 用于记忆投影的关键回答点。
     """
-    supported_points = _sanitize_list(evidence_summary.get("supported_points"), max_items=5, max_len=120)
+    supported_points = _sanitize_list(
+        evidence_summary.get("supported_points"), max_items=5, max_len=120
+    )
     if supported_points:
         return supported_points
     conclusion_points = _extract_section_sentences(
@@ -252,7 +286,9 @@ def _extract_answered_points(evidence_summary: Dict[str, Any], full_reply: str) 
         ("不确定性与适用边界",),
         max_items=3,
     )
-    return _sanitize_list([*conclusion_points, *evidence_points], max_items=5, max_len=120)
+    return _sanitize_list(
+        [*conclusion_points, *evidence_points], max_items=5, max_len=120
+    )
 
 
 def _infer_question_scope(input_text: str) -> str:
@@ -324,7 +360,13 @@ def _normalize_question_scope(scope: Any) -> str:
         str: 当前支持的问题范围枚举，未知值返回 unknown。
     """
     value = str(scope or "").strip()
-    if value in {"medical_qa", "capability_query", "administrative", "small_talk", "unknown"}:
+    if value in {
+        "medical_qa",
+        "capability_query",
+        "administrative",
+        "small_talk",
+        "unknown",
+    }:
         return value
     return "unknown"
 
@@ -364,14 +406,7 @@ def _safe_session_log_id(raw: Any, fallback: str = "unknown") -> str:
     Returns:
         str: 仅包含字母、数字、短横线和下划线的目录名片段。
     """
-    text = str(raw or "").strip()
-    if not text:
-        return fallback
-    allowed = []
-    for ch in text:
-        allowed.append(ch if (ch.isalnum() or ch in {"-", "_"}) else "_")
-    cleaned = "".join(allowed).strip("_")
-    return cleaned or fallback
+    return safe_log_id(raw, fallback)
 
 
 def _iso_now() -> str:
@@ -430,7 +465,7 @@ def _summarize_tool_result(result_payload: Any) -> str:
             text = _sanitize_preview(result_obj.get(key), 180)
             if text:
                 return text
-        for key in ("items", "hits", "entities", "relationships"):
+        for key in ("items", "evidence", "entities", "relationships"):
             rows = result_obj.get(key)
             if isinstance(rows, list) and rows:
                 return f"{key} 共 {len(rows)} 项"
@@ -484,36 +519,14 @@ def _read_session_llm_records(session_id: str, request_id: str) -> list[dict[str
     Returns:
         list[dict[str, Any]]: 按时间排序的 LLM 日志记录。
     """
-    sid = _safe_session_log_id(session_id)
-    if not request_id:
-        return []
-    llm_dir = _project_root() / "logs" / "sessions" / sid / "llm"
-    if not llm_dir.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for file_path in sorted(llm_dir.glob("*.jsonl")):
-        try:
-            for line in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                if not line.strip():
-                    continue
-                payload = json.loads(line)
-                if str(payload.get("request_id") or "") != str(request_id):
-                    continue
-                if not isinstance(payload, dict):
-                    continue
-                rows.append(payload)
-        except (OSError, ValueError, TypeError) as exc:
-            logger.warning(
-                "session_stream_skip_invalid_llm_log_file: session_id=%s request_id=%s file=%s error_type=%s error=%s",
-                sid,
-                str(request_id or ""),
-                str(file_path),
-                type(exc).__name__,
-                exc,
-            )
-            continue
-    rows.sort(key=lambda item: str(item.get("ts") or ""))
-    return rows
+    return read_request_records(
+        project_root=_project_root(),
+        session_id=session_id,
+        request_id=request_id,
+        category="llm",
+        logger=logger,
+        warning_event="session_stream_skip_invalid_llm_log_file",
+    )
 
 
 def _build_lane_card_from_tool_observation(
@@ -529,8 +542,12 @@ def _build_lane_card_from_tool_observation(
     Returns:
         Dict[str, Any]: 管理端可展示的泳道卡片。
     """
-    tool_name = str(observation.get("tool_name") or observation.get("requested_tool_name") or "").strip()
-    question = str(observation.get("subquery") or observation.get("question") or "").strip()
+    tool_name = str(
+        observation.get("tool_name") or observation.get("requested_tool_name") or ""
+    ).strip()
+    question = str(
+        observation.get("subquery") or observation.get("question") or ""
+    ).strip()
     action = str(observation.get("action") or "").strip()
     agent = str(observation.get("agent") or "").strip().lower()
     if agent == "kg" or "kg_" in tool_name:
@@ -541,7 +558,8 @@ def _build_lane_card_from_tool_observation(
         lane_name = "主控编排"
     else:
         lane_name = "主控编排"
-    result_payload = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+    result_value = observation.get("result")
+    result_payload = result_value if isinstance(result_value, dict) else {}
     return {
         "lane_name": lane_name,
         "title": "执行工具调用",
@@ -549,9 +567,12 @@ def _build_lane_card_from_tool_observation(
         "prompt_preview": _sanitize_preview(question or f"执行 {tool_name}", 140),
         "decision_preview": _summarize_tool_result(result_payload),
         "full_prompt": question or f"执行动作：{action}；工具：{tool_name}",
-        "full_decision": _sanitize_preview(json.dumps(result_payload, ensure_ascii=False), 1200),
+        "full_decision": _sanitize_preview(
+            json.dumps(result_payload, ensure_ascii=False), 1200
+        ),
         "status": "成功" if bool(result_payload.get("ok", True)) else "失败",
     }
+
 
 def _build_orchestrator_cards(
     input_text: str,
@@ -594,18 +615,24 @@ def _build_orchestrator_cards(
                     {
                         "question": input_text,
                         "qa_memory_text": memory_context.get("qa_memory_text"),
-                        "retrieval_question_index_text": memory_context.get("retrieval_question_index_text"),
+                        "retrieval_question_index_text": memory_context.get(
+                            "retrieval_question_index_text"
+                        ),
                     },
                     ensure_ascii=False,
                 ),
                 1200,
             ),
-            "full_decision": _sanitize_preview(json.dumps(telemetry, ensure_ascii=False), 1200),
+            "full_decision": _sanitize_preview(
+                json.dumps(telemetry, ensure_ascii=False), 1200
+            ),
             "status": "完成",
         }
     ]
     for row in llm_rows:
-        lane_name = _extract_llm_role_from_compact(str(row.get("messages_compact") or ""))
+        lane_name = _extract_llm_role_from_compact(
+            str(row.get("messages_compact") or "")
+        )
         if lane_name != "主控编排":
             continue
         cards.append(
@@ -613,10 +640,16 @@ def _build_orchestrator_cards(
                 "title": "模型输入与输出",
                 "started_at": _normalize_timestamp(row.get("ts"), started_at),
                 "finished_at": _normalize_timestamp(row.get("ts"), finished_at),
-                "prompt_preview": _sanitize_preview(row.get("messages_compact") or "", 160),
-                "decision_preview": _sanitize_preview(row.get("response_compact") or row.get("error") or "", 160),
+                "prompt_preview": _sanitize_preview(
+                    row.get("messages_compact") or "", 160
+                ),
+                "decision_preview": _sanitize_preview(
+                    row.get("response_compact") or row.get("error") or "", 160
+                ),
                 "full_prompt": str(row.get("messages_compact") or ""),
-                "full_decision": str(row.get("response_compact") or row.get("error") or ""),
+                "full_decision": str(
+                    row.get("response_compact") or row.get("error") or ""
+                ),
                 "status": "失败" if str(row.get("error") or "").strip() else "完成",
             }
         )
@@ -649,16 +682,21 @@ def _build_memory_compression_stages(
     Returns:
         list[Dict[str, Any]]: 管理端可展示的记忆阶段列表。
     """
-    qa_before = memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []
+    qa_before_value = memory_context.get("qa_pairs")
+    qa_before = qa_before_value if isinstance(qa_before_value, list) else []
+    retrieval_before_value = memory_context.get("retrieval_question_index")
     retrieval_before = (
-        memory_context.get("retrieval_question_index")
-        if isinstance(memory_context.get("retrieval_question_index"), list)
-        else []
+        retrieval_before_value if isinstance(retrieval_before_value, list) else []
     )
-    qa_after = ((post_memory or {}).get("qa_memory") if isinstance((post_memory or {}).get("qa_memory"), dict) else {}).get("qa_pairs")
-    retrieval_after = (
-        ((post_memory or {}).get("retrieval_memory") if isinstance((post_memory or {}).get("retrieval_memory"), dict) else {}).get("questions")
+    post_memory_value = post_memory if isinstance(post_memory, dict) else {}
+    qa_memory_value = post_memory_value.get("qa_memory")
+    qa_memory = qa_memory_value if isinstance(qa_memory_value, dict) else {}
+    retrieval_memory_value = post_memory_value.get("retrieval_memory")
+    retrieval_memory = (
+        retrieval_memory_value if isinstance(retrieval_memory_value, dict) else {}
     )
+    qa_after = qa_memory.get("qa_pairs")
+    retrieval_after = retrieval_memory.get("questions")
     qa_after_rows = qa_after if isinstance(qa_after, list) else []
     retrieval_after_rows = retrieval_after if isinstance(retrieval_after, list) else []
     return [
@@ -677,7 +715,7 @@ def _build_memory_compression_stages(
             "description": "从本轮对话中提炼出的显式 QA 与检索记录写回内容。",
             "content_lines": [
                 f"本轮问题：{_sanitize_preview(turn_projection.get('user_question') or input_text, 180)}",
-                f"写入检索记录数：{len(turn_projection.get('query_records') or [])}",
+                f"写入 Evidence 数：{len(turn_projection.get('evidence') or [])}",
                 f"检索预览：{'；'.join(turn_projection.get('query_preview') or []) or '无'}",
             ],
         },
@@ -728,46 +766,49 @@ def _build_turn_memory_projection(
     """
     _ = processing_steps
     _ = evidence_summary
-    query_records: List[Dict[str, Any]] = []
+    evidence: List[Dict[str, Any]] = []
     query_preview: List[str] = []
+    seen_evidence: set[tuple[str, str, str, str]] = set()
     captured_at = _iso_now()
     for observation in tool_observations:
         if not isinstance(observation, dict):
             continue
-        raw_records = observation.get("query_records")
-        if not isinstance(raw_records, list):
-            result_obj = observation.get("result") if isinstance(observation.get("result"), dict) else {}
-            payload = result_obj.get("result") if isinstance(result_obj.get("result"), dict) else {}
-            raw_records = payload.get("query_records") if isinstance(payload.get("query_records"), list) else []
-        for item in raw_records if isinstance(raw_records, list) else []:
-            if not isinstance(item, dict) or not bool(item.get("has_signal")):
+        raw_evidence = observation.get("evidence")
+        if not isinstance(raw_evidence, list):
+            result_value = observation.get("result")
+            result_obj = result_value if isinstance(result_value, dict) else {}
+            payload_value = result_obj.get("result")
+            payload = payload_value if isinstance(payload_value, dict) else {}
+            evidence_value = payload.get("evidence")
+            raw_evidence = evidence_value if isinstance(evidence_value, list) else []
+        for item in raw_evidence if isinstance(raw_evidence, list) else []:
+            if not isinstance(item, dict):
                 continue
-            record = {
-                "agent": _sanitize_text(item.get("agent"), 24) or _sanitize_text(observation.get("agent"), 24) or "unknown",
-                "query": _sanitize_text(item.get("query"), 300),
-                "result_content": _sanitize_text(item.get("result_content"), 1600),
-                "captured_at": _sanitize_text(item.get("captured_at"), 64) or captured_at,
-                "citations": _sanitize_list(item.get("citations"), max_items=6, max_len=120),
-                "has_signal": True,
-            }
-            for key in ("page_num", "start_page", "end_page"):
-                value = item.get(key)
-                if value not in (None, ""):
-                    record[key] = value
-            chunk_id = _sanitize_text(item.get("chunk_id"), 120)
-            if chunk_id:
-                record["chunk_id"] = chunk_id
-            if not record["query"] or not record["result_content"]:
+            try:
+                normalized = Evidence.model_validate(item).model_dump()
+            except ValidationError:
                 continue
-            query_records.append(record)
-            preview = _sanitize_text(f"{record['agent']}:{record['query']}", 120)
-            if preview and preview not in query_preview:
+            fingerprint = (
+                str(normalized.get("source_type") or ""),
+                str(normalized.get("source_id") or ""),
+                str(normalized.get("chunk_id") or ""),
+                str(normalized.get("content") or "")[:160],
+            )
+            if fingerprint in seen_evidence:
+                continue
+            seen_evidence.add(fingerprint)
+            evidence.append(normalized)
+        agent = _sanitize_text(observation.get("agent"), 24) or "unknown"
+        subquery = _sanitize_text(observation.get("subquery"), 100)
+        if subquery:
+            preview = f"{agent}:{subquery}"
+            if preview not in query_preview:
                 query_preview.append(preview)
     return {
         "user_question": str(input_text or ""),
         "user_message_id": int(user_message_id or 0),
         "captured_at": captured_at,
-        "query_records": query_records,
+        "evidence": evidence,
         "query_preview": query_preview[:5],
         "assistant_reply_digest": _build_reply_digest(full_reply),
         "question_scope": _normalize_question_scope(_infer_question_scope(input_text)),
@@ -789,33 +830,42 @@ def _collect_request_llm_metrics(session_id: str, request_id: str) -> Dict[str, 
         Dict[str, Any]: LLM 调用记录、调用次数、token 总量和错误计数。
     """
     rows = _read_session_llm_records(session_id, request_id)
+    prompt_tokens = 0
+    completion_tokens = 0
     total_tokens = 0
     llm_calls = 0
     error_types: dict[str, int] = {}
     for row in rows:
         llm_calls += 1
         try:
+            prompt_tokens += int(row.get("prompt_tokens") or 0)
+            completion_tokens += int(row.get("completion_tokens") or 0)
             total_tokens += int(row.get("total_tokens") or 0)
         except (TypeError, ValueError):
-            total_tokens += 0
+            continue
         error_type = str(row.get("error") or "").strip()
         if error_type:
             error_types[error_type] = int(error_types.get(error_type) or 0) + 1
     return {
         "llm_calls": llm_calls,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "llm_rows": rows,
         "error_types": error_types,
     }
 
 
-def _merge_llm_metrics_with_telemetry(llm_metrics: Dict[str, Any], telemetry: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_llm_metrics_with_telemetry(
+    llm_metrics: Dict[str, Any], telemetry: Dict[str, Any]
+) -> Dict[str, Any]:
     """LLM 明细日志缺失时，用 A2A telemetry 兜底 token 指标。"""
     metrics = dict(llm_metrics)
-    telemetry_tokens = _to_int_metric(telemetry.get("total_tokens"))
+    for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        telemetry_value = _to_int_metric(telemetry.get(field))
+        if _to_int_metric(metrics.get(field)) <= 0 and telemetry_value > 0:
+            metrics[field] = telemetry_value
     telemetry_calls = _to_int_metric(telemetry.get("llm_calls"))
-    if _to_int_metric(metrics.get("total_tokens")) <= 0 and telemetry_tokens > 0:
-        metrics["total_tokens"] = telemetry_tokens
     if _to_int_metric(metrics.get("llm_calls")) <= 0:
         if telemetry_calls > 0:
             metrics["llm_calls"] = telemetry_calls
@@ -850,7 +900,8 @@ def _derive_tool_metrics(tool_observations: List[Dict[str, Any]]) -> Dict[str, A
             strategy_error_types[key] = int(strategy_error_types.get(key) or 0) + 1
             continue
         tool_calls += 1
-        result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
+        result_value = row.get("result")
+        result_obj = result_value if isinstance(result_value, dict) else {}
         ok = bool(result_obj.get("ok", True))
         if ok:
             success_count += 1
@@ -858,8 +909,14 @@ def _derive_tool_metrics(tool_observations: List[Dict[str, Any]]) -> Dict[str, A
             key = str(result_obj.get("error") or "tool_error")
             execution_error_types[key] = int(execution_error_types.get(key) or 0) + 1
 
-    success_rate = round(float(success_count / tool_calls), 4) if tool_calls > 0 else 0.0
-    attempted_success_rate = round(float(success_count / attempted_tool_actions), 4) if attempted_tool_actions > 0 else 0.0
+    success_rate = (
+        round(float(success_count / tool_calls), 4) if tool_calls > 0 else 0.0
+    )
+    attempted_success_rate = (
+        round(float(success_count / attempted_tool_actions), 4)
+        if attempted_tool_actions > 0
+        else 0.0
+    )
     return {
         "tool_calls": tool_calls,
         "attempted_tool_actions": attempted_tool_actions,
@@ -916,46 +973,61 @@ def _build_turn_observability_payload(
     Returns:
         Dict[str, Any]: 可写入 turn JSONL 的观测日志 payload。
     """
-    llm_metrics = _merge_llm_metrics_with_telemetry(_collect_request_llm_metrics(session_id, request_id), telemetry)
+    llm_metrics = _merge_llm_metrics_with_telemetry(
+        _collect_request_llm_metrics(session_id, request_id), telemetry
+    )
     tool_metrics = _derive_tool_metrics(tool_observations)
-    llm_rows = llm_metrics.get("llm_rows") if isinstance(llm_metrics.get("llm_rows"), list) else []
+    llm_rows_value = llm_metrics.get("llm_rows")
+    llm_rows = llm_rows_value if isinstance(llm_rows_value, list) else []
+    qa_pairs_value = memory_context.get("qa_pairs")
+    retrieval_index_value = memory_context.get("retrieval_question_index")
 
     memory_before = {
-        "qa_pair_count": len(memory_context.get("qa_pairs") if isinstance(memory_context.get("qa_pairs"), list) else []),
+        "qa_pair_count": len(
+            qa_pairs_value if isinstance(qa_pairs_value, list) else []
+        ),
         "retrieval_question_count": len(
-            memory_context.get("retrieval_question_index")
-            if isinstance(memory_context.get("retrieval_question_index"), list)
-            else []
+            retrieval_index_value if isinstance(retrieval_index_value, list) else []
         ),
         "qa_memory_text": str(memory_context.get("qa_memory_text") or ""),
-        "retrieval_question_index_text": str(memory_context.get("retrieval_question_index_text") or ""),
+        "retrieval_question_index_text": str(
+            memory_context.get("retrieval_question_index_text") or ""
+        ),
     }
     orchestrator_decision = {
-        "controller_mode": str(telemetry.get("controller_mode") or "explicit_memory_with_subagents"),
+        "controller_mode": str(
+            telemetry.get("controller_mode") or "explicit_memory_with_subagents"
+        ),
         "retrieval_round": int(telemetry.get("retrieval_round") or 0),
         "final_source": str(telemetry.get("final_source") or "controller"),
         "answer_mode": str(evidence_summary.get("answer_mode") or ""),
         "prompt_budget_limit": int(telemetry.get("prompt_budget_limit") or 0),
         "compression_count": int(telemetry.get("compression_count") or 0),
-        "prompt_token_count_before_last_decision": int(telemetry.get("prompt_token_count_before_last_decision") or 0),
-        "prompt_token_count_after_last_compression": int(telemetry.get("prompt_token_count_after_last_compression") or 0),
+        "prompt_token_count_before_last_decision": int(
+            telemetry.get("prompt_token_count_before_last_decision") or 0
+        ),
+        "prompt_token_count_after_last_compression": int(
+            telemetry.get("prompt_token_count_after_last_compression") or 0
+        ),
         "aborted_for_prompt_budget": bool(telemetry.get("aborted_for_prompt_budget")),
     }
 
-    agent_lanes = {
-        "主控编排": _build_orchestrator_cards(input_text, memory_context, telemetry, llm_rows, started_at, finished_at),
+    agent_lanes: dict[str, list[dict[str, Any]]] = {
+        "主控编排": _build_orchestrator_cards(
+            input_text, memory_context, telemetry, llm_rows, started_at, finished_at
+        ),
         "图谱代理": [],
         "检索代理": [],
     }
     for observation in tool_observations:
         card = _build_lane_card_from_tool_observation(observation, finished_at)
         lane_name = str(card.get("lane_name") or "")
-        agent_lanes[lane_name] = agent_lanes.get(lane_name) if isinstance(agent_lanes.get(lane_name), list) else []
-        agent_lanes[lane_name].append(card)
+        agent_lanes.setdefault(lane_name, []).append(card)
 
     return {
         "record_type": "turn_observability",
         "request_id": str(request_id or ""),
+        "trace_id": str(request_id or ""),
         "session_id": str(session_id or ""),
         "user_id": str(user_id or ""),
         "turn_id": f"{session_id}:{user_message_id}",
@@ -981,27 +1053,61 @@ def _build_turn_observability_payload(
             compressed_at=finished_at,
         ),
         "timeline": [
-            {"title": "开始处理用户问题", "event_time": started_at, "detail": _sanitize_preview(input_text, 140)},
-            {"title": "完成会话记忆读取", "event_time": started_at, "detail": "已加载显式 QA 记忆与历史检索问题索引"},
+            {
+                "title": "开始处理用户问题",
+                "event_time": started_at,
+                "detail": _sanitize_preview(input_text, 140),
+            },
+            {
+                "title": "完成会话记忆读取",
+                "event_time": started_at,
+                "detail": "已加载显式 QA 记忆与历史检索问题索引",
+            },
             *[
-                {"title": "主控过程事件", "event_time": finished_at, "detail": _sanitize_preview(item, 160)}
+                {
+                    "title": "主控过程事件",
+                    "event_time": finished_at,
+                    "detail": _sanitize_preview(item, 160),
+                }
                 for item in processing_steps[:8]
             ],
-            {"title": "终答生成完成", "event_time": finished_at, "detail": _sanitize_preview(_build_reply_digest(full_reply), 160)},
+            {
+                "title": "终答生成完成",
+                "event_time": finished_at,
+                "detail": _sanitize_preview(_build_reply_digest(full_reply), 160),
+            },
         ],
         "processing_steps": processing_steps,
         "tool_observations": tool_observations,
         "llm_calls": int(llm_metrics.get("llm_calls") or 0),
+        "prompt_tokens": int(llm_metrics.get("prompt_tokens") or 0),
+        "completion_tokens": int(llm_metrics.get("completion_tokens") or 0),
         "total_tokens": int(llm_metrics.get("total_tokens") or 0),
         "tool_calls": int(tool_metrics.get("tool_calls") or 0),
         "attempted_tool_actions": int(tool_metrics.get("attempted_tool_actions") or 0),
         "blocked_tool_actions": int(tool_metrics.get("blocked_tool_actions") or 0),
         "tool_success_rate": float(tool_metrics.get("tool_success_rate") or 0.0),
-        "execution_tool_success_rate": float(tool_metrics.get("execution_tool_success_rate") or 0.0),
-        "attempted_action_success_rate": float(tool_metrics.get("attempted_action_success_rate") or 0.0),
-        "error_types": llm_metrics.get("error_types") if isinstance(llm_metrics.get("error_types"), dict) else {},
-        "strategy_error_types": tool_metrics.get("strategy_error_types") if isinstance(tool_metrics.get("strategy_error_types"), dict) else {},
-        "execution_error_types": tool_metrics.get("execution_error_types") if isinstance(tool_metrics.get("execution_error_types"), dict) else {},
+        "execution_tool_success_rate": float(
+            tool_metrics.get("execution_tool_success_rate") or 0.0
+        ),
+        "attempted_action_success_rate": float(
+            tool_metrics.get("attempted_action_success_rate") or 0.0
+        ),
+        "error_types": (
+            llm_metrics.get("error_types")
+            if isinstance(llm_metrics.get("error_types"), dict)
+            else {}
+        ),
+        "strategy_error_types": (
+            tool_metrics.get("strategy_error_types")
+            if isinstance(tool_metrics.get("strategy_error_types"), dict)
+            else {}
+        ),
+        "execution_error_types": (
+            tool_metrics.get("execution_error_types")
+            if isinstance(tool_metrics.get("execution_error_types"), dict)
+            else {}
+        ),
         "reflection_events": [],
         "turn_metrics": [],
     }
@@ -1035,6 +1141,7 @@ def _build_turn_memory_update_payload(
     return {
         "record_type": "turn_memory_update",
         "request_id": str(request_id or ""),
+        "trace_id": str(request_id or ""),
         "session_id": str(session_id or ""),
         "turn_id": f"{session_id}:{user_message_id}",
         "user_message_id": int(user_message_id or 0),
@@ -1042,8 +1149,14 @@ def _build_turn_memory_update_payload(
         "updated_at": updated_at,
         "snapshot": snapshot if isinstance(snapshot, dict) else {},
         "llm_calls": int(metrics.get("llm_calls") or 0),
+        "prompt_tokens": int(metrics.get("prompt_tokens") or 0),
+        "completion_tokens": int(metrics.get("completion_tokens") or 0),
         "total_tokens": int(metrics.get("total_tokens") or 0),
-        "error_types": metrics.get("error_types") if isinstance(metrics.get("error_types"), dict) else {},
+        "error_types": (
+            metrics.get("error_types")
+            if isinstance(metrics.get("error_types"), dict)
+            else {}
+        ),
     }
 
 
@@ -1057,6 +1170,7 @@ class SessionStreamService:
         log_api_error: Any,
         event_stream_service: A2AEventStreamService,
         message_manager: Any = MessageManager,
+        create_task: Any = asyncio.create_task,
     ) -> None:
         """初始化实例并注入运行依赖。
 
@@ -1066,6 +1180,7 @@ class SessionStreamService:
             log_api_error: 统一记录会话流式接口错误的回调。
             event_stream_service: A2A 事件流服务实例。
             message_manager: 消息仓储实现。
+            create_task: 后台任务创建器，允许测试记忆刷新调度失败。
 
         Returns:
             None: 无返回值。
@@ -1075,6 +1190,7 @@ class SessionStreamService:
         self._log_api_error = log_api_error
         self._event_stream_service = event_stream_service
         self._message_manager = message_manager
+        self._create_task = create_task
 
     async def generate_data_with_session_lines(
         self,
@@ -1111,9 +1227,12 @@ class SessionStreamService:
         done_tool_observations: List[Dict[str, Any]] = []
         done_evidence_summary: Dict[str, Any] = {}
         done_telemetry: Dict[str, Any] = {}
-        question_scope = _normalize_question_scope(_infer_question_scope(original_input_text or input_text))
+        question_scope = _normalize_question_scope(
+            _infer_question_scope(original_input_text or input_text)
+        )
         assistant_message_persisted = False
         assistant_message_id = 0
+        assistant_persist_attempts = 0
         memory_refresh_scheduled = False
         done_emitted = False
         turn_observability_written = False
@@ -1121,47 +1240,63 @@ class SessionStreamService:
         started_perf = time.perf_counter()
         session_tokens = set_session_context(str(session_id or ""), str(user_id or ""))
         request_token = set_request_context(str(request_id or ""))
+        turn_token = set_turn_context(f"{session_id}:{int(user_message_id or 0)}")
         ensure_session_meta(str(session_id or ""), str(user_id or ""))
 
-        def build_session_event() -> Dict[str, Any]:
+        def build_session_event() -> SessionStreamEvent:
             """构建会话持久化元数据事件。"""
-            return {
-                "type": "session",
-                "session_id": str(session_id or ""),
-                "user_message_id": int(user_message_id or 0),
-            }
+            return SessionStreamEvent(
+                session_id=str(session_id or ""),
+                user_message_id=int(user_message_id or 0),
+            )
 
-        def build_persisted_event(persisted_assistant_message_id: int) -> Dict[str, Any]:
+        def build_persisted_event(
+            persisted_assistant_message_id: int,
+        ) -> PersistedStreamEvent:
             """构建助手消息持久化完成事件。"""
-            return {
-                "type": "persisted",
-                "session_id": str(session_id or ""),
-                "user_message_id": int(user_message_id or 0),
-                "assistant_message_id": int(persisted_assistant_message_id or 0),
-            }
+            return PersistedStreamEvent(
+                session_id=str(session_id or ""),
+                user_message_id=int(user_message_id or 0),
+                assistant_message_id=int(persisted_assistant_message_id or 0),
+            )
 
         def ensure_medical_disclaimer() -> str:
             """统一为医疗回答补充免责文本，并返回新增片段。"""
             nonlocal full_reply
-            updated_reply = append_medical_disclaimer_if_needed(full_reply, question_scope)
+            updated_reply = append_medical_disclaimer_if_needed(
+                full_reply, question_scope
+            )
             if updated_reply == full_reply:
                 return ""
-            added = updated_reply[len(full_reply):] if updated_reply.startswith(full_reply) else updated_reply
+            added = (
+                updated_reply[len(full_reply) :]
+                if updated_reply.startswith(full_reply)
+                else updated_reply
+            )
             full_reply = updated_reply
             return added
 
         def _turn_log_path() -> Path:
             """返回当前会话当天的 turn JSONL 日志路径。"""
             sid = _safe_session_log_id(session_id)
-            return _project_root() / "logs" / "sessions" / sid / "turns" / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+            return (
+                _project_root()
+                / "logs"
+                / "sessions"
+                / sid
+                / "turns"
+                / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+            )
 
         async def persist_assistant_message_once() -> int:
             """确保助手消息最多落库一次，并返回助手消息 ID。"""
-            nonlocal assistant_message_persisted, assistant_message_id
+            nonlocal assistant_message_id, assistant_message_persisted
+            nonlocal assistant_persist_attempts
             if assistant_message_persisted:
                 return int(assistant_message_id or 0)
             if not full_reply:
                 return 0
+            assistant_persist_attempts += 1
             ensure_medical_disclaimer()
             assistant_message = await self._await_call(
                 self._message_manager.add_message,
@@ -1172,6 +1307,25 @@ class SessionStreamService:
             )
             assistant_message_id = int((assistant_message or {}).get("id") or 0)
             assistant_message_persisted = assistant_message_id > 0
+            if not assistant_message_persisted:
+                raise RuntimeError("assistant_message_id_missing")
+            return int(assistant_message_id or 0)
+
+        async def persist_assistant_message_with_retry(log_stage: str) -> int:
+            """在终态前最多尝试两次助手消息落库。"""
+            while not assistant_message_persisted and assistant_persist_attempts < 2:
+                try:
+                    return await persist_assistant_message_once()
+                except Exception as exc:
+                    self._log_api_error(
+                        "/process_with_session",
+                        log_stage,
+                        exc,
+                        session_id=session_id,
+                        user_id=user_id,
+                        request_id=request_id,
+                        attempt=assistant_persist_attempts,
+                    )
             return int(assistant_message_id or 0)
 
         def write_turn_observability_once() -> None:
@@ -1197,7 +1351,9 @@ class SessionStreamService:
                     assistant_message_id=int(assistant_message_id or 0),
                     input_text=str(input_text or ""),
                     full_reply=full_reply,
-                    memory_context=memory_context if isinstance(memory_context, dict) else {},
+                    memory_context=(
+                        memory_context if isinstance(memory_context, dict) else {}
+                    ),
                     processing_steps=done_processing_steps,
                     tool_observations=done_tool_observations,
                     evidence_summary=done_evidence_summary,
@@ -1220,8 +1376,12 @@ class SessionStreamService:
                     attempted_tool_actions=payload.get("attempted_tool_actions"),
                     blocked_tool_actions=payload.get("blocked_tool_actions"),
                     tool_success_rate=payload.get("tool_success_rate"),
-                    execution_tool_success_rate=payload.get("execution_tool_success_rate"),
-                    attempted_action_success_rate=payload.get("attempted_action_success_rate"),
+                    execution_tool_success_rate=payload.get(
+                        "execution_tool_success_rate"
+                    ),
+                    attempted_action_success_rate=payload.get(
+                        "attempted_action_success_rate"
+                    ),
                     total_tokens=payload.get("total_tokens"),
                     error_types=payload.get("error_types"),
                     strategy_error_types=payload.get("strategy_error_types"),
@@ -1251,7 +1411,10 @@ class SessionStreamService:
                 None: 无返回值。
             """
             nonlocal memory_refresh_scheduled
-            if memory_refresh_scheduled or int(persisted_assistant_message_id or 0) <= 0:
+            if (
+                memory_refresh_scheduled
+                or int(persisted_assistant_message_id or 0) <= 0
+            ):
                 return
 
             turn_artifacts = _build_turn_memory_projection(
@@ -1267,8 +1430,11 @@ class SessionStreamService:
                 """刷新会话记忆并写入记忆更新观测日志。"""
                 tokens = set_session_context(str(session_id or ""), str(user_id or ""))
                 request_ctx = set_request_context(str(request_id or ""))
+                turn_ctx = set_turn_context(f"{session_id}:{int(user_message_id or 0)}")
                 try:
-                    memory_service: SessionMemoryService = self._get_session_memory_service()
+                    memory_service: SessionMemoryService = (
+                        self._get_session_memory_service()
+                    )
                     snapshot = await self._await_call(
                         memory_service.refresh_after_turn,
                         session_id,
@@ -1290,6 +1456,7 @@ class SessionStreamService:
                     )
                     _append_jsonl(_turn_log_path(), update_payload)
                 finally:
+                    reset_turn_context(turn_ctx)
                     reset_request_context(request_ctx)
                     reset_session_context(tokens)
 
@@ -1315,14 +1482,16 @@ class SessionStreamService:
                         request_id=request_id,
                     )
 
+            refresh_coro = refresh_memory_task()
             try:
-                refresh_task = asyncio.create_task(
-                    refresh_memory_task(),
+                refresh_task = self._create_task(
+                    refresh_coro,
                     name=f"memory-refresh-{session_id}-{persisted_assistant_message_id}",
                 )
                 refresh_task.add_done_callback(on_refresh_done)
                 memory_refresh_scheduled = True
             except Exception as exc:
+                refresh_coro.close()
                 self._log_api_error(
                     "/process_with_session",
                     "memory_refresh_schedule_failed",
@@ -1334,7 +1503,7 @@ class SessionStreamService:
                 )
 
         try:
-            yield json.dumps(build_session_event(), ensure_ascii=False) + "\n"
+            yield stream_event_json_line(build_session_event())
             log_session_op(
                 session_id=str(session_id or ""),
                 turn=int(user_message_id or 0),
@@ -1344,7 +1513,7 @@ class SessionStreamService:
                 input_summary=_sanitize_preview(input_text, 160),
             )
 
-            async for msg in self._event_stream_service.iter_a2a_stream_events(
+            async for raw_event in self._event_stream_service.iter_a2a_stream_events(
                 input_text=input_text,
                 user_id=user_id,
                 session_id=session_id,
@@ -1354,81 +1523,108 @@ class SessionStreamService:
                 original_input_text=original_input_text,
                 memory_context=memory_context,
             ):
-                if msg.get("type") == "reply":
-                    full_reply += str(msg.get("msg") or "")
-                elif msg.get("type") == "msg":
-                    full_think += str(msg.get("msg") or "")
-                elif msg.get("type") == "done":
-                    done_status = str(msg.get("status") or "done")
-                    processing_steps_obj = msg.get("processing_steps")
-                    if isinstance(processing_steps_obj, list):
-                        done_processing_steps = [str(item or "") for item in processing_steps_obj]
-                    tool_observations_obj = msg.get("tool_observations")
-                    if isinstance(tool_observations_obj, list):
-                        done_tool_observations = [
-                            item if isinstance(item, dict) else {"raw": str(item or "")}
-                            for item in tool_observations_obj
-                        ]
-                    evidence_summary_obj = msg.get("evidence_summary")
-                    if isinstance(evidence_summary_obj, dict):
-                        done_evidence_summary = evidence_summary_obj
-                    telemetry_obj = msg.get("telemetry")
-                    if isinstance(telemetry_obj, dict):
-                        done_telemetry = telemetry_obj
-
-                if msg.get("type") == "done" and not full_reply:
-                    full_reply = str(msg.get("msg") or "").strip()
-
-                if msg.get("type") == "done":
-                    disclaimer_chunk = ensure_medical_disclaimer()
-                    if disclaimer_chunk:
-                        yield json.dumps({"type": "reply", "msg": disclaimer_chunk}, ensure_ascii=False) + "\n"
-
-                yield json.dumps(msg, ensure_ascii=False) + "\n"
-
-                if msg.get("type") == "done":
+                event = validate_stream_event(raw_event)
+                if isinstance(event, ReplyStreamEvent):
+                    full_reply += event.delta
+                elif isinstance(event, ProgressStreamEvent):
+                    full_think += event.msg
+                elif isinstance(event, DoneStreamEvent):
+                    done_status = event.status
+                    done_processing_steps = event.processing_steps
+                    done_tool_observations = event.tool_observations
+                    done_evidence_summary = event.evidence_summary
+                    done_telemetry = event.telemetry
+                elif isinstance(event, ErrorStreamEvent):
+                    done_status = "failed"
                     done_emitted = True
-                    if full_reply:
-                        try:
-                            persisted_id = await persist_assistant_message_once()
-                            if persisted_id > 0:
-                                for index, row in enumerate(done_tool_observations, start=1):
-                                    tool_name = str(row.get("tool_name") or row.get("requested_tool_name") or "")
-                                    result_obj = row.get("result") if isinstance(row.get("result"), dict) else {}
-                                    log_tool_event(
-                                        session_id=str(session_id or ""),
-                                        turn=int(user_message_id or index),
-                                        tool_name=tool_name or "unknown_tool",
-                                        arguments=row.get("arguments") if isinstance(row.get("arguments"), dict) else {},
-                                        result_ok=bool(result_obj.get("ok", True)),
-                                        has_signal=bool(result_obj.get("result")),
-                                        duration_ms=0.0,
-                                        fallback_used=bool(row.get("used_fallback")),
-                                        blocked_reason=str(row.get("blocked_reason") or ""),
-                                    )
-                                log_session_op(
-                                    session_id=str(session_id or ""),
-                                    turn=int(user_message_id or 0),
-                                    stage="orchestrator",
-                                    action="run_end",
-                                    status=done_status,
-                                    output_summary=_build_reply_digest(full_reply),
-                                )
-                                write_turn_observability_once()
-                                schedule_memory_refresh(persisted_id)
-                                yield json.dumps(build_persisted_event(persisted_id), ensure_ascii=False) + "\n"
-                        except Exception as exc:
-                            self._log_api_error(
-                                "/process_with_session",
-                                "assistant_persist_failed_after_done",
-                                exc,
-                                session_id=session_id,
-                                user_id=user_id,
-                                request_id=request_id,
-                                done_emitted=done_emitted,
-                            )
+                    yield stream_event_json_line(event)
                     break
+
+                if not isinstance(event, DoneStreamEvent):
+                    yield stream_event_json_line(event)
+                    continue
+
+                disclaimer_chunk = ensure_medical_disclaimer()
+                if disclaimer_chunk:
+                    yield stream_event_json_line(
+                        ReplyStreamEvent(delta=disclaimer_chunk, task_id=event.task_id)
+                    )
+
+                if full_reply:
+                    persisted_id = await persist_assistant_message_with_retry(
+                        "assistant_persist_failed_after_done"
+                    )
+                    if persisted_id <= 0:
+                        done_status = "failed"
+                        done_emitted = True
+                        yield stream_event_json_line(
+                            ErrorStreamEvent(
+                                code="assistant_persist_failed",
+                                message="回答已生成，但会话保存失败，请稍后重试",
+                                task_id=event.task_id,
+                                recoverable=True,
+                            )
+                        )
+                        break
+                    try:
+                        for index, row in enumerate(done_tool_observations, start=1):
+                            tool_name = str(
+                                row.get("tool_name")
+                                or row.get("requested_tool_name")
+                                or ""
+                            )
+                            arguments_value = row.get("arguments")
+                            arguments = (
+                                arguments_value
+                                if isinstance(arguments_value, dict)
+                                else {}
+                            )
+                            result_value = row.get("result")
+                            result_obj = (
+                                result_value if isinstance(result_value, dict) else {}
+                            )
+                            log_tool_event(
+                                session_id=str(session_id or ""),
+                                turn=int(user_message_id or index),
+                                tool_name=tool_name or "unknown_tool",
+                                arguments=arguments,
+                                result_ok=bool(result_obj.get("ok", True)),
+                                has_signal=bool(result_obj.get("result")),
+                                duration_ms=float(row.get("duration_ms") or 0.0),
+                                fallback_used=bool(row.get("used_fallback")),
+                                blocked_reason=str(row.get("blocked_reason") or ""),
+                                token_usage=(
+                                    row.get("token_usage")
+                                    if isinstance(row.get("token_usage"), dict)
+                                    else None
+                                ),
+                            )
+                        log_session_op(
+                            session_id=str(session_id or ""),
+                            turn=int(user_message_id or 0),
+                            stage="orchestrator",
+                            action="run_end",
+                            status=done_status,
+                            output_summary=_build_reply_digest(full_reply),
+                        )
+                    except Exception as exc:
+                        self._log_api_error(
+                            "/process_with_session",
+                            "assistant_post_persist_observability_failed",
+                            exc,
+                            session_id=session_id,
+                            user_id=user_id,
+                            request_id=request_id,
+                            done_emitted=done_emitted,
+                        )
+                    write_turn_observability_once()
+                    schedule_memory_refresh(persisted_id)
+                    yield stream_event_json_line(build_persisted_event(persisted_id))
+                done_emitted = True
+                yield stream_event_json_line(event)
+                break
         except asyncio.CancelledError as exc:
+            done_status = "cancelled"
             self._log_api_error(
                 "/process_with_session",
                 "generate_data_with_session_cancelled",
@@ -1446,13 +1642,20 @@ class SessionStreamService:
                 user_id=user_id,
             )
             if not done_emitted:
-                yield json.dumps({"type": "done", "status": "error", "msg": "流式输出异常终止"}, ensure_ascii=False) + "\n"
+                yield stream_event_json_line(
+                    ErrorStreamEvent(
+                        code="session_stream_failed",
+                        message="流式输出异常终止",
+                    )
+                )
                 done_emitted = True
         finally:
             if full_reply and not assistant_message_persisted:
-                try:
-                    persisted_id = await persist_assistant_message_once()
-                    if persisted_id > 0:
+                persisted_id = await persist_assistant_message_with_retry(
+                    "persist_assistant_turn_finally"
+                )
+                if persisted_id > 0:
+                    try:
                         log_session_op(
                             session_id=str(session_id or ""),
                             turn=int(user_message_id or 0),
@@ -1463,15 +1666,16 @@ class SessionStreamService:
                         )
                         write_turn_observability_once()
                         schedule_memory_refresh(persisted_id)
-                except Exception as exc:
-                    self._log_api_error(
-                        "/process_with_session",
-                        "persist_assistant_turn_finally",
-                        exc,
-                        session_id=session_id,
-                        user_id=user_id,
-                        request_id=request_id,
-                        done_emitted=done_emitted,
-                    )
+                    except Exception as exc:
+                        self._log_api_error(
+                            "/process_with_session",
+                            "assistant_finally_observability_failed",
+                            exc,
+                            session_id=session_id,
+                            user_id=user_id,
+                            request_id=request_id,
+                            done_emitted=done_emitted,
+                        )
+            reset_turn_context(turn_token)
             reset_request_context(request_token)
             reset_session_context(session_tokens)

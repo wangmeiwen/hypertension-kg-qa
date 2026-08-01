@@ -41,6 +41,7 @@ class HierarchicalChunk:
         start_page: 起始页码
         end_page: 结束页码
     """
+
     parent_text: str
     parent_index: int
     sub_chunks: List[str]
@@ -68,7 +69,7 @@ class DocxParser:
         parent_chunk_size: int = 1200,
         sub_chunk_size: int = 300,
         parent_chunk_overlap: int = 100,
-        sub_chunk_overlap: int = 50
+        sub_chunk_overlap: int = 50,
     ):
         """
         初始化 DOCX 解析器。
@@ -99,9 +100,12 @@ class DocxParser:
             HanLP 分词器实例
         """
         if self._hanlp_tokenizer is None:
-            import hanlp
+            import hanlp  # type: ignore[import-untyped]
+
             # 使用HanLP的CTB9分词模型
-            self._hanlp_tokenizer = hanlp.load(hanlp.pretrained.tok.CTB9_TOK_ELECTRA_BASE)
+            self._hanlp_tokenizer = hanlp.load(
+                hanlp.pretrained.tok.CTB9_TOK_ELECTRA_BASE
+            )
         return self._hanlp_tokenizer
 
     def parse_docx(self, file_path: str) -> str:
@@ -176,7 +180,7 @@ class DocxParser:
         """
         try:
             # 先按段落分割
-            paragraphs = text.split('\n\n')
+            paragraphs = text.split("\n\n")
             sentences = []
 
             for para in paragraphs:
@@ -189,7 +193,15 @@ class DocxParser:
 
             return sentences
 
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             # 如果HanLP出错，使用简单的规则切分
             logger.warning(
                 "hanlp_sentence_split_failed_fallback: text_len=%s error_type=%s error=%s",
@@ -217,27 +229,35 @@ class DocxParser:
             current_sentence = []
 
             # 句末标点符号
-            sentence_endings = {'。', '！', '？', '.', '!', '?', '；', ';'}
+            sentence_endings = {"。", "！", "？", ".", "!", "?", "；", ";"}
 
             for token in tokens:
                 current_sentence.append(token)
                 # 遇到句末标点，保存当前句子
                 if token in sentence_endings:
                     if current_sentence:
-                        sentence = ''.join(current_sentence).strip()
+                        sentence = "".join(current_sentence).strip()
                         if sentence:
                             sentences.append(sentence)
                         current_sentence = []
 
             # 处理最后剩余的文本
             if current_sentence:
-                sentence = ''.join(current_sentence).strip()
+                sentence = "".join(current_sentence).strip()
                 if sentence:
                     sentences.append(sentence)
 
             return sentences
 
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             # 降级处理
             logger.warning(
                 "hanlp_paragraph_split_failed_fallback: para_len=%s error_type=%s error=%s",
@@ -258,11 +278,11 @@ class DocxParser:
             句子列表
         """
         # 按段落分割
-        paragraphs = text.split('\n\n')
+        paragraphs = text.split("\n\n")
         sentences = []
 
         # 句子分隔符正则
-        sentence_pattern = r'([^。！？.!?；;]+[。！？.!?；;]*)'
+        sentence_pattern = r"([^。！？.!?；;]+[。！？.!?；;]*)"
 
         for para in paragraphs:
             if not para.strip():
@@ -305,7 +325,7 @@ class DocxParser:
             if sentence_length >= self.parent_chunk_size:
                 # 先保存之前的累积内容
                 if current_chunk:
-                    parent_chunks.append(''.join(current_chunk))
+                    parent_chunks.append("".join(current_chunk))
                     current_chunk = []
                     current_length = 0
                 # 将长句子作为一个独立块
@@ -313,12 +333,19 @@ class DocxParser:
                 continue
 
             # 检查加入当前句子后是否会超过限制
-            if current_length + sentence_length > self.parent_chunk_size and current_chunk:
+            if (
+                current_length + sentence_length > self.parent_chunk_size
+                and current_chunk
+            ):
                 # 保存当前块
-                parent_chunks.append(''.join(current_chunk))
+                parent_chunks.append("".join(current_chunk))
 
                 # 保留重叠部分
-                overlap_text = ''.join(current_chunk)[-self.parent_chunk_overlap:] if self.parent_chunk_overlap > 0 else ''
+                overlap_text = (
+                    "".join(current_chunk)[-self.parent_chunk_overlap :]
+                    if self.parent_chunk_overlap > 0
+                    else ""
+                )
                 current_chunk = [overlap_text, sentence] if overlap_text else [sentence]
                 current_length = len(overlap_text) + sentence_length
             else:
@@ -327,7 +354,7 @@ class DocxParser:
 
         # 保存最后一个块
         if current_chunk:
-            parent_chunks.append(''.join(current_chunk))
+            parent_chunks.append("".join(current_chunk))
 
         return parent_chunks
 
@@ -363,14 +390,18 @@ class DocxParser:
             # 查找最佳切分点
             best_end = end
             for i in range(len(slice_text) - 1, self.sub_chunk_size - 50, -1):
-                if slice_text[i] in '。！？.!?；;':
+                if slice_text[i] in "。！？.!?；;":
                     best_end = start + i + 1
                     break
 
             sub_chunks.append(parent_text[start:best_end])
 
             # 计算下一个起始位置（考虑重叠）
-            start = best_end - self.sub_chunk_overlap if self.sub_chunk_overlap > 0 else best_end
+            start = (
+                best_end - self.sub_chunk_overlap
+                if self.sub_chunk_overlap > 0
+                else best_end
+            )
 
             # 防止死循环
             if start >= len(parent_text):
@@ -410,13 +441,15 @@ class DocxParser:
                 source_doc=source_doc,
                 page_num=None,
                 start_page=None,
-                end_page=None
+                end_page=None,
             )
             hierarchical_chunks.append(chunk)
 
         return hierarchical_chunks
 
-    def _process_text_with_pages(self, paragraphs_with_pages: List[dict], source_doc: str) -> List[HierarchicalChunk]:
+    def _process_text_with_pages(
+        self, paragraphs_with_pages: List[dict], source_doc: str
+    ) -> List[HierarchicalChunk]:
         """
         处理带页码信息的文本并创建层次化切块。
 
@@ -428,7 +461,7 @@ class DocxParser:
             层次化切块列表
         """
         # 提取所有文本用于句子切分
-        full_text = "\n\n".join([p['text'] for p in paragraphs_with_pages])
+        full_text = "\n\n".join([p["text"] for p in paragraphs_with_pages])
 
         # 第一步：句子切分
         sentences = self.split_by_sentences(full_text)
@@ -445,8 +478,8 @@ class DocxParser:
         for sentence in sentences:
             # 找到这个句子属于哪个段落
             while current_para_idx < len(paragraphs_with_pages):
-                para_text = paragraphs_with_pages[current_para_idx]['text']
-                para_page = paragraphs_with_pages[current_para_idx]['page']
+                para_text = paragraphs_with_pages[current_para_idx]["text"]
+                para_page = paragraphs_with_pages[current_para_idx]["page"]
 
                 # 在段落中查找句子
                 sentence_pos = para_text.find(sentence, current_para_offset)
@@ -459,7 +492,9 @@ class DocxParser:
                     current_para_offset = 0
             else:
                 # 如果没找到，使用最后一个段落的页码
-                sentence_pages.append(paragraphs_with_pages[-1]['page'] if paragraphs_with_pages else 1)
+                sentence_pages.append(
+                    paragraphs_with_pages[-1]["page"] if paragraphs_with_pages else 1
+                )
 
         # 第二步：创建父块
         parent_texts = []
@@ -471,13 +506,15 @@ class DocxParser:
 
         for i, sentence in enumerate(sentences):
             sentence_length = len(sentence)
-            sentence_page = sentence_pages[i] if i < len(sentence_pages) else current_start_page
+            sentence_page = (
+                sentence_pages[i] if i < len(sentence_pages) else current_start_page
+            )
 
             # 如果当前句子本身就超过父块大小，直接作为一个块
             if sentence_length >= self.parent_chunk_size:
                 # 先保存之前的累积内容
                 if current_chunk:
-                    parent_texts.append(''.join(current_chunk))
+                    parent_texts.append("".join(current_chunk))
                     parent_page_ranges.append((current_start_page, sentence_page))
                     current_chunk = []
                     current_length = 0
@@ -487,13 +524,20 @@ class DocxParser:
                 continue
 
             # 检查加入当前句子后是否会超过限制
-            if current_length + sentence_length > self.parent_chunk_size and current_chunk:
+            if (
+                current_length + sentence_length > self.parent_chunk_size
+                and current_chunk
+            ):
                 # 保存当前块
-                parent_texts.append(''.join(current_chunk))
+                parent_texts.append("".join(current_chunk))
                 parent_page_ranges.append((current_start_page, sentence_page))
 
                 # 保留重叠部分
-                overlap_text = ''.join(current_chunk)[-self.parent_chunk_overlap:] if self.parent_chunk_overlap > 0 else ''
+                overlap_text = (
+                    "".join(current_chunk)[-self.parent_chunk_overlap :]
+                    if self.parent_chunk_overlap > 0
+                    else ""
+                )
                 current_chunk = [overlap_text, sentence] if overlap_text else [sentence]
                 current_length = len(overlap_text) + sentence_length
                 current_start_page = sentence_page
@@ -504,12 +548,14 @@ class DocxParser:
         # 保存最后一个块
         if current_chunk:
             last_page = sentence_pages[-1] if sentence_pages else current_start_page
-            parent_texts.append(''.join(current_chunk))
+            parent_texts.append("".join(current_chunk))
             parent_page_ranges.append((current_start_page, last_page))
 
         # 第三步：为每个父块创建子块
         hierarchical_chunks = []
-        for idx, (parent_text, (start_page, end_page)) in enumerate(zip(parent_texts, parent_page_ranges)):
+        for idx, (parent_text, (start_page, end_page)) in enumerate(
+            zip(parent_texts, parent_page_ranges)
+        ):
             sub_chunks = self.create_sub_chunks(parent_text)
 
             chunk = HierarchicalChunk(
@@ -519,13 +565,15 @@ class DocxParser:
                 source_doc=source_doc,
                 page_num=start_page,  # 主页码使用起始页
                 start_page=start_page,
-                end_page=end_page
+                end_page=end_page,
             )
             hierarchical_chunks.append(chunk)
 
         return hierarchical_chunks
 
-    def parse(self, file_path: str, extract_page_info: bool = True) -> List[HierarchicalChunk]:
+    def parse(
+        self, file_path: str, extract_page_info: bool = True
+    ) -> List[HierarchicalChunk]:
         """
         解析 DOCX 文件并创建层次化切块。
 
@@ -543,7 +591,12 @@ class DocxParser:
             text = self.parse_docx(file_path)
             return self._process_text(text, file_path)
 
-    def parse_bytes(self, file_bytes: bytes, source_doc: str = "uploaded_doc.docx", extract_page_info: bool = True) -> List[HierarchicalChunk]:
+    def parse_bytes(
+        self,
+        file_bytes: bytes,
+        source_doc: str = "uploaded_doc.docx",
+        extract_page_info: bool = True,
+    ) -> List[HierarchicalChunk]:
         """
         从字节流解析文档。
 
@@ -563,7 +616,9 @@ class DocxParser:
             text = self.parse_docx_bytes(file_bytes)
             return self._process_text(text, source_doc)
 
-    def _process_text_with_page_estimate(self, text: str, source_doc: str, chars_per_page: int = 1800) -> List[HierarchicalChunk]:
+    def _process_text_with_page_estimate(
+        self, text: str, source_doc: str, chars_per_page: int = 1800
+    ) -> List[HierarchicalChunk]:
         """
         基于字符数估算页码信息处理文本。
 
@@ -604,14 +659,16 @@ class DocxParser:
             if sentence_length >= self.parent_chunk_size:
                 # 先保存之前的累积内容
                 if current_chunk:
-                    parent_texts.append(''.join(current_chunk))
+                    parent_texts.append("".join(current_chunk))
                     parent_page_ranges.append((current_start_page, sentence_start_page))
                     current_chunk = []
                     current_length = 0
 
                 # 将长句子作为一个独立块
                 parent_texts.append(sentence)
-                sentence_end_page = ((current_char_total + sentence_length) // CHARS_PER_PAGE) + 1
+                sentence_end_page = (
+                    (current_char_total + sentence_length) // CHARS_PER_PAGE
+                ) + 1
                 parent_page_ranges.append((sentence_start_page, sentence_end_page))
 
                 current_char_total += sentence_length
@@ -619,13 +676,20 @@ class DocxParser:
                 continue
 
             # 检查加入当前句子后是否会超过限制
-            if current_length + sentence_length > self.parent_chunk_size and current_chunk:
+            if (
+                current_length + sentence_length > self.parent_chunk_size
+                and current_chunk
+            ):
                 # 保存当前块
-                parent_texts.append(''.join(current_chunk))
+                parent_texts.append("".join(current_chunk))
                 parent_page_ranges.append((current_start_page, sentence_start_page))
 
                 # 保留重叠部分
-                overlap_text = ''.join(current_chunk)[-self.parent_chunk_overlap:] if self.parent_chunk_overlap > 0 else ''
+                overlap_text = (
+                    "".join(current_chunk)[-self.parent_chunk_overlap :]
+                    if self.parent_chunk_overlap > 0
+                    else ""
+                )
                 current_chunk = [overlap_text, sentence] if overlap_text else [sentence]
                 current_length = len(overlap_text) + sentence_length
                 current_start_page = sentence_start_page
@@ -638,12 +702,14 @@ class DocxParser:
         # 保存最后一个块
         if current_chunk:
             last_page = (current_char_total // CHARS_PER_PAGE) + 1
-            parent_texts.append(''.join(current_chunk))
+            parent_texts.append("".join(current_chunk))
             parent_page_ranges.append((current_start_page, last_page))
 
         # 第三步：为每个父块创建子块
         hierarchical_chunks = []
-        for idx, (parent_text, (start_page, end_page)) in enumerate(zip(parent_texts, parent_page_ranges)):
+        for idx, (parent_text, (start_page, end_page)) in enumerate(
+            zip(parent_texts, parent_page_ranges)
+        ):
             sub_chunks = self.create_sub_chunks(parent_text)
 
             chunk = HierarchicalChunk(
@@ -653,13 +719,15 @@ class DocxParser:
                 source_doc=source_doc,
                 page_num=start_page,
                 start_page=start_page,
-                end_page=end_page
+                end_page=end_page,
             )
             hierarchical_chunks.append(chunk)
 
         return hierarchical_chunks
 
-    def get_all_sub_chunks(self, hierarchical_chunks: List[HierarchicalChunk]) -> List[dict]:
+    def get_all_sub_chunks(
+        self, hierarchical_chunks: List[HierarchicalChunk]
+    ) -> List[dict]:
         """
         获取所有子块，包含元数据（包含页码信息）。
 
@@ -673,16 +741,18 @@ class DocxParser:
 
         for chunk in hierarchical_chunks:
             for sub_idx, sub_text in enumerate(chunk.sub_chunks):
-                sub_chunks_with_meta.append({
-                    'text': sub_text,
-                    'parent_text': chunk.parent_text,
-                    'parent_index': chunk.parent_index,
-                    'sub_index': sub_idx,
-                    'source_doc': chunk.source_doc,
-                    'page_num': chunk.page_num,
-                    'start_page': chunk.start_page,
-                    'end_page': chunk.end_page
-                })
+                sub_chunks_with_meta.append(
+                    {
+                        "text": sub_text,
+                        "parent_text": chunk.parent_text,
+                        "parent_index": chunk.parent_index,
+                        "sub_index": sub_idx,
+                        "source_doc": chunk.source_doc,
+                        "page_num": chunk.page_num,
+                        "start_page": chunk.start_page,
+                        "end_page": chunk.end_page,
+                    }
+                )
 
         return sub_chunks_with_meta
 
@@ -721,7 +791,9 @@ class DocumentSegmentation(DocxParser):
         hierarchical_chunks = self.segment_text(text, source_doc)
         return self.get_all_sub_chunks(hierarchical_chunks)
 
-    def segment_text_with_page_count(self, text: str, source_doc: str = "", total_pages: int = 0) -> List[HierarchicalChunk]:
+    def segment_text_with_page_count(
+        self, text: str, source_doc: str = "", total_pages: int = 0
+    ) -> List[HierarchicalChunk]:
         """
         根据总页数动态估算每页字符数，再执行带页码的父子块切分。
 
@@ -737,14 +809,16 @@ class DocumentSegmentation(DocxParser):
             return []
         if total_pages > 0:
             chars_per_page = math.ceil(len(text) / total_pages)
-            return self._process_text_with_page_estimate(text, source_doc, chars_per_page=chars_per_page)
+            return self._process_text_with_page_estimate(
+                text, source_doc, chars_per_page=chars_per_page
+            )
         return self._process_text_with_page_estimate(text, source_doc)
 
 
 # 便捷函数
-def parse_docx(file_path: str,
-               parent_chunk_size: int = 1200,
-               sub_chunk_size: int = 300) -> List[HierarchicalChunk]:
+def parse_docx(
+    file_path: str, parent_chunk_size: int = 1200, sub_chunk_size: int = 300
+) -> List[HierarchicalChunk]:
     """
     便捷函数：使用 Docling 解析并分块 DOCX 文件。
 
@@ -760,10 +834,12 @@ def parse_docx(file_path: str,
     return parser.parse(file_path)
 
 
-def parse_docx_bytes(file_bytes: bytes,
-                     source_doc: str = "uploaded_doc.docx",
-                     parent_chunk_size: int = 1200,
-                     sub_chunk_size: int = 300) -> List[HierarchicalChunk]:
+def parse_docx_bytes(
+    file_bytes: bytes,
+    source_doc: str = "uploaded_doc.docx",
+    parent_chunk_size: int = 1200,
+    sub_chunk_size: int = 300,
+) -> List[HierarchicalChunk]:
     """
     便捷函数：使用 Docling 从字节流解析并分块 DOCX。
 
@@ -778,4 +854,3 @@ def parse_docx_bytes(file_bytes: bytes,
     """
     parser = DocxParser(parent_chunk_size, sub_chunk_size)
     return parser.parse_bytes(file_bytes, source_doc)
-

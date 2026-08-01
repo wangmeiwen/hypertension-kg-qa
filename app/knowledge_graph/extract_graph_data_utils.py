@@ -18,16 +18,22 @@
 - HypertensionKnowledgeGraph: 知识图谱数据结构
 
 """
+
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from typing import Any, Dict, List, Optional, Tuple, Literal, Callable
 import json
 import logging
 
 from langchain_openai import ChatOpenAI
+
 from app.core.config import Config
 from app.core.perf_logger import log_duration
+from app.knowledge_graph.graph_quality import (
+    GraphSourceContext,
+    stage_graph_extraction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,29 +46,29 @@ _default_llm_bundle: Optional[Dict[str, Any]] = None
 # 枚举定义：实体类型
 #
 EntityType = Literal[
-    "Disease",             # 高血压、继发性高血压、糖尿病、慢性肾病等
-    "DiseaseStage",        # 高血压分期
-    "DiseaseGrade",        # 高血压分级（1级/2级/3级等）
+    "Disease",  # 高血压、继发性高血压、糖尿病、慢性肾病等
+    "DiseaseStage",  # 高血压分期
+    "DiseaseGrade",  # 高血压分级（1级/2级/3级等）
     "RiskStratification",  # 心血管风险分层（低危/中危/高危/很高危）
-    "Phenotype",           # 白大衣性高血压、隐蔽性高血压、夜间高血压、单纯收缩期高血压等
-    "BloodPressurePattern",# 清晨高血压、夜间高血压、勺型/非勺型等模式
-    "Symptom",             # 头晕、头痛、心悸
-    "RiskFactor",          # 高盐饮食、肥胖、吸烟、家族史、过量饮酒
-    "Complication",        # 脑卒中、心衰、慢性肾病
-    "TargetOrganDamage",   # 左室肥厚、蛋白尿、视网膜病变、动脉硬化等
-    "Check",               # 动态血压监测、家庭血压监测、肾功能检查、眼底检查
-    "MeasurementMethod",   # 诊室血压、AOBP、ABPM、HBPM 等测量方式
-    "Indicator",           # 收缩压、舒张压、UACR、eGFR、LVMI
+    "Phenotype",  # 白大衣性高血压、隐蔽性高血压、夜间高血压、单纯收缩期高血压等
+    "BloodPressurePattern",  # 清晨高血压、夜间高血压、勺型/非勺型等模式
+    "Symptom",  # 头晕、头痛、心悸
+    "RiskFactor",  # 高盐饮食、肥胖、吸烟、家族史、过量饮酒
+    "Complication",  # 脑卒中、心衰、慢性肾病
+    "TargetOrganDamage",  # 左室肥厚、蛋白尿、视网膜病变、动脉硬化等
+    "Check",  # 动态血压监测、家庭血压监测、肾功能检查、眼底检查
+    "MeasurementMethod",  # 诊室血压、AOBP、ABPM、HBPM 等测量方式
+    "Indicator",  # 收缩压、舒张压、UACR、eGFR、LVMI
     "MeasurementContext",  # 诊室血压、家庭血压、动态血压、夜间血压、清晨血压
-    "ThresholdRule",       # 阈值规则实体
-    "Drug",                # 氨氯地平、缬沙坦
-    "DrugClass",           # ACEI、ARB、CCB、利尿剂、β受体阻滞剂
-    "Reaction",            # 踝部水肿、干咳、高尿酸血症
-    "TreatmentPlan",       # 生活方式干预、联合降压方案、随访管理方案
-    "PatientProfile",      # 老年高血压患者、妊娠高血压患者、合并糖尿病患者
-    "ClinicalRule",        # 用药规则、分层规则、检查规则、随访规则
-    "Guideline",           # 指南
-    "Source"               # 文献、数据库、网页、病例来源
+    "ThresholdRule",  # 阈值规则实体
+    "Drug",  # 氨氯地平、缬沙坦
+    "DrugClass",  # ACEI、ARB、CCB、利尿剂、β受体阻滞剂
+    "Reaction",  # 踝部水肿、干咳、高尿酸血症
+    "TreatmentPlan",  # 生活方式干预、联合降压方案、随访管理方案
+    "PatientProfile",  # 老年高血压患者、妊娠高血压患者、合并糖尿病患者
+    "ClinicalRule",  # 用药规则、分层规则、检查规则、随访规则
+    "Guideline",  # 指南
+    "Source",  # 文献、数据库、网页、病例来源
 ]
 
 
@@ -70,44 +76,40 @@ EntityType = Literal[
 # 枚举定义：关系类型
 #
 RelationType = Literal[
-    "HAS_STAGE",                 # 疾病 -> 疾病分期
-    "HAS_GRADE",                 # 疾病/患者画像 -> 疾病分级
-    "HAS_RISK_STRATIFICATION",   # 疾病/患者画像 -> 风险分层
-    "HAS_PHENOTYPE",             # 疾病 -> 临床表型
-    "HAS_BP_PATTERN",            # 疾病/患者画像 -> 血压模式
-    "HAS_SYMPTOM",               # 疾病 -> 症状
-    "HAS_RISK_FACTOR",           # 疾病 -> 危险因素
-    "HAS_COMPLICATION",          # 疾病 -> 并发症
-    "HAS_TARGET_ORGAN_DAMAGE",   # 疾病 -> 靶器官损害
-
-    "NEEDS_CHECK",               # 疾病/患者画像 -> 检查项目
-    "DIAGNOSED_BY_METHOD",       # 疾病/表型/血压模式 -> 测量方式
-    "HAS_INDICATOR",             # 疾病/检查/靶器官损害 -> 指标
-    "METHOD_MEASURES",           # 测量方式/检查 -> 指标
-    "MEASURED_IN_CONTEXT",       # 指标/检查 -> 测量场景
-    "HAS_THRESHOLD",             # 疾病/表型/指标/场景 -> 阈值规则
-    "HAS_CONTROL_TARGET",        # 疾病/患者画像/血压模式 -> 血压控制目标
-    "START_TREATMENT_AT",        # 疾病/患者画像 -> 启动治疗阈值
-    "IDENTIFIED_BY",             # 表型/靶器官损害 -> 检查项目
-
-    "COMMON_DRUG",               # 疾病 -> 常用药物
-    "BELONGS_TO_CLASS",          # 药物 -> 药物类别
-    "MAY_CAUSE_REACTION",        # 药物 -> 不良反应
-    "TREATS_DISEASE",            # 药物/方案 -> 治疗疾病
-    "SUITABLE_FOR_PROFILE",      # 药物/方案 -> 适用患者画像
-
-    "HAS_COMORBIDITY",           # 患者画像 -> 合并疾病
-    "HAS_TRIGGER",               # 临床规则 -> 触发条件
-    "APPLIES_TO_DISEASE",        # 临床规则 -> 适用疾病
-    "APPLIES_TO_PROFILE",        # 临床规则 -> 适用患者画像
-    "RECOMMENDS_DRUG",           # 临床规则 -> 推荐药物
-    "RECOMMENDS_DRUG_CLASS",     # 临床规则 -> 推荐药物类别
-    "RECOMMENDS_CHECK",          # 临床规则 -> 推荐检查
-    "RECOMMENDS_PLAN",           # 临床规则 -> 推荐治疗方案
-
-    "FROM_GUIDELINE",            # 实体/规则 -> 指南
-    "FROM_SOURCE",               # 实体/规则 -> 来源
-    "SUPPORTED_BY"               # 实体/规则 -> 被来源支持
+    "HAS_STAGE",  # 疾病 -> 疾病分期
+    "HAS_GRADE",  # 疾病/患者画像 -> 疾病分级
+    "HAS_RISK_STRATIFICATION",  # 疾病/患者画像 -> 风险分层
+    "HAS_PHENOTYPE",  # 疾病 -> 临床表型
+    "HAS_BP_PATTERN",  # 疾病/患者画像 -> 血压模式
+    "HAS_SYMPTOM",  # 疾病 -> 症状
+    "HAS_RISK_FACTOR",  # 疾病 -> 危险因素
+    "HAS_COMPLICATION",  # 疾病 -> 并发症
+    "HAS_TARGET_ORGAN_DAMAGE",  # 疾病 -> 靶器官损害
+    "NEEDS_CHECK",  # 疾病/患者画像 -> 检查项目
+    "DIAGNOSED_BY_METHOD",  # 疾病/表型/血压模式 -> 测量方式
+    "HAS_INDICATOR",  # 疾病/检查/靶器官损害 -> 指标
+    "METHOD_MEASURES",  # 测量方式/检查 -> 指标
+    "MEASURED_IN_CONTEXT",  # 指标/检查 -> 测量场景
+    "HAS_THRESHOLD",  # 疾病/表型/指标/场景 -> 阈值规则
+    "HAS_CONTROL_TARGET",  # 疾病/患者画像/血压模式 -> 血压控制目标
+    "START_TREATMENT_AT",  # 疾病/患者画像 -> 启动治疗阈值
+    "IDENTIFIED_BY",  # 表型/靶器官损害 -> 检查项目
+    "COMMON_DRUG",  # 疾病 -> 常用药物
+    "BELONGS_TO_CLASS",  # 药物 -> 药物类别
+    "MAY_CAUSE_REACTION",  # 药物 -> 不良反应
+    "TREATS_DISEASE",  # 药物/方案 -> 治疗疾病
+    "SUITABLE_FOR_PROFILE",  # 药物/方案 -> 适用患者画像
+    "HAS_COMORBIDITY",  # 患者画像 -> 合并疾病
+    "HAS_TRIGGER",  # 临床规则 -> 触发条件
+    "APPLIES_TO_DISEASE",  # 临床规则 -> 适用疾病
+    "APPLIES_TO_PROFILE",  # 临床规则 -> 适用患者画像
+    "RECOMMENDS_DRUG",  # 临床规则 -> 推荐药物
+    "RECOMMENDS_DRUG_CLASS",  # 临床规则 -> 推荐药物类别
+    "RECOMMENDS_CHECK",  # 临床规则 -> 推荐检查
+    "RECOMMENDS_PLAN",  # 临床规则 -> 推荐治疗方案
+    "FROM_GUIDELINE",  # 实体/规则 -> 指南
+    "FROM_SOURCE",  # 实体/规则 -> 来源
+    "SUPPORTED_BY",  # 实体/规则 -> 被来源支持
 ]
 
 
@@ -170,7 +172,7 @@ def create_graph_llm_bundle(
         Dict[str, Any]: 包含 LLM 实例、主抽取链、漏抽判定链和补抽链的 bundle。
     """
     llm = ChatOpenAI(
-        api_key=api_key,
+        api_key=SecretStr(api_key),
         base_url=base_url,
         model=model_name,
         timeout=timeout,
@@ -213,15 +215,14 @@ primary_prompt = PromptTemplate(
     template=(
         "你是一个高血压临床知识图谱抽取专家。请从输入文本中抽取结构化知识。\n"
         "你的目标不是泛泛抽名词，而是抽取“实体 + 明确关系 + 可追溯来源”的临床知识。\n\n"
-
         "【核心原则】\n"
         "1. 只抽取文本中明确表达的关系，禁止依赖常识补全。\n"
         "2. 若文本只列举概念、没有形成明确关系，返回空结构：\n"
-        "{{\"entities\": [], \"relations\": []}}\n"
+        '{{"entities": [], "relations": []}}\n'
         "3. 严格去重：同名同类型实体只保留一个。\n"
         "4. 若同一实体同时有中文名和英文缩写，name 保留正文主名，另一个放入 canonical_name 或 attributes.alias。\n"
         "5. 若文本中有指南、文献、数据库、PMID、DOI、URL、章节号、发布机构等来源信息，尽量创建 Guideline 或 Source 实体，并建立来源关系。\n\n"
-
+        "6. 每个输出实体必须至少作为一条 relations 的 subject 或 object；不要输出没有关系的孤立名词。\n\n"
         "【抽取范围】\n"
         "面向高血压领域，抽取以下内容：\n"
         "- 疾病及其表型\n"
@@ -232,7 +233,6 @@ primary_prompt = PromptTemplate(
         "- 药物、药物类别、不良反应、治疗方案\n"
         "- 患者画像、复杂临床规则\n"
         "- 指南/文献/数据库等证据来源\n\n"
-
         "【实体类型说明】\n"
         "- Disease：疾病，如高血压、继发性高血压、糖尿病、慢性肾病\n"
         "- DiseaseStage：疾病分期，如高血压前期、确诊期等\n"
@@ -257,7 +257,6 @@ primary_prompt = PromptTemplate(
         "- ClinicalRule：复杂临床规则实体，用于承载“什么患者/什么条件下推荐什么”的规则\n"
         "- Guideline：指南实体\n"
         "- Source：文献、数据库、网页、病例来源\n\n"
-
         "【关系类型说明】\n"
         "- HAS_STAGE：疾病具有某分期\n"
         "- HAS_GRADE：疾病或患者画像具有某分级\n"
@@ -293,7 +292,6 @@ primary_prompt = PromptTemplate(
         "- FROM_GUIDELINE：实体或规则来源于某指南\n"
         "- FROM_SOURCE：实体或规则来源于某来源\n"
         "- SUPPORTED_BY：实体或规则被某来源支持\n\n"
-
         "【关键约束】\n"
         "1. 严格区分 Check 与 Indicator。\n"
         "   - Check 是检查项目或检查方法\n"
@@ -313,9 +311,7 @@ primary_prompt = PromptTemplate(
         "   - ClinicalRule -> HAS_TRIGGER -> 尿白蛋白升高\n"
         "   - ClinicalRule -> RECOMMENDS_DRUG_CLASS -> ACEI / ARB\n"
         "   不要简单压缩成“高血压 -> COMMON_DRUG -> ACEI”。\n\n"
-
         "6. 若文本明确出现推荐类别、推荐强度、证据等级、章节、页码等，应尽量写入 attributes。\n\n"
-
         "【attributes 字段建议】\n"
         "所有实体和关系都允许使用 attributes 承载补充信息，常见字段可包括但不限于：\n"
         "- alias\n"
@@ -334,6 +330,7 @@ primary_prompt = PromptTemplate(
         "- recommendation\n"
         "- recommendation_class\n"
         "- evidence_level\n"
+        "- confidence（0 到 1 之间的数值）\n"
         "- source_type\n"
         "- title\n"
         "- organization\n"
@@ -343,78 +340,74 @@ primary_prompt = PromptTemplate(
         "- pmid\n"
         "- url\n"
         "- note\n\n"
-
+        "attributes 中的 year 必须是四位年份；confidence 必须在 0 到 1 之间。"
+        "不要自行生成 source_id、source_hash、source_chunk_index、extracted_at 或 extraction_model，"
+        "这些可信来源字段由导入服务统一注入。\n\n"
         "【示例：文本 -> 抽取结果】\n"
         "示例1（复杂规则）：\n"
         "输入文本：\n"
         "对于合并糖尿病且尿白蛋白升高的高血压患者，优先考虑 ACEI 或 ARB。\n"
         "示例输出：\n"
         "{{\n"
-        "  \"entities\": [\n"
-        "    {{\"name\": \"高血压\", \"type\": \"Disease\"}},\n"
-        "    {{\"name\": \"合并糖尿病患者\", \"type\": \"PatientProfile\", \"attributes\": {{\"condition\": \"高血压\", \"has_comorbidity\": \"糖尿病\"}}}},\n"
-        "    {{\"name\": \"尿白蛋白升高\", \"type\": \"Indicator\"}},\n"
-        "    {{\"name\": \"优先用药规则\", \"type\": \"ClinicalRule\", \"attributes\": {{\"recommendation\": \"优先考虑\"}}}},\n"
-        "    {{\"name\": \"ACEI\", \"type\": \"DrugClass\"}},\n"
-        "    {{\"name\": \"ARB\", \"type\": \"DrugClass\"}}\n"
+        '  "entities": [\n'
+        '    {{"name": "高血压", "type": "Disease"}},\n'
+        '    {{"name": "合并糖尿病患者", "type": "PatientProfile", "attributes": {{"condition": "高血压", "has_comorbidity": "糖尿病"}}}},\n'
+        '    {{"name": "尿白蛋白升高", "type": "Indicator"}},\n'
+        '    {{"name": "优先用药规则", "type": "ClinicalRule", "attributes": {{"recommendation": "优先考虑"}}}},\n'
+        '    {{"name": "ACEI", "type": "DrugClass"}},\n'
+        '    {{"name": "ARB", "type": "DrugClass"}}\n'
         "  ],\n"
-        "  \"relations\": [\n"
-        "    {{\"subject\": \"优先用药规则\", \"subject_type\": \"ClinicalRule\", \"relation\": \"APPLIES_TO_DISEASE\", \"object\": \"高血压\", \"object_type\": \"Disease\"}},\n"
-        "    {{\"subject\": \"优先用药规则\", \"subject_type\": \"ClinicalRule\", \"relation\": \"APPLIES_TO_PROFILE\", \"object\": \"合并糖尿病患者\", \"object_type\": \"PatientProfile\"}},\n"
-        "    {{\"subject\": \"优先用药规则\", \"subject_type\": \"ClinicalRule\", \"relation\": \"HAS_TRIGGER\", \"object\": \"尿白蛋白升高\", \"object_type\": \"Indicator\"}},\n"
-        "    {{\"subject\": \"优先用药规则\", \"subject_type\": \"ClinicalRule\", \"relation\": \"RECOMMENDS_DRUG_CLASS\", \"object\": \"ACEI\", \"object_type\": \"DrugClass\"}},\n"
-        "    {{\"subject\": \"优先用药规则\", \"subject_type\": \"ClinicalRule\", \"relation\": \"RECOMMENDS_DRUG_CLASS\", \"object\": \"ARB\", \"object_type\": \"DrugClass\"}}\n"
+        '  "relations": [\n'
+        '    {{"subject": "优先用药规则", "subject_type": "ClinicalRule", "relation": "APPLIES_TO_DISEASE", "object": "高血压", "object_type": "Disease"}},\n'
+        '    {{"subject": "优先用药规则", "subject_type": "ClinicalRule", "relation": "APPLIES_TO_PROFILE", "object": "合并糖尿病患者", "object_type": "PatientProfile"}},\n'
+        '    {{"subject": "优先用药规则", "subject_type": "ClinicalRule", "relation": "HAS_TRIGGER", "object": "尿白蛋白升高", "object_type": "Indicator"}},\n'
+        '    {{"subject": "优先用药规则", "subject_type": "ClinicalRule", "relation": "RECOMMENDS_DRUG_CLASS", "object": "ACEI", "object_type": "DrugClass"}},\n'
+        '    {{"subject": "优先用药规则", "subject_type": "ClinicalRule", "relation": "RECOMMENDS_DRUG_CLASS", "object": "ARB", "object_type": "DrugClass"}}\n'
         "  ]\n"
         "}}\n\n"
-
         "示例2（阈值与测量场景）：\n"
         "输入文本：\n"
         "家庭血压 ≥ 135/85 mmHg 可作为高血压诊断阈值之一。\n"
         "示例输出：\n"
         "{{\n"
-        "  \"entities\": [\n"
-        "    {{\"name\": \"高血压\", \"type\": \"Disease\"}},\n"
-        "    {{\"name\": \"家庭血压\", \"type\": \"MeasurementContext\"}},\n"
-        "    {{\"name\": \"家庭血压高血压诊断阈值\", \"type\": \"ThresholdRule\", \"attributes\": {{\"systolic\": \"135\", \"diastolic\": \"85\", \"unit\": \"mmHg\", \"threshold_type\": \"diagnostic\"}}}}\n"
+        '  "entities": [\n'
+        '    {{"name": "高血压", "type": "Disease"}},\n'
+        '    {{"name": "家庭血压", "type": "MeasurementContext"}},\n'
+        '    {{"name": "家庭血压高血压诊断阈值", "type": "ThresholdRule", "attributes": {{"systolic": "135", "diastolic": "85", "unit": "mmHg", "threshold_type": "diagnostic"}}}}\n'
         "  ],\n"
-        "  \"relations\": [\n"
-        "    {{\"subject\": \"高血压\", \"subject_type\": \"Disease\", \"relation\": \"HAS_THRESHOLD\", \"object\": \"家庭血压高血压诊断阈值\", \"object_type\": \"ThresholdRule\"}},\n"
-        "    {{\"subject\": \"家庭血压高血压诊断阈值\", \"subject_type\": \"ThresholdRule\", \"relation\": \"MEASURED_IN_CONTEXT\", \"object\": \"家庭血压\", \"object_type\": \"MeasurementContext\"}}\n"
+        '  "relations": [\n'
+        '    {{"subject": "高血压", "subject_type": "Disease", "relation": "HAS_THRESHOLD", "object": "家庭血压高血压诊断阈值", "object_type": "ThresholdRule"}},\n'
+        '    {{"subject": "家庭血压高血压诊断阈值", "subject_type": "ThresholdRule", "relation": "MEASURED_IN_CONTEXT", "object": "家庭血压", "object_type": "MeasurementContext"}}\n'
         "  ]\n"
         "}}\n\n"
-
         "示例3（药物类别与不良反应）：\n"
         "输入文本：\n"
         "氨氯地平属于 CCB，可能引起踝部水肿。\n"
         "示例输出：\n"
         "{{\n"
-        "  \"entities\": [\n"
-        "    {{\"name\": \"氨氯地平\", \"type\": \"Drug\"}},\n"
-        "    {{\"name\": \"CCB\", \"type\": \"DrugClass\"}},\n"
-        "    {{\"name\": \"踝部水肿\", \"type\": \"Reaction\"}}\n"
+        '  "entities": [\n'
+        '    {{"name": "氨氯地平", "type": "Drug"}},\n'
+        '    {{"name": "CCB", "type": "DrugClass"}},\n'
+        '    {{"name": "踝部水肿", "type": "Reaction"}}\n'
         "  ],\n"
-        "  \"relations\": [\n"
-        "    {{\"subject\": \"氨氯地平\", \"subject_type\": \"Drug\", \"relation\": \"BELONGS_TO_CLASS\", \"object\": \"CCB\", \"object_type\": \"DrugClass\"}},\n"
-        "    {{\"subject\": \"氨氯地平\", \"subject_type\": \"Drug\", \"relation\": \"MAY_CAUSE_REACTION\", \"object\": \"踝部水肿\", \"object_type\": \"Reaction\"}}\n"
+        '  "relations": [\n'
+        '    {{"subject": "氨氯地平", "subject_type": "Drug", "relation": "BELONGS_TO_CLASS", "object": "CCB", "object_type": "DrugClass"}},\n'
+        '    {{"subject": "氨氯地平", "subject_type": "Drug", "relation": "MAY_CAUSE_REACTION", "object": "踝部水肿", "object_type": "Reaction"}}\n'
         "  ]\n"
         "}}\n\n"
-
         "说明：以上示例用于格式与关系建模参考，不要求逐字段照搬；但关系方向、实体类型、关系类型必须一致。\n\n"
-
         "【执行步骤】\n"
         "1. 先识别实体，再建立关系，最后做一致性校验。\n"
         "2. 关系中的 subject/object 必须与 entities 中某实体同名且类型匹配。\n"
         "3. 若关系已识别但实体遗漏，必须补齐对应实体。\n"
         "4. 如无可抽取关系，返回空结构。\n\n"
-
         "【输出要求】\n"
         "所有输出必须严格符合以下 JSON 格式：\n"
         "{format_instructions}\n\n"
-
         "输入文本：\n{text}"
     ),
     input_variables=["text"],
-    partial_variables={"format_instructions": parser.get_format_instructions()}
+    partial_variables={"format_instructions": parser.get_format_instructions()},
 )
 
 
@@ -425,11 +418,12 @@ omission_judge_prompt = PromptTemplate(
     template=(
         "你是知识图谱抽取质检专家。\n"
         "给定原文与当前抽取结果，判断是否还存在明确可抽取但未抽取的实体或关系。\n"
+        "只有能组成有效“实体-关系-实体”三元组的事实才算遗漏，孤立实体不算遗漏。\n"
         "仅输出 YES 或 NO，不要输出其他内容。\n\n"
         "原文：\n{text}\n\n"
         "当前抽取结果：\n{draft_json}"
     ),
-    input_variables=["text", "draft_json"]
+    input_variables=["text", "draft_json"],
 )
 
 
@@ -441,16 +435,17 @@ supplement_prompt = PromptTemplate(
         "你是高血压知识图谱补抽专家。\n"
         "请基于原文与当前抽取结果，只输出遗漏的增量实体与增量关系。\n"
         "禁止重复输出已存在项。\n"
-        "若无增量，返回：{{\"entities\": [], \"relations\": []}}\n\n"
+        '若无增量，返回：{{"entities": [], "relations": []}}\n\n'
         "一致性要求：\n"
         "1. 新关系中的 subject/object 必须在增量 entities 或当前结果 entities 中存在。\n"
-        "2. 仅保留文本中明确表达的事实，禁止常识补全。\n\n"
+        "2. 仅保留文本中明确表达的事实，禁止常识补全。\n"
+        "3. 每个增量实体必须至少参与一条当前或增量关系，禁止输出孤立实体。\n\n"
         "当前抽取结果（仅供参考去重）：\n{draft_json}\n\n"
         "原文：\n{text}\n\n"
         "输出必须严格符合：\n{format_instructions}"
     ),
     input_variables=["text", "draft_json"],
-    partial_variables={"format_instructions": parser.get_format_instructions()}
+    partial_variables={"format_instructions": parser.get_format_instructions()},
 )
 
 
@@ -462,6 +457,7 @@ def _emit_stage_event(
     action: str,
     stage: str,
     detail: str,
+    metrics: Optional[dict[str, Any]] = None,
 ) -> None:
     """安全触发阶段事件回调。
 
@@ -470,6 +466,7 @@ def _emit_stage_event(
         action: 阶段动作。
         stage: 阶段名称。
         detail: 阶段说明。
+        metrics: 可选阶段质量指标。
 
     Returns:
         None: 无返回值。
@@ -477,8 +474,16 @@ def _emit_stage_event(
     if not stage_callback:
         return
     try:
-        stage_callback(action, stage, detail, detail)
-    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError):
+        stage_callback(action, stage, detail, detail, metrics)
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OSError,
+        ImportError,
+    ):
         logger.debug("kg.stage_callback_failed", exc_info=True)
 
 
@@ -507,10 +512,14 @@ def extract_hypertension_knowledge(
     judge_chain = bundle["judge_chain"]
     supplement_chain = bundle["supplement_chain"]
 
-    _emit_stage_event(stage_callback, "enter", "kg_primary_extract", "正在执行图谱主抽取")
+    _emit_stage_event(
+        stage_callback, "enter", "kg_primary_extract", "正在执行图谱主抽取"
+    )
     with log_duration("kg.llm_extract.primary", text_len=len(text)):
         primary_result = primary_chain.invoke({"text": text})
-    _emit_stage_event(stage_callback, "complete", "kg_primary_extract", "图谱主抽取完成")
+    _emit_stage_event(
+        stage_callback, "complete", "kg_primary_extract", "图谱主抽取完成"
+    )
 
     merged_result = normalize_extraction_result(primary_result)
     glean_times = max(0, int(max_gleanings))
@@ -544,7 +553,9 @@ def extract_hypertension_knowledge(
                 f"正在执行补抽（第 {round_index + 1}/{glean_times} 轮）",
             )
             with log_duration("kg.llm_extract.supplement", text_len=len(text)):
-                delta_result = supplement_chain.invoke({"text": text, "draft_json": draft_json})
+                delta_result = supplement_chain.invoke(
+                    {"text": text, "draft_json": draft_json}
+                )
             _emit_stage_event(
                 stage_callback,
                 "complete",
@@ -553,7 +564,15 @@ def extract_hypertension_knowledge(
             )
             normalized_delta = normalize_extraction_result(delta_result)
             merged_result = merge_extraction_results(merged_result, normalized_delta)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as e:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as e:
             logger.exception(
                 "补抽阶段失败。error_type=%s, error=%s",
                 type(e).__name__,
@@ -596,30 +615,31 @@ def normalize_extraction_result(result: Any) -> Dict[str, List[dict]]:
     for e in entities:
         if not isinstance(e, dict):
             continue
-        normalized_entities.append({
-            "name": str(e.get("name") or "").strip(),
-            "type": str(e.get("type") or "").strip(),
-            "canonical_name": str(e.get("canonical_name") or "").strip() or None,
-            "attributes": e.get("attributes") or {}
-        })
+        normalized_entities.append(
+            {
+                "name": str(e.get("name") or "").strip(),
+                "type": str(e.get("type") or "").strip(),
+                "canonical_name": str(e.get("canonical_name") or "").strip() or None,
+                "attributes": e.get("attributes") or {},
+            }
+        )
 
     normalized_relations = []
     for r in relations:
         if not isinstance(r, dict):
             continue
-        normalized_relations.append({
-            "subject": str(r.get("subject") or "").strip(),
-            "subject_type": str(r.get("subject_type") or "").strip(),
-            "relation": str(r.get("relation") or "").strip(),
-            "object": str(r.get("object") or "").strip(),
-            "object_type": str(r.get("object_type") or "").strip(),
-            "attributes": r.get("attributes") or {}
-        })
+        normalized_relations.append(
+            {
+                "subject": str(r.get("subject") or "").strip(),
+                "subject_type": str(r.get("subject_type") or "").strip(),
+                "relation": str(r.get("relation") or "").strip(),
+                "object": str(r.get("object") or "").strip(),
+                "object_type": str(r.get("object_type") or "").strip(),
+                "attributes": r.get("attributes") or {},
+            }
+        )
 
-    return {
-        "entities": normalized_entities,
-        "relations": normalized_relations
-    }
+    return {"entities": normalized_entities, "relations": normalized_relations}
 
 
 #
@@ -709,7 +729,7 @@ def build_entity_map(entities: List[dict]) -> Dict[Tuple[str, str], dict]:
                 "name": name,
                 "type": entity_type,
                 "canonical_name": canonical_name,
-                "attributes": sanitize_props(entity.get("attributes") or {})
+                "attributes": sanitize_props(entity.get("attributes") or {}),
             }
         else:
             old_attrs = entity_map[key]["attributes"]
@@ -754,20 +774,22 @@ def build_relation_list(relations: List[dict]) -> List[dict]:
             relation_type,
             obj,
             object_type,
-            tuple(sorted(attributes.items()))
+            tuple(sorted(attributes.items())),
         )
         if record_key in relation_seen:
             continue
 
         relation_seen.add(record_key)
-        relation_list.append({
-            "subject": subject,
-            "subject_type": subject_type,
-            "relation": relation_type,
-            "object": obj,
-            "object_type": object_type,
-            "attributes": attributes
-        })
+        relation_list.append(
+            {
+                "subject": subject,
+                "subject_type": subject_type,
+                "relation": relation_type,
+                "object": obj,
+                "object_type": object_type,
+                "attributes": attributes,
+            }
+        )
 
     return relation_list
 
@@ -775,7 +797,9 @@ def build_relation_list(relations: List[dict]) -> List[dict]:
 #
 # 合并抽取结果
 #
-def merge_extraction_results(base_result: Dict[str, List[dict]], delta_result: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
+def merge_extraction_results(
+    base_result: Dict[str, List[dict]], delta_result: Dict[str, List[dict]]
+) -> Dict[str, List[dict]]:
     """
     合并主抽取与补抽结果，并通过现有去重逻辑统一输出。
 
@@ -786,22 +810,25 @@ def merge_extraction_results(base_result: Dict[str, List[dict]], delta_result: D
     Returns:
         合并后的抽取结果
     """
-    combined_entities = (base_result.get("entities") or []) + (delta_result.get("entities") or [])
-    combined_relations = (base_result.get("relations") or []) + (delta_result.get("relations") or [])
+    combined_entities = (base_result.get("entities") or []) + (
+        delta_result.get("entities") or []
+    )
+    combined_relations = (base_result.get("relations") or []) + (
+        delta_result.get("relations") or []
+    )
 
     entity_map = build_entity_map(combined_entities)
     relation_list = build_relation_list(combined_relations)
 
-    return {
-        "entities": list(entity_map.values()),
-        "relations": relation_list
-    }
+    return {"entities": list(entity_map.values()), "relations": relation_list}
 
 
 #
 # 构建 Neo4j 节点查询
 #
-def build_node_queries(entity_map: Dict[Tuple[str, str], dict]) -> List[Tuple[str, dict]]:
+def build_node_queries(
+    entity_map: Dict[Tuple[str, str], dict],
+) -> List[Tuple[str, dict]]:
     """
     将实体映射按标签分组，生成批量写入 Neo4j 的节点查询语句。
 
@@ -817,7 +844,7 @@ def build_node_queries(entity_map: Dict[Tuple[str, str], dict]) -> List[Tuple[st
         row = {
             "name": record["name"],
             "canonical_name": record.get("canonical_name"),
-            "props": sanitize_props(record.get("attributes") or {})
+            "props": sanitize_props(record.get("attributes") or {}),
         }
         by_label.setdefault(record["type"], []).append(row)
 
@@ -826,8 +853,13 @@ def build_node_queries(entity_map: Dict[Tuple[str, str], dict]) -> List[Tuple[st
         safe = safe_label(label)
         cypher = f"""
         UNWIND $rows AS row
-        MERGE (n:{safe} {{name: row.name}})
+        MERGE (n:KnowledgeEntity:{safe} {{name: row.name}})
         SET n += row.props
+        SET n.aliases = CASE
+            WHEN row.props.alias IS NULL OR row.props.alias = "" THEN coalesce(n.aliases, [])
+            WHEN row.props.alias IN coalesce(n.aliases, []) THEN n.aliases
+            ELSE coalesce(n.aliases, []) + row.props.alias
+        END
         SET n.canonical_name = CASE
             WHEN row.canonical_name IS NULL OR row.canonical_name = "" THEN n.canonical_name
             ELSE row.canonical_name
@@ -856,11 +888,16 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
 
     for relation in relation_list:
         key = (relation["subject_type"], relation["relation"], relation["object_type"])
-        by_triple.setdefault(key, []).append({
-            "subj": relation["subject"],
-            "obj": relation["object"],
-            "props": sanitize_props(relation.get("attributes") or {})
-        })
+        props = sanitize_props(relation.get("attributes") or {})
+        by_triple.setdefault(key, []).append(
+            {
+                "subj": relation["subject"],
+                "obj": relation["object"],
+                "source_id": props["source_id"],
+                "source_chunk_index": props["source_chunk_index"],
+                "props": props,
+            }
+        )
 
     queries: List[Tuple[str, dict]] = []
     for (subject_type, relation_type, object_type), rows in by_triple.items():
@@ -874,6 +911,15 @@ def build_relation_queries(relation_list: List[dict]) -> List[Tuple[str, dict]]:
         MATCH (b:{target_label} {{name: row.obj}})
         MERGE (a)-[r:{rel_label}]->(b)
         SET r += row.props
+        SET r.source_ids = CASE
+            WHEN row.source_id IN coalesce(r.source_ids, []) THEN r.source_ids
+            ELSE coalesce(r.source_ids, []) + row.source_id
+        END
+        SET r.source_chunk_indices = CASE
+            WHEN row.source_chunk_index IN coalesce(r.source_chunk_indices, [])
+            THEN r.source_chunk_indices
+            ELSE coalesce(r.source_chunk_indices, []) + row.source_chunk_index
+        END
         """
         queries.append((cypher.strip(), {"rows": rows}))
 
@@ -888,6 +934,8 @@ def extract_text_to_graph_queries(
     max_chars: int = 12000,
     stage_callback: Optional[Callable[..., None]] = None,
     llm_bundle: Optional[Dict[str, Any]] = None,
+    *,
+    source_context: GraphSourceContext,
 ) -> dict:
     """
     从文本抽取图谱结果并构建可直接执行的 Neo4j 节点与关系查询。
@@ -897,20 +945,36 @@ def extract_text_to_graph_queries(
         max_chars: 最大字符数限制，默认 12000
         stage_callback: 可选阶段回调，用于展示抽取和查询构建进度。
         llm_bundle: 可选模型调用链 bundle，用于并发 lane 或测试替换。
+        source_context: 当前文档和分块的可信来源上下文。
 
     Returns:
         包含抽取结果、实体映射、关系列表和查询语句的字典
     """
-    with log_duration("kg.extract_text_to_graph_queries", text_len=len(text or ""), max_chars=max_chars):
+    with log_duration(
+        "kg.extract_text_to_graph_queries",
+        text_len=len(text or ""),
+        max_chars=max_chars,
+    ):
         clean_text = (text or "").strip()
         if not clean_text:
+            staging = stage_graph_extraction(
+                {"entities": [], "relations": []}, source_context
+            )
             return {
                 "extraction": {"entities": [], "relations": []},
                 "entity_map": {},
                 "relation_list": [],
                 "node_queries": [],
                 "relation_queries": [],
-                "stats": {"entities": 0, "relations": 0}
+                "stats": {
+                    "entities": 0,
+                    "relations": 0,
+                    **staging["metrics"],
+                },
+                "quality": {
+                    "rejected": staging["rejected"],
+                    "metrics": staging["metrics"],
+                },
             }
 
         limited_text = clean_text[:max_chars]
@@ -921,27 +985,48 @@ def extract_text_to_graph_queries(
                 llm_bundle=llm_bundle,
             )
         )
-        _emit_stage_event(stage_callback, "enter", "build_neo4j_queries", "正在构建 Neo4j 节点与关系查询")
-        entity_map = build_entity_map(extraction["entities"])
-        relation_list = build_relation_list(extraction["relations"])
+        _emit_stage_event(
+            stage_callback,
+            "enter",
+            "graph_quality_staging",
+            "正在校验图谱本体、关系方向和来源",
+        )
+        staging = stage_graph_extraction(extraction, source_context)
+        accepted_extraction = {
+            "entities": staging["entities"],
+            "relations": staging["relations"],
+        }
+        entity_map = build_entity_map(accepted_extraction["entities"])
+        relation_list = build_relation_list(accepted_extraction["relations"])
         node_queries = build_node_queries(entity_map)
         relation_queries = build_relation_queries(relation_list)
-        _emit_stage_event(stage_callback, "complete", "build_neo4j_queries", "Neo4j 查询构建完成")
+        _emit_stage_event(
+            stage_callback,
+            "complete",
+            "graph_quality_staging",
+            "图谱质量校验和 Neo4j 查询构建完成",
+            metrics=dict(staging["metrics"]),
+        )
 
         logger.info(
             f"[PERF] kg.extract_text_to_graph_queries entities={len(entity_map)} relations={len(relation_list)}"
         )
 
         return {
-            "extraction": extraction,
+            "extraction": accepted_extraction,
             "entity_map": entity_map,
             "relation_list": relation_list,
             "node_queries": node_queries,
             "relation_queries": relation_queries,
             "stats": {
                 "entities": len(entity_map),
-                "relations": len(relation_list)
-            }
+                "relations": len(relation_list),
+                **staging["metrics"],
+            },
+            "quality": {
+                "rejected": staging["rejected"],
+                "metrics": staging["metrics"],
+            },
         }
 
 
@@ -952,43 +1037,43 @@ if __name__ == "__main__":
     demo_cases = [
         {
             "name": "复杂规则与来源证据",
-            "text": '''
+            "text": """
             《中国高血压防治指南》指出，对于合并糖尿病且尿白蛋白升高的高血压患者，
             优先考虑 ACEI 或 ARB。高血压患者常见症状包括头晕、头痛，长期控制不佳可并发脑卒中、
             慢性肾病。常用检查包括动态血压监测、肾功能检查。氨氯地平属于 CCB，可能引起踝部水肿。
             家庭血压 ≥ 135/85 mmHg 可作为高血压诊断阈值之一。文献 PMID:12345678 支持上述推荐。
-            '''
+            """,
         },
         {
             "name": "分级分层与启动治疗阈值",
-            "text": '''
+            "text": """
             1级高血压定义为收缩压 140-159 mmHg 和或舒张压 90-99 mmHg。
             对于心血管高危患者，当诊室血压持续 ≥140/90 mmHg 时建议启动药物治疗。
             若为中低危患者，可先进行生活方式干预并随访评估。
-            '''
+            """,
         },
         {
             "name": "测量方式与场景阈值",
-            "text": '''
+            "text": """
             ABPM 可用于识别夜间高血压和隐蔽性高血压。
             24小时动态血压平均值 ≥130/80 mmHg 可提示高血压，
             日间平均血压 ≥135/85 mmHg、夜间平均血压 ≥120/70 mmHg 也具有诊断意义。
-            '''
+            """,
         },
         {
             "name": "药物类别与不良反应",
-            "text": '''
+            "text": """
             ACEI 和 ARB 常用于高血压合并慢性肾病患者。
             ACEI 可能导致干咳，CCB 可能导致踝部水肿，
             噻嗪类利尿剂可用于联合降压治疗方案。
-            '''
+            """,
         },
         {
             "name": "仅概念列举（应尽量返回空结构）",
-            "text": '''
+            "text": """
             高血压、糖尿病、脑卒中、慢性肾病、ACEI、ARB、CCB、ABPM、HBPM。
-            '''
-        }
+            """,
+        },
     ]
 
     for idx, case in enumerate(demo_cases, start=1):
@@ -999,4 +1084,3 @@ if __name__ == "__main__":
             f"entities={len(normalized['entities'])}, relations={len(normalized['relations'])}"
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
-

@@ -6,10 +6,17 @@ from typing import Any, AsyncIterator
 
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.backend.domain.stream_events import STREAM_EVENT_SCHEMA_VERSION
+
 
 def unauthorized_response(message: str = "未登录") -> JSONResponse:
     """构造 401 响应。"""
     return JSONResponse(status_code=401, content={"ok": False, "error": message})
+
+
+def forbidden_response(message: str = "权限不足") -> JSONResponse:
+    """构造 403 响应。"""
+    return JSONResponse(status_code=403, content={"ok": False, "error": message})
 
 
 def not_found_response(message: str = "资源不存在") -> JSONResponse:
@@ -66,5 +73,18 @@ def sse_streaming_response(event_iter: AsyncIterator[str]) -> StreamingResponse:
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def ndjson_streaming_response(event_iter: AsyncIterator[str]) -> StreamingResponse:
+    """构造逐行 JSON StreamingResponse。"""
+    return StreamingResponse(
+        event_iter,
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Stream-Schema-Version": STREAM_EVENT_SCHEMA_VERSION,
         },
     )

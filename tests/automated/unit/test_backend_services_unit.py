@@ -9,6 +9,7 @@ import io
 import json
 import sys
 import types
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +18,21 @@ from starlette.datastructures import UploadFile
 
 from tests.conftest import await_call, log_api_error
 
-
 pytestmark = pytest.mark.unit
 
 
 def upload_file(name: str, body: bytes) -> UploadFile:
     """构造 Starlette UploadFile，供服务层上传接口测试复用。"""
     return UploadFile(filename=name, file=io.BytesIO(body))
+
+
+def ooxml_file(root: str) -> bytes:
+    """构造包含必要容器标识的最小 OOXML 测试文件。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+        archive.writestr(f"{root}/document.xml", b"<document/>")
+    return buffer.getvalue()
 
 
 def test_a2a_event_helpers_parse_task_payloads() -> None:
@@ -40,7 +49,10 @@ def test_a2a_event_helpers_parse_task_payloads() -> None:
 
     task = {
         "artifacts": [
-            {"name": "final_answer", "parts": [{"kind": "text", "text": "final answer"}]},
+            {
+                "name": "final_answer",
+                "parts": [{"kind": "text", "text": "final answer"}],
+            },
             {"name": "telemetry", "parts": [{"kind": "data", "data": {"tokens": 9}}]},
         ],
         "status": {"message": {"parts": [{"kind": "text", "text": "task_completed"}]}},
@@ -48,11 +60,26 @@ def test_a2a_event_helpers_parse_task_payloads() -> None:
 
     assert safe_float("3.5") == 3.5
     assert safe_float("bad", default=2.0) == 2.0
-    assert extract_text_from_parts([{"kind": "text", "text": "a"}, {"kind": "image", "text": "b"}]) == "a"
+    assert (
+        extract_text_from_parts(
+            [{"kind": "text", "text": "a"}, {"kind": "image", "text": "b"}]
+        )
+        == "a"
+    )
     assert extract_a2a_artifact(task, "telemetry") == {"tokens": 9}
-    assert build_processing_steps_from_progress_events([{"detail": "search"}, {"event": "answer"}]) == ["search", "answer"]
-    assert extract_reply_delta({"event": "answer_delta", "metadata": {"delta": "chunk"}}) == "chunk"
-    assert normalize_progress_event({"event": "subagent_search", "detail": "retrieval"})["stage"] == "subagent"
+    assert build_processing_steps_from_progress_events(
+        [{"detail": "search"}, {"event": "answer"}]
+    ) == ["search", "answer"]
+    assert (
+        extract_reply_delta({"event": "answer_delta", "metadata": {"delta": "chunk"}})
+        == "chunk"
+    )
+    assert (
+        normalize_progress_event({"event": "subagent_search", "detail": "retrieval"})[
+            "stage"
+        ]
+        == "subagent"
+    )
     assert map_a2a_state_to_done_status("canceled") == "cancelled"
     assert extract_task_final_text(task, "completed") == "final answer"
 
@@ -64,8 +91,13 @@ async def test_a2a_event_stream_emits_job_reply_and_done(a2a_service_stub) -> No
         "id": "task-1",
         "contextId": "session-1",
         "metadata": {"user_id": "user-1"},
-        "status": {"state": "completed", "message": {"parts": [{"kind": "text", "text": "task_completed"}]}},
-        "artifacts": [{"name": "final_answer", "parts": [{"kind": "text", "text": "final"}]}],
+        "status": {
+            "state": "completed",
+            "message": {"parts": [{"kind": "text", "text": "task_completed"}]},
+        },
+        "artifacts": [
+            {"name": "final_answer", "parts": [{"kind": "text", "text": "final"}]}
+        ],
     }
     service = A2AEventStreamService(get_a2a=lambda: a2a_service_stub)
 
@@ -79,10 +111,10 @@ async def test_a2a_event_stream_emits_job_reply_and_done(a2a_service_stub) -> No
         )
     ]
 
-    assert events[0]["type"] == "job"
-    assert events[-1]["type"] == "done"
-    assert events[-1]["status"] == "done"
-    assert any(event["type"] == "reply" and event["msg"] == "final" for event in events)
+    assert events[0].type == "job"
+    assert events[-1].type == "done"
+    assert events[-1].status == "done"
+    assert any(event.type == "reply" and event.delta == "final" for event in events)
 
 
 async def test_agent_run_service_maps_completed_a2a_task(monkeypatch) -> None:
@@ -91,7 +123,9 @@ async def test_agent_run_service_maps_completed_a2a_task(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_RUN_A2A_POLL_MS", "100")
 
     class FakeA2A:
-        async def asend_message(self, message: dict[str, Any], request_id: str) -> dict[str, Any]:
+        async def asend_message(
+            self, message: dict[str, Any], request_id: str
+        ) -> dict[str, Any]:
             assert message["metadata"]["trace_id"] == request_id
             return {"id": "task-1"}
 
@@ -100,13 +134,28 @@ async def test_agent_run_service_maps_completed_a2a_task(monkeypatch) -> None:
                 "id": task_id,
                 "status": {
                     "state": "completed",
-                    "message": {"metadata": {"confidence": 0.8, "output_type": "answer"}, "parts": []},
+                    "message": {
+                        "metadata": {"confidence": 0.8, "output_type": "answer"},
+                        "parts": [],
+                    },
                 },
                 "artifacts": [
-                    {"name": "final_answer", "parts": [{"kind": "text", "text": "answer"}]},
-                    {"name": "progress_events", "parts": [{"kind": "data", "data": [{"detail": "search"}]}]},
-                    {"name": "tool_observations", "parts": [{"kind": "data", "data": [{"tool_name": "kg"}]}]},
-                    {"name": "telemetry", "parts": [{"kind": "data", "data": {"llm_calls": 1}}]},
+                    {
+                        "name": "final_answer",
+                        "parts": [{"kind": "text", "text": "answer"}],
+                    },
+                    {
+                        "name": "progress_events",
+                        "parts": [{"kind": "data", "data": [{"detail": "search"}]}],
+                    },
+                    {
+                        "name": "tool_observations",
+                        "parts": [{"kind": "data", "data": [{"tool_name": "kg"}]}],
+                    },
+                    {
+                        "name": "telemetry",
+                        "parts": [{"kind": "data", "data": {"llm_calls": 1}}],
+                    },
                 ],
             }
 
@@ -132,7 +181,9 @@ async def test_agent_run_service_maps_completed_a2a_task(monkeypatch) -> None:
     assert result["a2a_task_id"] == "task-1"
 
 
-async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_upload_dir, memory_service_stub) -> None:
+async def test_sessions_history_service_validates_and_mutates(
+    monkeypatch, temp_upload_dir, memory_service_stub
+) -> None:
     import app.backend.services.sessions_history_service as module
     from app.backend.services.sessions_history_service import SessionsHistoryService
 
@@ -149,7 +200,9 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
 
         @staticmethod
         async def get_sessions(user_id: str, limit: int) -> list[dict[str, Any]]:
-            return [row for row in sessions.values() if row["user_id"] == user_id][:limit]
+            return [row for row in sessions.values() if row["user_id"] == user_id][
+                :limit
+            ]
 
         @staticmethod
         async def get_session(session_id: str) -> dict[str, Any] | None:
@@ -168,8 +221,15 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
 
     class FakeMessageManager:
         @staticmethod
-        async def add_message(session_id: str, role: str, content: str, think_content: str = "") -> dict[str, Any]:
-            row = {"id": len(messages.setdefault(session_id, [])) + 1, "role": role, "content": content, "think_content": think_content}
+        async def add_message(
+            session_id: str, role: str, content: str, think_content: str = ""
+        ) -> dict[str, Any]:
+            row = {
+                "id": len(messages.setdefault(session_id, [])) + 1,
+                "role": role,
+                "content": content,
+                "think_content": think_content,
+            }
             messages[session_id].append(row)
             return row
 
@@ -178,59 +238,107 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
             return list(messages.get(session_id, []))
 
         @staticmethod
-        async def rollback_to_question(session_id: str, message_id: int) -> dict[str, Any]:
+        async def rollback_to_question(
+            session_id: str, message_id: int
+        ) -> dict[str, Any]:
             rows = messages.get(session_id, [])
             kept = [row for row in rows if int(row["id"]) <= message_id]
             if not kept:
                 return {"ok": False}
             removed = len(rows) - len(kept)
             messages[session_id] = kept
-            return {"ok": True, "removed_count": removed, "question": kept[-1]["content"]}
+            return {
+                "ok": True,
+                "removed_count": removed,
+                "question": kept[-1]["content"],
+            }
 
     monkeypatch.setattr(module, "SessionManager", FakeSessionManager)
     monkeypatch.setattr(module, "MessageManager", FakeMessageManager)
 
     service = SessionsHistoryService(
         await_call=await_call,
-        is_session_owner=lambda session_id, user_id: _is_session_owner(sessions, session_id, user_id),
+        is_session_owner=lambda session_id, user_id: _is_session_owner(
+            sessions, session_id, user_id
+        ),
         get_a2a=lambda: None,
         get_session_memory_service=lambda: memory_service_stub,
         upload_dir=temp_upload_dir,
         log_api_error=log_api_error,
     )
 
-    async def fake_upload_to_aliyun_file_api(filename: str, content: bytes) -> dict[str, Any]:
-        return {"id": f"file-{Path(filename).suffix.lower().lstrip('.')}", "purpose": "file-extract", "bytes": len(content)}
+    async def fake_upload_to_aliyun_file_api(
+        filename: str, content: bytes
+    ) -> dict[str, Any]:
+        return {
+            "id": f"file-{Path(filename).suffix.lower().lstrip('.')}",
+            "purpose": "file-extract",
+            "bytes": len(content),
+        }
 
-    monkeypatch.setattr(service, "_upload_to_aliyun_file_api", fake_upload_to_aliyun_file_api)
+    monkeypatch.setattr(
+        service, "_upload_to_aliyun_file_api", fake_upload_to_aliyun_file_api
+    )
 
     created = await service.create_session({"user_id": "user-1", "title": "Title"})
     assert created["data"]["id"] == "session-1"
     assert (await service.list_sessions(user_id=""))["error"] == "user_id_required"
-    assert (await service.update_session("session-1", {"user_id": "user-1", "title": "Renamed"}))["ok"] is True
+    assert (
+        await service.update_session(
+            "session-1", {"user_id": "user-1", "title": "Renamed"}
+        )
+    )["ok"] is True
     assert sessions["session-1"]["title"] == "Renamed"
-    assert (await service.add_message("session-1", {"user_id": "user-1", "role": "user", "content": "q"}))["ok"] is True
-    assert (await service.rollback_to_question("session-1", {"user_id": "user-1", "message_id": 1}))["data"]["memory_rebuilt"] is True
-    assert (await service.add_message("session-1", {"user_id": "user-1", "role": "assistant", "content": "a", "think_content": "debug trace"}))["ok"] is True
+    assert (
+        await service.add_message(
+            "session-1", {"user_id": "user-1", "role": "user", "content": "q"}
+        )
+    )["ok"] is True
+    assert (
+        await service.rollback_to_question(
+            "session-1", {"user_id": "user-1", "message_id": 1}
+        )
+    )["data"]["memory_rebuilt"] is True
+    assert (
+        await service.add_message(
+            "session-1",
+            {
+                "user_id": "user-1",
+                "role": "assistant",
+                "content": "a",
+                "think_content": "debug trace",
+            },
+        )
+    )["ok"] is True
 
     uploaded = await service.upload_file(upload_file("note.txt", b"hello"))
     assert uploaded["ok"] is True
     assert Path(temp_upload_dir / uploaded["data"]["filename"]).exists()
     assert uploaded["data"]["file_id"] == "file-txt"
-    assert (await service.upload_file(upload_file("sheet.xlsx", b"fake-xlsx")))["ok"] is True
+    assert (await service.upload_file(upload_file("sheet.xlsx", ooxml_file("xl"))))[
+        "ok"
+    ] is True
     assert (await service.upload_file(upload_file("bad.exe", b"x")))["ok"] is False
 
     session_detail = await service.get_session("session-1", user_id="user-1")
     assert session_detail["ok"] is True
     assert session_detail["data"]["messages"][0]["content"] == "q"
     assert "think_content" not in session_detail["data"]["messages"][1]
-    assert (await service.get_session("session-1", user_id="other"))["error"] == "session_not_found"
+    assert (await service.get_session("session-1", user_id="other"))[
+        "error"
+    ] == "session_not_found"
     public_messages = await service.get_messages("session-1", user_id="user-1")
     assert public_messages["ok"] is True
     assert "think_content" not in public_messages["data"][1]
-    assert (await service.get_messages("session-1", user_id=""))["error"] == "user_id_required"
-    assert (await service.delete_session("session-1", user_id=""))["error"] == "user_id_required"
-    assert (await service.delete_session("session-1", user_id="other"))["error"] == "session_not_found"
+    assert (await service.get_messages("session-1", user_id=""))[
+        "error"
+    ] == "user_id_required"
+    assert (await service.delete_session("session-1", user_id=""))[
+        "error"
+    ] == "user_id_required"
+    assert (await service.delete_session("session-1", user_id="other"))[
+        "error"
+    ] == "session_not_found"
 
     class FakeA2A:
         async def aget_task(self, job_id: str) -> dict[str, Any] | None:
@@ -246,10 +354,24 @@ async def test_sessions_history_service_validates_and_mutates(monkeypatch, temp_
             return {"ok": True, "task": {"status": {"state": "canceled"}}}
 
     service._get_a2a = lambda: FakeA2A()
-    assert (await service.cancel_qa_job("job-1", {"user_id": "", "session_id": ""}))["error"] == "user_id_and_session_id_required"
-    assert (await service.cancel_qa_job("missing", {"user_id": "user-1", "session_id": "session-1"}))["error"] == "job_not_found"
-    assert (await service.cancel_qa_job("job-1", {"user_id": "other", "session_id": "session-1"}))["error"] == "job_not_found"
-    assert (await service.cancel_qa_job("job-1", {"user_id": "user-1", "session_id": "session-1"}))["ok"] is True
+    assert (await service.cancel_qa_job("job-1", {"user_id": "", "session_id": ""}))[
+        "error"
+    ] == "user_id_and_session_id_required"
+    assert (
+        await service.cancel_qa_job(
+            "missing", {"user_id": "user-1", "session_id": "session-1"}
+        )
+    )["error"] == "job_not_found"
+    assert (
+        await service.cancel_qa_job(
+            "job-1", {"user_id": "other", "session_id": "session-1"}
+        )
+    )["error"] == "job_not_found"
+    assert (
+        await service.cancel_qa_job(
+            "job-1", {"user_id": "user-1", "session_id": "session-1"}
+        )
+    )["ok"] is True
     assert (await service.delete_session("session-1", user_id="user-1"))["ok"] is True
 
 
@@ -268,14 +390,18 @@ async def test_documents_service_jobs_and_validation(monkeypatch) -> None:
     with pytest.raises(RuntimeError):
         service._validate_file(b"hello", "guide.exe")
 
-    async def fake_embed(file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:
+    async def fake_embed(
+        file_bytes: bytes, filename: str, job_id: str
+    ) -> dict[str, Any]:
         await service._enter_job_stage(job_id, "embed", "running")
         await service._complete_job_stage(job_id, "done")
         return {"file_name": filename, "bytes": len(file_bytes)}
 
     monkeypatch.setattr(service, "_embed_text_document_job", fake_embed)
 
-    submitted = await service.submit_text_embedding_job(upload_file("guide.txt", b"hello"))
+    submitted = await service.submit_text_embedding_job(
+        upload_file("guide.txt", b"hello")
+    )
     assert submitted["ok"] is True
     job_id = submitted["data"]["job_id"]
     await asyncio.sleep(0)
@@ -317,7 +443,9 @@ async def test_graph_admin_service_crud_and_readonly_cypher() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, Any] | None]] = []
 
-        async def run_cypher(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        async def run_cypher(
+            self, query: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
             self.calls.append((query, params))
             if "RETURN DISTINCT label" in query:
                 return [{"label": "Disease"}]
@@ -325,8 +453,17 @@ async def test_graph_admin_service_crud_and_readonly_cypher() -> None:
                 return [{"rel_type": "TREATS"}]
             if "RETURN count(n) AS total" in query:
                 return [{"total": 1}]
-            if "RETURN id(n) AS id, labels(n) AS labels, properties(n) AS properties" in query:
-                return [{"id": 1, "labels": ["Disease"], "properties": {"name": "Hypertension"}}]
+            if (
+                "RETURN id(n) AS id, labels(n) AS labels, properties(n) AS properties"
+                in query
+            ):
+                return [
+                    {
+                        "id": 1,
+                        "labels": ["Disease"],
+                        "properties": {"name": "Hypertension"},
+                    }
+                ]
             if "CREATE (n" in query:
                 return [{"id": 2}]
             if "SET " in query:
@@ -343,34 +480,73 @@ async def test_graph_admin_service_crud_and_readonly_cypher() -> None:
         await_call=await_call,
         neo4j_client=FakeNeo4j(),
         get_shared_kg_milvus_store=lambda: object(),
-        validate_cypher_identifier=lambda value: str(value) if str(value).replace("_", "").isalnum() else None,
+        validate_cypher_identifier=lambda value: (
+            str(value) if str(value).replace("_", "").isalnum() else None
+        ),
         sanitize_graph_properties=lambda value: dict(value or {}),
         log_api_error=log_api_error,
     )
 
     assert (await service.get_graph_labels())["data"] == ["Disease"]
     assert (await service.get_graph_relationship_types())["data"] == ["TREATS"]
-    assert (await service.get_graph_nodes(label="Disease", keyword="Hyper", limit=10, offset=0))["total"] == 1
+    assert (
+        await service.get_graph_nodes(
+            label="Disease", keyword="Hyper", limit=10, offset=0
+        )
+    )["total"] == 1
     assert (await service.get_graph_node(1))["data"]["node"]["id"] == 1
-    assert (await service.create_graph_node({"label": "Disease", "properties": {"name": "Hypertension"}}))["data"]["id"] == 2
-    assert (await service.create_graph_node({"label": "", "properties": {}}))["ok"] is False
-    assert (await service.update_graph_node(2, {"properties": {"name": "Updated"}}))["ok"] is True
+    assert (
+        await service.create_graph_node(
+            {"label": "Disease", "properties": {"name": "Hypertension"}}
+        )
+    )["data"]["id"] == 2
+    assert (await service.create_graph_node({"label": "", "properties": {}}))[
+        "ok"
+    ] is False
+    assert (await service.update_graph_node(2, {"properties": {"name": "Updated"}}))[
+        "ok"
+    ] is True
     assert (await service.delete_graph_node(2))["ok"] is True
-    assert (await service.create_graph_relationship({"source_id": "1", "target_id": "2", "rel_type": "TREATS"}))["data"]["rel_id"] == 3
-    assert (await service.create_graph_relationship({"source_id": "x", "target_id": "2", "rel_type": "TREATS"}))["ok"] is False
+    assert (
+        await service.create_graph_relationship(
+            {"source_id": "1", "target_id": "2", "rel_type": "TREATS"}
+        )
+    )["data"]["rel_id"] == 3
+    assert (
+        await service.create_graph_relationship(
+            {"source_id": "x", "target_id": "2", "rel_type": "TREATS"}
+        )
+    )["ok"] is False
     assert (await service.delete_graph_relationship(3))["ok"] is True
-    assert (await service.execute_cypher({"query": "MATCH (n) RETURN n LIMIT 1"}))["ok"] is True
-    assert (await service.execute_cypher({"query": "MATCH (n) DELETE n"}))["ok"] is False
+    assert (await service.execute_cypher({"query": "MATCH (n) RETURN n LIMIT 1"}))[
+        "ok"
+    ] is True
+    assert (await service.execute_cypher({"query": "MATCH (n) DELETE n"}))[
+        "ok"
+    ] is False
 
 
 async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) -> None:
-    import app.backend.services.graph_admin_service as module
+    import app.backend.services.background_job_runtime as runtime_module
     from app.backend.services.graph_admin_service import GraphAdminService
+    from app.backend.services.graph_extraction_lane_pool import (
+        GraphExtractionLanePool,
+    )
 
     class FakeNeo4j:
-        async def run_cypher(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        async def run_cypher(
+            self, query: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
             _ = (query, params)
             return []
+
+    async def fake_fetch_all(
+        statement: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        _ = (statement, params)
+        return []
+
+    monkeypatch.setattr(runtime_module, "fetch_all", fake_fetch_all)
 
     service = GraphAdminService(
         await_call=await_call,
@@ -381,7 +557,11 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
         log_api_error=log_api_error,
     )
 
-    monkeypatch.setattr(GraphAdminService, "_get_graph_import_cache_dir", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(
+        GraphAdminService,
+        "_get_graph_import_cache_dir",
+        classmethod(lambda cls: tmp_path),
+    )
     file_hash = service._compute_file_hash(b"cache")
     prepared = {
         "file_name": "guide.txt",
@@ -402,38 +582,56 @@ async def test_graph_admin_service_job_helpers_and_cache(monkeypatch, tmp_path) 
 
     assert service._json_loads('{"a":1}', {}) == {"a": 1}
     assert service._json_loads("bad", {"fallback": True}) == {"fallback": True}
-    assert service._normalize_chunk_status("unknown") == "pending"
-    assert service._format_resume_message(3)
-    assert "Unauthorized" in service._summarize_pause_error("DashScope 401 Unauthorized")
-    assert service._is_timeout_error("read timeout") is True
-    assert service._classify_lane_error("403 forbidden") == "permanent"
-    assert service._count_active_lanes([{"status": "ready"}, {"status": "failed"}]) == 1
-    assert service._count_viable_lanes([{"status": "backoff"}, {"status": "failed"}]) == 1
-    assert service._format_lane_label({"lane_id": 1, "model_name": "m", "source": "s"}) == "lane1:m (s)"
-
-    paused = service._build_paused_job_result(
-        message="paused",
-        pause_reason="timeout",
-        file_name="guide.txt",
-        file_hash=file_hash,
-        run_id="run-1",
-        resumed_from_chunk=2,
-        prepared={**prepared, "is_resumed": True, "cache_used": True},
-        entity_count=1,
-        relation_count=2,
-        processed_chars=3,
-        completed_chunks=4,
+    assert GraphExtractionLanePool.normalize_chunk_status("unknown") == "pending"
+    assert service._normalize_chunk_status("succeeded") == "succeeded"
+    assert service._clone_lane_statuses([{"status": "ready"}]) == [{"status": "ready"}]
+    assert service._resume_requires_graph_state(
+        [{"status": "succeeded", "entity_count": 2, "relation_count": 1}]
     )
-    assert paused["_job_status"] == "paused"
-    assert paused["relation_count"] == 2
+    assert not service._resume_requires_graph_state(
+        [
+            {"status": "succeeded", "entity_count": 0, "relation_count": 0},
+            {"status": "failed", "entity_count": 2, "relation_count": 1},
+        ]
+    )
+    assert service._format_resume_message(3)
+    assert GraphExtractionLanePool.classify_lane_error("403 forbidden") == "permanent"
+    assert (
+        GraphExtractionLanePool.classify_lane_error(
+            "AllocationQuota.FreeTierOnly: Free quota exhausted"
+        )
+        == "permanent"
+    )
+    assert (
+        GraphExtractionLanePool.count_active_lanes(
+            [{"status": "ready"}, {"status": "failed"}]
+        )
+        == 1
+    )
+    assert (
+        GraphExtractionLanePool.count_viable_lanes(
+            [{"status": "backoff"}, {"status": "failed"}]
+        )
+        == 1
+    )
+    assert (
+        GraphExtractionLanePool.format_lane_label(
+            {"lane_id": 1, "model_name": "m", "source": "s"}
+        )
+        == "lane1:m (s)"
+    )
 
-    job = await service._register_job("graph_extract_import", seed={"progress_text": "queued", "total_chunks": 2})
+    job = await service._register_job(
+        "graph_extract_import", seed={"progress_text": "queued", "total_chunks": 2}
+    )
     job_id = job["job_id"]
     await service._enter_job_stage(job_id, "parse", "parsing")
     await service._heartbeat_job_stage(job_id, detail="working")
     await service._add_job_warning(job_id, "slow")
     await service._complete_job_stage(job_id, {"ok": True, "value": 1})
-    await service._set_job_state(job_id, status="succeeded", result={"ok": True}, finished=True)
+    await service._set_job_state(
+        job_id, status="succeeded", result={"ok": True}, finished=True
+    )
     assert (await service.get_graph_job(job_id))["data"]["status"] == "succeeded"
     assert (await service.list_graph_jobs(limit=5))["data"][0]["job_id"] == job_id
     assert (await service.get_graph_job("missing"))["ok"] is False
@@ -448,13 +646,38 @@ async def test_graph_public_service_visualization_and_detail() -> None:
     from app.backend.services.graph_public_service import GraphPublicService
 
     class FakeNeo4j:
-        async def run_cypher(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        async def run_cypher(
+            self, query: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
             if "WHERE toString(id(n)) = $entity_id" in query:
-                return [{"id": 1, "labels": ["Disease"], "name": "Hypertension", "props": {"name": "Hypertension", "code": "I10"}}]
+                return [
+                    {
+                        "id": 1,
+                        "labels": ["Disease"],
+                        "name": "Hypertension",
+                        "props": {"name": "Hypertension", "code": "I10"},
+                    }
+                ]
             if "WHERE toString(id(b)) = $entity_id" in query:
-                return [{"source_id": 2, "source_name": "Salt", "source_labels": ["Risk"], "rel_type": "CAUSES", "rel_props": {}}]
+                return [
+                    {
+                        "source_id": 2,
+                        "source_name": "Salt",
+                        "source_labels": ["Risk"],
+                        "rel_type": "CAUSES",
+                        "rel_props": {},
+                    }
+                ]
             if "WHERE toString(id(a)) = $entity_id" in query:
-                return [{"target_id": 3, "target_name": "Stroke", "target_labels": ["Outcome"], "rel_type": "RAISES", "rel_props": {}}]
+                return [
+                    {
+                        "target_id": 3,
+                        "target_name": "Stroke",
+                        "target_labels": ["Outcome"],
+                        "rel_type": "RAISES",
+                        "rel_props": {},
+                    }
+                ]
             return [
                 {
                     "source_id": 1,
@@ -467,7 +690,9 @@ async def test_graph_public_service_visualization_and_detail() -> None:
                 }
             ]
 
-    service = GraphPublicService(await_call=await_call, neo4j_client=FakeNeo4j(), log_api_error=log_api_error)
+    service = GraphPublicService(
+        await_call=await_call, neo4j_client=FakeNeo4j(), log_api_error=log_api_error
+    )
     graph = await service.graph_visualization(keyword="", limit=10)
     assert graph["ok"] is True
     assert graph["count"] == 1
@@ -480,7 +705,9 @@ async def test_graph_public_service_visualization_and_detail() -> None:
 
 
 async def test_observability_service_aggregates_runs(monkeypatch) -> None:
-    from app.backend.services.admin_observability_service import AdminObservabilityService
+    from app.backend.services.admin_observability_service import (
+        AdminObservabilityService,
+    )
 
     service = AdminObservabilityService(log_api_error=log_api_error)
     events = [
@@ -510,15 +737,19 @@ async def test_observability_service_aggregates_runs(monkeypatch) -> None:
     assert runs["data"][0]["rank"] == 1
 
 
-async def test_observability_service_reads_perf_and_turn_logs(monkeypatch, tmp_path) -> None:
-    from app.backend.services.admin_observability_service import AdminObservabilityService
+async def test_observability_service_reads_perf_and_turn_logs(
+    monkeypatch, tmp_path
+) -> None:
+    from app.backend.services.admin_observability_service import (
+        AdminObservabilityService,
+    )
 
     service = AdminObservabilityService(log_api_error=log_api_error)
     logs_dir = tmp_path / "logs"
     sessions_turn_dir = logs_dir / "sessions" / "session-1" / "turns"
     sessions_turn_dir.mkdir(parents=True)
     (logs_dir / "perf.log").write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'INFO [性能事件] {"event":"iterative_agent_run","session_id":"s1","duration_ms":12,"tool_success_rate":1}',
                 'INFO [性能事件] {"event":"other","session_id":"s2"}',
@@ -563,7 +794,9 @@ async def test_observability_service_reads_perf_and_turn_logs(monkeypatch, tmp_p
                             "主控编排": [
                                 {
                                     "title": "主控统一决策",
-                                    "full_decision": json.dumps({"total_tokens": 128}, ensure_ascii=False),
+                                    "full_decision": json.dumps(
+                                        {"total_tokens": 128}, ensure_ascii=False
+                                    ),
                                 }
                             ]
                         },
@@ -586,11 +819,15 @@ async def test_observability_service_reads_perf_and_turn_logs(monkeypatch, tmp_p
     assert turn_rows[1]["llm_calls"] == 3
 
 
-async def test_admin_runtime_service_cancel_and_stats(monkeypatch, a2a_service_stub) -> None:
+async def test_admin_runtime_service_cancel_and_stats(
+    monkeypatch, a2a_service_stub
+) -> None:
     import app.backend.services.admin_runtime_service as module
     from app.backend.services.admin_runtime_service import AdminRuntimeService
 
-    async def fake_fetch_one(statement: str, params: dict[str, Any] | None = None) -> dict[str, int]:
+    async def fake_fetch_one(
+        statement: str, params: dict[str, Any] | None = None
+    ) -> dict[str, int]:
         if "messages" in statement:
             return {"count": 4}
         return {"count": 2}
@@ -610,13 +847,17 @@ async def test_admin_runtime_service_cancel_and_stats(monkeypatch, a2a_service_s
     cancelled = await service.admin_cancel_qa_job("task-1")
     assert cancelled["ok"] is True
     assert cancelled["status"] == "canceled"
-    assert (await service.admin_cancel_qa_job("missing"))["error"] == "job_not_found_or_finished"
+    assert (await service.admin_cancel_qa_job("missing"))[
+        "error"
+    ] == "job_not_found_or_finished"
     stats = await service.admin_get_stats()
     assert stats["data"]["total_sessions"] == 2
     assert stats["data"]["total_messages"] == 4
 
 
-async def _is_session_owner(sessions: dict[str, dict[str, Any]], session_id: str, user_id: str) -> bool:
+async def _is_session_owner(
+    sessions: dict[str, dict[str, Any]], session_id: str, user_id: str
+) -> bool:
     return sessions.get(session_id, {}).get("user_id") == user_id
 
 
@@ -628,18 +869,34 @@ async def _build_runtime_snapshot(**kwargs) -> dict[str, Any]:
     return {"orchestrator": {"tasks": 1}}
 
 
-async def test_readiness_service_reports_ready_degraded_and_unavailable(monkeypatch) -> None:
+async def test_readiness_service_reports_ready_degraded_and_unavailable(
+    monkeypatch,
+) -> None:
     import app.backend.services.readiness_service as module
     from app.backend.services.readiness_service import ReadinessService
 
-    fake_mcp_module = types.SimpleNamespace(get_mcp_runtime_status=lambda mcp: {"core_ready": True, "optional_issues": [], "tool_names": [tool["name"] for tool in mcp.list_tools()]})
+    fake_mcp_module = types.SimpleNamespace(
+        get_mcp_runtime_status=lambda mcp: {
+            "core_ready": True,
+            "optional_issues": [],
+            "tool_names": [tool["name"] for tool in mcp.list_tools()],
+        }
+    )
     monkeypatch.setitem(sys.modules, "app.mcp.tools", fake_mcp_module)
 
     class McpStub:
         def list_tools(self) -> list[dict[str, Any]]:
             return [{"name": "search"}]
 
-    monkeypatch.setattr(module, "check_databases", lambda: {"all_running": True, "neo4j": {"is_running": True, "host": "127.0.0.1"}, "milvus": {"is_running": True, "host": "127.0.0.1"}})
+    monkeypatch.setattr(
+        module,
+        "check_databases",
+        lambda: {
+            "all_running": True,
+            "neo4j": {"is_running": True, "host": "127.0.0.1"},
+            "milvus": {"is_running": True, "host": "127.0.0.1"},
+        },
+    )
     service = ReadinessService(
         get_mcp=lambda: McpStub(),
         mysql_initialized_resolver=lambda: True,
@@ -650,7 +907,15 @@ async def test_readiness_service_reports_ready_degraded_and_unavailable(monkeypa
     assert ready["level"] == "ready"
     assert await service.ensure_core_ready("/process") is None
 
-    monkeypatch.setattr(module, "check_databases", lambda: {"all_running": False, "neo4j": {"is_running": False, "host": "127.0.0.1"}, "milvus": {"is_running": True, "host": "127.0.0.1"}})
+    monkeypatch.setattr(
+        module,
+        "check_databases",
+        lambda: {
+            "all_running": False,
+            "neo4j": {"is_running": False, "host": "127.0.0.1"},
+            "milvus": {"is_running": True, "host": "127.0.0.1"},
+        },
+    )
     degraded = await service.build_readiness_report()
     assert degraded["level"] == "degraded"
 
@@ -681,28 +946,49 @@ async def test_mcp_server_degrades_when_milvus_tools_fail(monkeypatch) -> None:
         def __init__(self, conf: Any) -> None:
             raise MilvusLikeError("kg milvus unavailable")
 
+    class FakeHistoryReadTool:
+        async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+            _ = payload
+            return {"matched": False, "evidence": []}
+
     await module.close_mcp_server()
     monkeypatch.setattr(module, "RagSearchTool", BrokenRagSearchTool)
-    monkeypatch.setattr(module, "KgEntityRelationSearchTool", BrokenKgEntityRelationSearchTool)
+    monkeypatch.setattr(
+        module, "KgEntityRelationSearchTool", BrokenKgEntityRelationSearchTool
+    )
+    monkeypatch.setattr(module, "HistoryReadTool", FakeHistoryReadTool)
 
     server = module.build_mcp_server()
     try:
         tool_names = {row["name"] for row in server.list_tools()}
-        assert {"kg_query", "rag_search", "kg_entity_relation_search", "history_read"} <= tool_names
+        assert {
+            "kg_query",
+            "rag_search",
+            "kg_entity_relation_search",
+            "history_read",
+        } <= tool_names
 
         rag_result = await server.ainvoke("rag_search", {"query": "高血压", "top_k": 1})
         assert rag_result["ok"] is True
         assert rag_result["result"]["unavailable"] is True
+        assert rag_result["result"]["evidence"] == []
 
         status = await module.get_mcp_runtime_status(server)
         assert status["core_ready"] is False
         assert "rag_search" in status["runtime_unavailable_required"]
         assert "kg_entity_relation_search" in status["runtime_unavailable_optional"]
+        kg_result = await server.ainvoke(
+            "kg_entity_relation_search",
+            {"query": "高血压", "top_k": 1},
+        )
+        assert kg_result["result"]["evidence"] == []
     finally:
         await server.aclose()
 
 
-async def test_session_turn_service_creates_titles_and_recovers_from_memory_errors() -> None:
+async def test_session_turn_service_creates_titles_and_recovers_from_memory_errors() -> (
+    None
+):
     from app.backend.services.session_turn_service import SessionTurnService
 
     sessions: dict[str, dict[str, Any]] = {}
@@ -730,13 +1016,21 @@ async def test_session_turn_service_creates_titles_and_recovers_from_memory_erro
             return len(messages.get(session_id, []))
 
         @staticmethod
-        async def add_message(session_id: str, role: str, content: str) -> dict[str, Any]:
-            row = {"id": len(messages.setdefault(session_id, [])) + 1, "role": role, "content": content}
+        async def add_message(
+            session_id: str, role: str, content: str
+        ) -> dict[str, Any]:
+            row = {
+                "id": len(messages.setdefault(session_id, [])) + 1,
+                "role": role,
+                "content": content,
+            }
             messages[session_id].append(row)
             return row
 
     class BrokenMemoryService:
-        async def build_runtime_context(self, session_id: str, input_text: str, current_message_id: int) -> dict[str, Any]:
+        async def build_runtime_context(
+            self, session_id: str, input_text: str, current_message_id: int
+        ) -> dict[str, Any]:
             _ = (session_id, input_text, current_message_id)
             raise RuntimeError("memory_failed")
 
@@ -759,7 +1053,11 @@ async def test_session_turn_service_creates_titles_and_recovers_from_memory_erro
     assert messages["session-new"][0]["content"].startswith("[文件:guide.pdf]")
     assert prepared["memory_context"] == {}
 
-    sessions["owned-session"] = {"id": "owned-session", "user_id": "user-1", "title": "新会话"}
+    sessions["owned-session"] = {
+        "id": "owned-session",
+        "user_id": "user-1",
+        "title": "新会话",
+    }
     messages["owned-session"] = []
     reused = await service.prepare_session_turn(
         input_text="第二问",
@@ -873,6 +1171,7 @@ async def test_a2a_runtime_service_lazy_init_and_subagent_queries(monkeypatch) -
             "output": kwargs["input_text"],
             "session_id": kwargs["session_id"],
             "user_id": kwargs["user_id"],
+            "trace_id": kwargs["trace_id"],
             "strategy": kwargs["strategy"],
             "memory_context": kwargs["memory_context"],
         }
@@ -888,14 +1187,25 @@ async def test_a2a_runtime_service_lazy_init_and_subagent_queries(monkeypatch) -
     assert service.get_a2a() is service.get_a2a()
     assert service.get_a2a_graph() is service.get_a2a_graph()
     assert service.get_a2a_retrieval() is service.get_a2a_retrieval()
-    assert {item["agent_url"] for item in created} == {"/a2a/rpc", "/a2a/graph/rpc", "/a2a/retrieval/rpc"}
+    assert {item["agent_url"] for item in created} == {
+        "/a2a/rpc",
+        "/a2a/graph/rpc",
+        "/a2a/retrieval/rpc",
+    }
 
     main_result = await service._run_a2a_query(
         "question",
-        metadata={"session_id": "s1", "user_id": "u1", "strategy": "iterative", "memory_context": {"qa_pairs": []}},
+        metadata={
+            "session_id": "s1",
+            "user_id": "u1",
+            "trace_id": "trace-1",
+            "strategy": "iterative",
+            "memory_context": {"qa_pairs": []},
+        },
     )
     assert main_result["session_id"] == "s1"
     assert main_result["user_id"] == "u1"
+    assert main_result["trace_id"] == "trace-1"
 
     progress_events: list[dict[str, Any]] = []
     graph_result = await service._run_graph_a2a_query(
@@ -951,7 +1261,7 @@ async def test_kg_subagent_selects_mcp_tool_internally() -> None:
     assert exact_output["query_statements"][0]["tool_name"] == "kg_query"
 
 
-async def test_orchestrator_hides_mcp_tool_selection_from_model() -> None:
+async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
     from app.a2a.client.subagent_client import SubAgentClientFactory
     from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 
@@ -966,8 +1276,8 @@ async def test_orchestrator_hides_mcp_tool_selection_from_model() -> None:
     prompt = controller._build_system_prompt()
     assert "kg_query" not in prompt
     assert "kg_entity_relation_search" not in prompt
-    assert "history_read" not in prompt
-    assert "\"arguments\"" not in prompt
+    assert "call_history_read" in prompt
+    assert '"arguments"' not in prompt
     task = controller._build_subtask(
         action={
             "action": "call_kg",
@@ -987,7 +1297,10 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
     import app.mcp.tools as mcp_tools_module
     from app.backend.config import build_backend_config
     from app.backend.infrastructure.runtime_container import BackendRuntimeContainer
-    from app.backend.services.startup_runtime_service import StartupRuntimeBehavior, StartupRuntimeService
+    from app.backend.services.startup_runtime_service import (
+        StartupRuntimeBehavior,
+        StartupRuntimeService,
+    )
 
     events: list[str] = []
 
@@ -1038,8 +1351,20 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
     async def init_db() -> bool:
         return True
 
-    async def check_db() -> dict[str, bool]:
-        return {"all_running": True}
+    async def close_db() -> None:
+        events.append("mysql_close")
+
+    async def check_db() -> dict[str, Any]:
+        return {
+            "all_running": True,
+            "neo4j": {"is_running": True},
+            "milvus": {"is_running": True},
+        }
+
+    async def migrate_neo4j(client) -> tuple[int, ...]:
+        assert isinstance(client, FakeNeo4j)
+        events.append("neo4j_migrate")
+        return (1,)
 
     async def close_iterative_agent() -> None:
         events.append("agent_close")
@@ -1069,17 +1394,36 @@ async def test_startup_runtime_service_respects_behavior_flags(monkeypatch) -> N
             close_neo4j_on_shutdown=True,
         ),
         database_initializer=init_db,
+        database_closer=close_db,
         database_checker=check_db,
+        neo4j_schema_initializer=migrate_neo4j,
         get_shared_vector_store=lambda: events.append("vector"),
-        get_shared_kg_milvus_store=lambda: types.SimpleNamespace(ensure_embedder_loaded=lambda: events.append("kg")),
+        get_shared_kg_milvus_store=lambda: types.SimpleNamespace(
+            ensure_embedder_loaded=lambda: events.append("kg")
+        ),
         neo4j_client=FakeNeo4j(),
     )
 
     await service.startup()
     assert runtime.mysql_initialized is True
-    assert {"vector", "kg", "mcp", "a2a", "graph", "retrieval"}.issubset(set(events))
+    assert {
+        "neo4j_migrate",
+        "vector",
+        "kg",
+        "mcp",
+        "a2a",
+        "graph",
+        "retrieval",
+    }.issubset(set(events))
     await service.shutdown()
-    assert events[-5:] == ["shutdown", "agent_close", "runtime_mcp_close", "global_mcp_close", "neo4j_close"]
+    assert events[-6:] == [
+        "shutdown",
+        "agent_close",
+        "runtime_mcp_close",
+        "global_mcp_close",
+        "mysql_close",
+        "neo4j_close",
+    ]
     assert runtime.mcp_server is None
 
 
@@ -1114,7 +1458,9 @@ async def test_session_memory_service_builds_runtime_and_refreshes(monkeypatch) 
         stored_rows["summary_text"] = summary_text
         return True
 
-    async def fake_upsert_retrieval_summary(session_id: str, retrieval_summary_text: str):
+    async def fake_upsert_retrieval_summary(
+        session_id: str, retrieval_summary_text: str
+    ):
         stored_rows["session_id"] = session_id
         stored_rows["retrieval_summary_text"] = retrieval_summary_text
         return True
@@ -1126,9 +1472,17 @@ async def test_session_memory_service_builds_runtime_and_refreshes(monkeypatch) 
 
     monkeypatch.setattr(module, "fetch_one", fake_fetch_one)
     monkeypatch.setattr(module, "fetch_all", fake_fetch_all)
-    monkeypatch.setattr(module.SessionMemoryManager, "upsert_summary", fake_upsert_summary)
-    monkeypatch.setattr(module.SessionMemoryManager, "upsert_retrieval_summary", fake_upsert_retrieval_summary)
-    monkeypatch.setattr(module.SessionMemoryManager, "clear_summary", fake_clear_summary)
+    monkeypatch.setattr(
+        module.SessionMemoryManager, "upsert_summary", fake_upsert_summary
+    )
+    monkeypatch.setattr(
+        module.SessionMemoryManager,
+        "upsert_retrieval_summary",
+        fake_upsert_retrieval_summary,
+    )
+    monkeypatch.setattr(
+        module.SessionMemoryManager, "clear_summary", fake_clear_summary
+    )
 
     service = SessionMemoryService()
     runtime_payload = await service.build_runtime_context("session-1", "第二问", 3)
@@ -1160,13 +1514,27 @@ async def test_session_memory_service_sanitizes_and_reads_history(monkeypatch) -
 
     service = SessionMemoryService()
 
-    assert service._sanitize_list(["a", "a", "", "b"], max_items=3, max_len=10) == ["a", "b"]
+    assert service._sanitize_list(["a", "a", "", "b"], max_items=3, max_len=10) == [
+        "a",
+        "b",
+    ]
     assert service._sanitize_list("bad", max_items=3, max_len=10) == []
     assert service._parse_qa_memory("not-json")["qa_pairs"] == []
     assert service._parse_retrieval_memory("")["questions"] == []
-    assert service._sanitize_qa_entry({"user_question": "", "assistant_answer": "a"}) is None
-    assert service._sanitize_retrieval_record({"query": "q", "result_content": ""}) is None
-    assert service._sanitize_retrieval_entry({"history_id": "h1", "user_question": "q", "records": []}) is None
+    assert (
+        service._sanitize_qa_entry({"user_question": "", "assistant_answer": "a"})
+        is None
+    )
+    assert (
+        service._sanitize_retrieval_record({"query": "q", "result_content": ""}) is None
+    )
+    assert (
+        service._sanitize_retrieval_entry(
+            {"history_id": "h1", "user_question": "q", "records": []}
+        )
+        is None
+    )
+    assert service._sanitize_evidence([{"hit": {"text": "legacy"}}]) == []
 
     row_snapshot = {
         "summary_text": json.dumps(
@@ -1217,20 +1585,31 @@ async def test_session_memory_service_sanitizes_and_reads_history(monkeypatch) -
     loaded = await service.load_memory("session-1")
     assert loaded["updated_at"].startswith("2026-04-24T10:00:00")
     assert loaded["qa_memory"]["version"] == 2
-    assert loaded["retrieval_memory"]["questions"][0]["records"][0]["page_num"] == 3
+    assert loaded["retrieval_memory"]["version"] == 3
+    migrated_evidence = loaded["retrieval_memory"]["questions"][0]["evidence"][0]
+    assert migrated_evidence["page"] == 3
+    assert migrated_evidence["content"] == "reduce sodium"
+    assert migrated_evidence["retrieval_method"] == "legacy_history"
 
-    history_by_id = await service.read_retrieval_history(session_id="session-1", history_id="h-1-2")
+    history_by_id = await service.read_retrieval_history(
+        session_id="session-1", history_id="h-1-2"
+    )
     assert history_by_id["matched"] is True
-    assert history_by_id["records"][0]["result_content"] == "reduce sodium"
+    assert history_by_id["evidence"][0]["content"] == "reduce sodium"
 
-    history_by_question = await service.read_retrieval_history(session_id="session-1", user_question="hypertension food")
+    history_by_question = await service.read_retrieval_history(
+        session_id="session-1", user_question="hypertension food"
+    )
     assert history_by_question["matched"] is True
 
-    missing = await service.read_retrieval_history(session_id="session-1", user_question="unrelated")
+    missing = await service.read_retrieval_history(
+        session_id="session-1", user_question="unrelated"
+    )
     assert missing["matched"] is False
 
 
-async def test_session_memory_service_refresh_appends_query_records(monkeypatch) -> None:
+async def test_session_memory_service_refresh_appends_evidence(monkeypatch) -> None:
+    from app.a2a.evidence import build_rag_evidence
     from app.backend.services.session_memory_service import SessionMemoryService
 
     service = SessionMemoryService()
@@ -1240,15 +1619,25 @@ async def test_session_memory_service_refresh_appends_query_records(monkeypatch)
         _ = session_id
         return {
             "qa_memory": {"version": 2, "last_message_id": 0, "qa_pairs": []},
-            "retrieval_memory": {"version": 2, "last_message_id": 0, "questions": []},
+            "retrieval_memory": {"version": 3, "last_message_id": 0, "questions": []},
             "updated_at": "",
         }
 
     async def fake_get_messages(session_id: str) -> list[dict[str, Any]]:
         _ = session_id
         return [
-            {"id": 10, "role": "user", "content": "How much salt?", "created_at": "2026-04-24"},
-            {"id": 11, "role": "assistant", "content": "Limit sodium.", "created_at": "2026-04-24"},
+            {
+                "id": 10,
+                "role": "user",
+                "content": "How much salt?",
+                "created_at": "2026-04-24",
+            },
+            {
+                "id": 11,
+                "role": "assistant",
+                "content": "Limit sodium.",
+                "created_at": "2026-04-24",
+            },
         ]
 
     async def fake_save_memory(session_id: str, snapshot: dict[str, Any]) -> None:
@@ -1266,24 +1655,30 @@ async def test_session_memory_service_refresh_appends_query_records(monkeypatch)
             "user_question": "How much salt?",
             "user_message_id": 10,
             "captured_at": "2026-04-24T10:00:00",
-            "query_records": [
-                {
-                    "agent": "rag",
-                    "query": "salt intake",
-                    "result_content": "keep sodium low",
-                    "captured_at": "2026-04-24T10:00:00",
-                    "citations": ["guide"],
-                }
+            "evidence": [
+                build_rag_evidence(
+                    {
+                        "source": "guide.pdf",
+                        "chunk_id": "chunk-1",
+                        "page_num": 3,
+                        "text": "keep sodium low",
+                        "retrieval_method": "dense_rerank",
+                    }
+                )
             ],
         },
     )
 
     assert saved["session_id"] == "session-1"
     assert refreshed["retrieval_memory"]["questions"][0]["history_id"] == "h-10-11"
-    assert refreshed["retrieval_memory"]["questions"][0]["records"][0]["query"] == "salt intake"
+    stored_evidence = refreshed["retrieval_memory"]["questions"][0]["evidence"][0]
+    assert stored_evidence["source_id"] == "guide.pdf"
+    assert stored_evidence["retrieval_method"] == "dense_rerank"
 
 
-async def test_admin_sessions_service_builds_flow_events_and_cleans_logs(monkeypatch, tmp_path, memory_service_stub) -> None:
+async def test_admin_sessions_service_builds_flow_events_and_cleans_logs(
+    monkeypatch, tmp_path, memory_service_stub
+) -> None:
     import app.backend.services.admin_sessions_service as module
     from app.backend.services.admin_sessions_service import AdminSessionsService
 
@@ -1315,12 +1710,22 @@ async def test_admin_sessions_service_builds_flow_events_and_cleans_logs(monkeyp
                         "llm_calls": 1,
                         "total_tokens": 90,
                         "tool_observations": [
-                            {"agent": "kg", "tool_name": "kg_entity_relation_search", "subquery": "高血压", "result": {"ok": True, "result": {"summary": "命中实体"}}}
+                            {
+                                "agent": "kg",
+                                "tool_name": "kg_entity_relation_search",
+                                "subquery": "高血压",
+                                "result": {
+                                    "ok": True,
+                                    "result": {"summary": "命中实体"},
+                                },
+                            }
                         ],
                         "agent_lanes": {},
                         "memory_compression": [],
                         "timeline": [],
-                        "orchestrator_decision": {"controller_mode": "explicit_memory_with_history_read"},
+                        "orchestrator_decision": {
+                            "controller_mode": "explicit_memory_with_history_read"
+                        },
                     },
                     ensure_ascii=False,
                 ),
@@ -1332,7 +1737,9 @@ async def test_admin_sessions_service_builds_flow_events_and_cleans_logs(monkeyp
                         "llm_calls": 2,
                         "total_tokens": 120,
                         "snapshot": {
-                            "qa_memory": {"qa_pairs": [{"user_question": "高血压如何控制饮食"}]},
+                            "qa_memory": {
+                                "qa_pairs": [{"user_question": "高血压如何控制饮食"}]
+                            },
                             "retrieval_memory": {"questions": ["高血压 限盐"]},
                         },
                     },
@@ -1368,15 +1775,33 @@ async def test_admin_sessions_service_builds_flow_events_and_cleans_logs(monkeyp
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(module.SessionManager, "get_all_sessions", lambda limit, offset: [{"id": session_id, "title": "标题", "message_count": 2}])
+    monkeypatch.setattr(
+        module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path)
+    )
+    monkeypatch.setattr(
+        module.SessionManager,
+        "get_all_sessions",
+        lambda limit, offset: [{"id": session_id, "title": "标题", "message_count": 2}],
+    )
     monkeypatch.setattr(module.SessionManager, "get_total_sessions_count", lambda: 1)
-    monkeypatch.setattr(module.SessionManager, "get_session", lambda sid: {"id": sid, "title": "标题"} if sid == session_id else None)
+    monkeypatch.setattr(
+        module.SessionManager,
+        "get_session",
+        lambda sid: {"id": sid, "title": "标题"} if sid == session_id else None,
+    )
     monkeypatch.setattr(module.SessionManager, "update_session_time", lambda sid: True)
-    monkeypatch.setattr(module.SessionManager, "delete_session", lambda sid: sid == session_id)
-    monkeypatch.setattr(module.MessageManager, "get_messages", lambda sid: [{"id": 1, "content": "问"}, {"id": 2, "content": "答"}])
+    monkeypatch.setattr(
+        module.SessionManager, "delete_session", lambda sid: sid == session_id
+    )
+    monkeypatch.setattr(
+        module.MessageManager,
+        "get_messages",
+        lambda sid: [{"id": 1, "content": "问"}, {"id": 2, "content": "答"}],
+    )
     monkeypatch.setattr(module.MessageManager, "delete_messages", lambda sid: True)
-    service = AdminSessionsService(await_call=await_call, get_session_memory_service=lambda: memory_service_stub)
+    service = AdminSessionsService(
+        await_call=await_call, get_session_memory_service=lambda: memory_service_stub
+    )
     sessions = await service.admin_get_sessions(limit=20, offset=0)
     assert sessions["total"] == 1
 
@@ -1392,7 +1817,9 @@ async def test_admin_sessions_service_builds_flow_events_and_cleans_logs(monkeyp
     assert deleted["ok"] is True
 
 
-async def test_admin_sessions_service_memory_and_missing_session_paths(monkeypatch, tmp_path) -> None:
+async def test_admin_sessions_service_memory_and_missing_session_paths(
+    monkeypatch, tmp_path
+) -> None:
     import app.backend.services.admin_sessions_service as module
     from app.backend.services.admin_sessions_service import AdminSessionsService
 
@@ -1415,14 +1842,30 @@ async def test_admin_sessions_service_memory_and_missing_session_paths(monkeypat
     sessions = {"session-1": {"id": "session-1", "title": "Session"}}
     messages = {"session-1": [{"id": 1, "role": "user", "content": "hello"}]}
 
-    monkeypatch.setattr(module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(module.SessionManager, "get_session", lambda sid: sessions.get(sid))
+    monkeypatch.setattr(
+        module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path)
+    )
+    monkeypatch.setattr(
+        module.SessionManager, "get_session", lambda sid: sessions.get(sid)
+    )
     monkeypatch.setattr(module.SessionManager, "update_session_time", lambda sid: True)
-    monkeypatch.setattr(module.SessionManager, "delete_session", lambda sid: sessions.pop(sid, None) is not None)
-    monkeypatch.setattr(module.MessageManager, "get_messages", lambda sid: list(messages.get(sid, [])))
-    monkeypatch.setattr(module.MessageManager, "delete_messages", lambda sid: messages.update({sid: []}) or True)
+    monkeypatch.setattr(
+        module.SessionManager,
+        "delete_session",
+        lambda sid: sessions.pop(sid, None) is not None,
+    )
+    monkeypatch.setattr(
+        module.MessageManager, "get_messages", lambda sid: list(messages.get(sid, []))
+    )
+    monkeypatch.setattr(
+        module.MessageManager,
+        "delete_messages",
+        lambda sid: messages.update({sid: []}) or True,
+    )
 
-    service = AdminSessionsService(await_call=await_call, get_session_memory_service=lambda: memory)
+    service = AdminSessionsService(
+        await_call=await_call, get_session_memory_service=lambda: memory
+    )
 
     assert (await service.admin_get_session_messages("missing"))["ok"] is False
     assert (await service.admin_get_session_memory("missing"))["ok"] is False
@@ -1447,7 +1890,9 @@ async def test_admin_sessions_service_memory_and_missing_session_paths(monkeypat
     assert failed_delete["ok"] is False
 
 
-async def test_admin_sessions_service_surfaces_memory_cleanup_failures(monkeypatch, tmp_path) -> None:
+async def test_admin_sessions_service_surfaces_memory_cleanup_failures(
+    monkeypatch, tmp_path
+) -> None:
     import app.backend.services.admin_sessions_service as module
     from app.backend.services.admin_sessions_service import AdminSessionsService
 
@@ -1456,13 +1901,17 @@ async def test_admin_sessions_service_surfaces_memory_cleanup_failures(monkeypat
             _ = session_id
             raise RuntimeError("memory failed")
 
-    monkeypatch.setattr(module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path)
+    )
     monkeypatch.setattr(module.SessionManager, "get_session", lambda sid: {"id": sid})
     monkeypatch.setattr(module.SessionManager, "update_session_time", lambda sid: True)
     monkeypatch.setattr(module.SessionManager, "delete_session", lambda sid: True)
     monkeypatch.setattr(module.MessageManager, "get_messages", lambda sid: [])
 
-    service = AdminSessionsService(await_call=await_call, get_session_memory_service=lambda: BrokenMemoryService())
+    service = AdminSessionsService(
+        await_call=await_call, get_session_memory_service=lambda: BrokenMemoryService()
+    )
 
     cleared = await service.admin_clear_session_messages("session-1")
     assert cleared["ok"] is True
@@ -1475,11 +1924,15 @@ async def test_admin_sessions_service_surfaces_memory_cleanup_failures(monkeypat
     assert deleted["memory_error_type"] == "RuntimeError"
 
 
-def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypatch) -> None:
+def test_admin_sessions_service_flow_helpers_cover_edge_cases(
+    tmp_path, monkeypatch
+) -> None:
     import app.backend.services.admin_sessions_service as module
     from app.backend.services.admin_sessions_service import AdminSessionsService
 
-    monkeypatch.setattr(module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        module.AdminSessionsService, "_project_root", staticmethod(lambda: tmp_path)
+    )
 
     assert AdminSessionsService._safe_log_id("a/b c") == "a_b_c"
     assert AdminSessionsService._is_relative_to(tmp_path / "child", tmp_path) is True
@@ -1488,13 +1941,27 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
     assert AdminSessionsService._safe_json_text(object())
     assert AdminSessionsService._allowed_flow_lane("unknown")
     assert AdminSessionsService._resolve_llm_lane({"actor_name": "graph worker"})[0]
-    assert AdminSessionsService._resolve_llm_lane({"response_compact": '{"action":"call_rag"}'})[0]
+    assert AdminSessionsService._resolve_llm_lane(
+        {"response_compact": '{"action":"call_rag"}'}
+    )[0]
     assert AdminSessionsService._infer_tool_lane({"tool_name": "rag_search"})
-    assert AdminSessionsService._extract_json_object("```json\n{\"action\":\"call_kg\"}\n```")["action"] == "call_kg"
+    assert (
+        AdminSessionsService._extract_json_object('```json\n{"action":"call_kg"}\n```')[
+            "action"
+        ]
+        == "call_kg"
+    )
     assert AdminSessionsService._expected_tool_lane_for_action("call_history_read")
-    assert AdminSessionsService._summarize_tool_observation({"result": {"error": "boom"}}) == "boom"
-    assert AdminSessionsService._format_tool_input({"arguments": {"q": "x"}}, {"tool_name": "tool", "subquery": "q"}, 1)
-    assert AdminSessionsService._format_tool_result({"result": {"ok": False, "error": "bad"}}, 1)
+    assert (
+        AdminSessionsService._summarize_tool_observation({"result": {"error": "boom"}})
+        == "boom"
+    )
+    assert AdminSessionsService._format_tool_input(
+        {"arguments": {"q": "x"}}, {"tool_name": "tool", "subquery": "q"}, 1
+    )
+    assert AdminSessionsService._format_tool_result(
+        {"result": {"ok": False, "error": "bad"}}, 1
+    )
 
     session_id = "session-flow"
     request_id = "request-flow"
@@ -1516,7 +1983,10 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
                     ensure_ascii=False,
                 ),
                 "not-json",
-                json.dumps({"request_id": "other", "ts": "2026-04-24T10:00:01"}, ensure_ascii=False),
+                json.dumps(
+                    {"request_id": "other", "ts": "2026-04-24T10:00:01"},
+                    ensure_ascii=False,
+                ),
             ]
         ),
         encoding="utf-8",
@@ -1555,7 +2025,9 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
         ],
     }
 
-    events = AdminSessionsService._build_flow_events(session_id=session_id, request_id=request_id, turn=turn)
+    events = AdminSessionsService._build_flow_events(
+        session_id=session_id, request_id=request_id, turn=turn
+    )
     assert events
     assert any(event["detail"]["tool_call_count"] >= 1 for event in events)
     assert AdminSessionsService._read_session_llm_records(session_id, "") == []
@@ -1576,7 +2048,7 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
                         "prompt_preview": "question",
                         "decision_preview": "call_rag",
                         "full_prompt": "question",
-                        "full_decision": "{\"action\":\"call_rag\"}",
+                        "full_decision": '{"action":"call_rag"}',
                         "status": "完成",
                     }
                 ],
@@ -1589,7 +2061,7 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
                         "prompt_preview": "retrieval query",
                         "decision_preview": "命中指南",
                         "full_prompt": "retrieval query",
-                        "full_decision": "{\"ok\":true}",
+                        "full_decision": '{"ok":true}',
                         "status": "成功",
                     }
                 ],
@@ -1597,7 +2069,10 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
         },
     )
     assert {event["lane"] for event in fallback_events} == {"主控编排", "检索代理"}
-    assert any(event["detail"]["merge_strategy"] == "agent_lanes_fallback" for event in fallback_events)
+    assert any(
+        event["detail"]["merge_strategy"] == "agent_lanes_fallback"
+        for event in fallback_events
+    )
     merged_metrics = AdminSessionsService._merge_turn_memory_update(
         {
             "turn_id": "turn-fallback",
@@ -1606,7 +2081,9 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
             "agent_lanes": {
                 "主控编排": [
                     {
-                        "full_decision": json.dumps({"total_tokens": 128}, ensure_ascii=False),
+                        "full_decision": json.dumps(
+                            {"total_tokens": 128}, ensure_ascii=False
+                        ),
                     }
                 ]
             },
@@ -1617,7 +2094,9 @@ def test_admin_sessions_service_flow_helpers_cover_edge_cases(tmp_path, monkeypa
     assert merged_metrics["total_tokens"] == 128
 
 
-async def test_session_stream_service_persists_reply_and_disclaimer(tmp_path, monkeypatch) -> None:
+async def test_session_stream_service_persists_reply_and_disclaimer(
+    tmp_path, monkeypatch
+) -> None:
     import app.backend.services.session_stream_service as module
     from app.backend.services.session_stream_service import (
         MEDICAL_DISCLAIMER_TEXT,
@@ -1625,32 +2104,59 @@ async def test_session_stream_service_persists_reply_and_disclaimer(tmp_path, mo
         append_medical_disclaimer_if_needed,
     )
 
-    assert append_medical_disclaimer_if_needed("建议规律监测血压", "medical_qa").endswith(MEDICAL_DISCLAIMER_TEXT)
+    assert append_medical_disclaimer_if_needed(
+        "建议规律监测血压", "medical_qa"
+    ).endswith(MEDICAL_DISCLAIMER_TEXT)
     markdown_disclaimer_reply = f"建议规律监测血压\n\n*{MEDICAL_DISCLAIMER_TEXT} *"
-    assert append_medical_disclaimer_if_needed(markdown_disclaimer_reply, "medical_qa") == markdown_disclaimer_reply
+    assert (
+        append_medical_disclaimer_if_needed(markdown_disclaimer_reply, "medical_qa")
+        == markdown_disclaimer_reply
+    )
 
     persisted: list[dict[str, Any]] = []
     refreshed: list[int] = []
 
     class FakeMessageManager:
         @staticmethod
-        async def add_message(session_id: str, role: str, content: str, think_content: str = "") -> dict[str, Any]:
-            persisted.append({"session_id": session_id, "role": role, "content": content, "think_content": think_content})
+        async def add_message(
+            session_id: str, role: str, content: str, think_content: str = ""
+        ) -> dict[str, Any]:
+            persisted.append(
+                {
+                    "session_id": session_id,
+                    "role": role,
+                    "content": content,
+                    "think_content": think_content,
+                }
+            )
             return {"id": len(persisted), "session_id": session_id}
 
     class FakeMemoryService:
-        async def refresh_after_turn(self, session_id: str, assistant_message_id: int, turn_artifacts: dict[str, Any]) -> dict[str, Any]:
+        async def refresh_after_turn(
+            self,
+            session_id: str,
+            assistant_message_id: int,
+            turn_artifacts: dict[str, Any],
+        ) -> dict[str, Any]:
             _ = (session_id, turn_artifacts)
             refreshed.append(assistant_message_id)
-            return {"qa_memory": {"qa_pairs": []}, "retrieval_memory": {"questions": []}}
+            return {
+                "qa_memory": {"qa_pairs": []},
+                "retrieval_memory": {"questions": []},
+            }
 
     class FakeEventStreamService:
         async def iter_a2a_stream_events(self, **kwargs):
             _ = kwargs
-            yield {"type": "reply", "msg": "建议规律监测血压"}
+            yield {
+                "type": "reply",
+                "delta": "建议规律监测血压",
+                "task_id": "task-1",
+            }
             yield {
                 "type": "done",
                 "status": "done",
+                "task_id": "task-1",
                 "processing_steps": ["主控分析"],
                 "tool_observations": [],
                 "evidence_summary": {"supported_points": ["规律监测血压"]},
@@ -1680,11 +2186,19 @@ async def test_session_stream_service_persists_reply_and_disclaimer(tmp_path, mo
     ]
     assert lines[0]["type"] == "session"
     assert any(item["type"] == "persisted" for item in lines)
+    assert lines[-1]["type"] == "done"
+    assert "msg" not in lines[-1]
+    assert "delta" not in lines[-1]
+    assert (
+        next(index for index, item in enumerate(lines) if item["type"] == "persisted")
+        < len(lines) - 1
+    )
     assert persisted[0]["role"] == "assistant"
     assert MEDICAL_DISCLAIMER_TEXT in persisted[0]["content"]
 
 
 async def test_session_stream_helper_payload_builders(tmp_path, monkeypatch) -> None:
+    from app.a2a.evidence import build_kg_evidence
     import app.backend.services.session_stream_service as module
 
     monkeypatch.setattr(module, "_project_root", lambda: tmp_path)
@@ -1713,9 +2227,14 @@ async def test_session_stream_helper_payload_builders(tmp_path, monkeypatch) -> 
     assert module._infer_question_scope("what can you do") == "capability_query"
     assert module._sanitize_list(["a", "a", "b"], 3, 10) == ["a", "b"]
     assert module._summarize_tool_result({"result": {"items": [1, 2]}})
-    assert module._read_session_llm_records(session_id, request_id)[0]["response_compact"] == "graph output"
+    assert (
+        module._read_session_llm_records(session_id, request_id)[0]["response_compact"]
+        == "graph output"
+    )
 
-    answer = "结论：控制盐摄入。证据支持点：指南建议监测血压。不确定性与适用边界：需遵医嘱。"
+    answer = (
+        "结论：控制盐摄入。证据支持点：指南建议监测血压。不确定性与适用边界：需遵医嘱。"
+    )
     assert module._extract_section_sentences(answer, "结论", ("证据支持点",))
     assert module._extract_answered_points({}, answer)
     assert module._build_reply_digest(answer)
@@ -1724,14 +2243,26 @@ async def test_session_stream_helper_payload_builders(tmp_path, monkeypatch) -> 
         "agent": "kg",
         "tool_name": "kg_entity_relation_search",
         "subquery": "高血压",
+        "evidence": [
+            build_kg_evidence(
+                {"id": "node-1", "name": "高血压"},
+                tool_name="kg_entity_relation_search",
+                evidence_kind="entity",
+            )
+        ],
         "result": {"ok": True, "result": {"summary": "命中实体"}},
     }
-    lane_card = module._build_lane_card_from_tool_observation(observation, "2026-04-23T10:00:00")
+    lane_card = module._build_lane_card_from_tool_observation(
+        observation, "2026-04-23T10:00:00"
+    )
     assert lane_card["lane_name"]
 
     orchestrator_cards = module._build_orchestrator_cards(
         input_text="高血压如何控制？",
-        memory_context={"qa_memory_text": "问答记忆", "retrieval_question_index_text": "检索记忆"},
+        memory_context={
+            "qa_memory_text": "问答记忆",
+            "retrieval_question_index_text": "检索记忆",
+        },
         telemetry={"llm_calls": 1, "retrieval_round": 1},
         llm_rows=module._read_session_llm_records(session_id, request_id),
         started_at="2026-04-23T10:00:00",
@@ -1750,7 +2281,10 @@ async def test_session_stream_helper_payload_builders(tmp_path, monkeypatch) -> 
             "retrieval_queries": ["高血压 限盐"],
             "retrieval_hits": ["指南"],
         },
-        post_memory={"qa_memory": {"qa_pairs": [{"user_question": "高血压如何控制？"}]}, "retrieval_memory": {"questions": ["高血压 限盐"]}},
+        post_memory={
+            "qa_memory": {"qa_pairs": [{"user_question": "高血压如何控制？"}]},
+            "retrieval_memory": {"questions": ["高血压 限盐"]},
+        },
         started_at="2026-04-23T10:00:00",
         finished_at="2026-04-23T10:00:01",
         compressed_at="2026-04-23T10:00:02",
@@ -1766,7 +2300,10 @@ async def test_session_stream_helper_payload_builders(tmp_path, monkeypatch) -> 
         evidence_summary={"supported_points": ["控制盐摄入"]},
     )
     assert turn_projection["user_question"] == "高血压如何控制？"
-    metrics = module._derive_tool_metrics([observation, {"result": {"ok": False, "error": "blocked"}}])
+    assert turn_projection["evidence"][0]["source_id"] == "node-1"
+    metrics = module._derive_tool_metrics(
+        [observation, {"result": {"ok": False, "error": "blocked"}}]
+    )
     assert metrics["attempted_tool_actions"] == 2
 
     payload = module._build_turn_observability_payload(

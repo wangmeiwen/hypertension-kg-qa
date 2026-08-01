@@ -3,29 +3,48 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import traceback
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 from uuid import uuid4
 
 from fastapi import UploadFile
 
+from app.backend.domain.job_status import BackgroundJobStatus
+from app.backend.observability.session_logger import get_request_id
+from app.backend.security.upload_policy import inspect_upload
 from app.core.concurrency import concurrency_guard
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
 
+DOCUMENT_UPLOAD_SUFFIXES = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".pptx",
+    ".ppt",
+    ".html",
+    ".htm",
+    ".txt",
+    ".md",
+    ".jpg",
+    ".jpeg",
+    ".png",
+}
+DOCUMENT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
+
 
 class AdminDocumentsService:
     """封装管理员文本嵌入业务。"""
 
-    JOB_STATUS_QUEUED = "queued"
-    JOB_STATUS_RUNNING = "running"
-    JOB_STATUS_SUCCEEDED = "succeeded"
-    JOB_STATUS_FAILED = "failed"
-    JOB_STATUS_CANCELLED = "cancelled"
+    JOB_STATUS_QUEUED = BackgroundJobStatus.QUEUED.value
+    JOB_STATUS_RUNNING = BackgroundJobStatus.RUNNING.value
+    JOB_STATUS_SUCCEEDED = BackgroundJobStatus.SUCCEEDED.value
+    JOB_STATUS_FAILED = BackgroundJobStatus.FAILED.value
+    JOB_STATUS_CANCELLED = BackgroundJobStatus.CANCELLED.value
 
     TEXT_EMBED_JOB_TYPE = "text_vector_embed"
     SOFT_TIMEOUT_SECONDS = 300
@@ -75,12 +94,14 @@ class AdminDocumentsService:
         """裁剪对外 job 响应。"""
         return {
             "job_id": job["job_id"],
+            "trace_id": job["trace_id"],
             "job_type": job["job_type"],
             "status": job["status"],
             "progress_text": job.get("progress_text") or "",
             "created_at": job.get("created_at"),
             "started_at": job.get("started_at"),
             "finished_at": job.get("finished_at"),
+            "duration_ms": job.get("duration_ms"),
             "stage": job.get("stage"),
             "stage_detail": job.get("stage_detail") or "",
             "stage_started_at": job.get("stage_started_at"),
@@ -102,14 +123,16 @@ class AdminDocumentsService:
         """
         async with self._job_lock:
             job_id = f"text-embed-job-{uuid4().hex}"
-            job = {
+            job: dict[str, Any] = {
                 "job_id": job_id,
+                "trace_id": get_request_id(),
                 "job_type": job_type,
                 "status": self.JOB_STATUS_QUEUED,
                 "progress_text": "任务已提交，等待执行",
                 "created_at": self._utc_now_iso(),
                 "started_at": None,
                 "finished_at": None,
+                "duration_ms": None,
                 "stage": None,
                 "stage_detail": "",
                 "stage_started_at": None,
@@ -130,7 +153,9 @@ class AdminDocumentsService:
         """在持有任务锁时裁剪已结束的旧任务，限制内存保留数量。"""
         if len(self._jobs) <= self._max_retained_jobs:
             return
-        removable = sorted(self._jobs.values(), key=lambda item: item.get("created_at") or "")
+        removable = sorted(
+            self._jobs.values(), key=lambda item: item.get("created_at") or ""
+        )
         while removable and len(self._jobs) > self._max_retained_jobs:
             candidate = removable.pop(0)
             if candidate.get("status") in {
@@ -140,7 +165,9 @@ class AdminDocumentsService:
             }:
                 self._jobs.pop(candidate["job_id"], None)
 
-    def _mark_current_trace_finished(self, job: dict[str, Any], status: str, error: Optional[str] = None) -> None:
+    def _mark_current_trace_finished(
+        self, job: dict[str, Any], status: str, error: Optional[str] = None
+    ) -> None:
         """把任务当前运行中的 trace 阶段标记为结束。
 
         Args:
@@ -161,7 +188,9 @@ class AdminDocumentsService:
                 started_at = self._parse_utc_iso(item.get("started_at"))
                 finished_dt = self._parse_utc_iso(finished_at)
                 if started_at and finished_dt:
-                    item["duration_ms"] = int((finished_dt - started_at).total_seconds() * 1000)
+                    item["duration_ms"] = int(
+                        (finished_dt - started_at).total_seconds() * 1000
+                    )
                 break
 
     async def _set_job_state(
@@ -201,11 +230,22 @@ class AdminDocumentsService:
                 job["result"] = result
             if error is not None:
                 job["error"] = error
-                self._mark_current_trace_finished(job, status or job.get("status") or self.JOB_STATUS_FAILED, error)
+                self._mark_current_trace_finished(
+                    job, status or job.get("status") or self.JOB_STATUS_FAILED, error
+                )
             if started and not job.get("started_at"):
                 job["started_at"] = self._utc_now_iso()
             if finished:
-                job["finished_at"] = self._utc_now_iso()
+                finished_at = self._utc_now_iso()
+                job["finished_at"] = finished_at
+                started_at = self._parse_utc_iso(
+                    job["started_at"] if job["started_at"] else job["created_at"]
+                )
+                finished_dt = self._parse_utc_iso(finished_at)
+                if started_at is not None and finished_dt is not None:
+                    job["duration_ms"] = int(
+                        (finished_dt - started_at).total_seconds() * 1000
+                    )
 
     async def _enter_job_stage(self, job_id: str, stage: str, detail: str = "") -> None:
         """进入任务新阶段并追加 trace 记录。
@@ -233,6 +273,7 @@ class AdminDocumentsService:
             job["progress_text"] = detail or stage
             job.setdefault("trace", []).append(
                 {
+                    "trace_id": job["trace_id"],
                     "stage": stage,
                     "detail": detail or "",
                     "status": "running",
@@ -278,7 +319,9 @@ class AdminDocumentsService:
                         item["detail"] = detail
                     break
 
-    async def _complete_job_stage(self, job_id: str, detail: Optional[str] = None) -> None:
+    async def _complete_job_stage(
+        self, job_id: str, detail: Optional[str] = None
+    ) -> None:
         """完成任务当前阶段并收口 trace。
 
         Args:
@@ -333,7 +376,9 @@ class AdminDocumentsService:
             warning["stage"] = job.get("stage")
             job.setdefault("warnings", []).append(warning)
 
-    async def _watch_job_soft_timeout(self, job_id: str) -> None:  # pragma: no cover - wall-clock watchdog
+    async def _watch_job_soft_timeout(
+        self, job_id: str
+    ) -> None:  # pragma: no cover - wall-clock watchdog
         """监控单阶段运行时长，超过软超时后周期性追加 warning。"""
         try:
             while True:
@@ -350,8 +395,12 @@ class AdminDocumentsService:
                     elapsed_seconds = int((now_dt - stage_started_at).total_seconds())
                     if elapsed_seconds < self.SOFT_TIMEOUT_SECONDS:
                         continue
-                    last_notice_at = self._parse_utc_iso(job.get("_last_soft_timeout_notice_at"))
-                    if last_notice_at and (now_dt - last_notice_at) < timedelta(seconds=self.SOFT_TIMEOUT_REPEAT_SECONDS):
+                    last_notice_at = self._parse_utc_iso(
+                        job.get("_last_soft_timeout_notice_at")
+                    )
+                    if last_notice_at and (now_dt - last_notice_at) < timedelta(
+                        seconds=self.SOFT_TIMEOUT_REPEAT_SECONDS
+                    ):
                         continue
                     message = f"当前任务已在阶段 {stage} 持续 {elapsed_seconds} 秒"
                     job["_last_soft_timeout_notice_at"] = self._utc_now_iso()
@@ -367,8 +416,11 @@ class AdminDocumentsService:
         except asyncio.CancelledError:
             raise
 
-    def _make_stage_event_callback(self, loop: asyncio.AbstractEventLoop, job_id: str) -> Callable[..., None]:  # pragma: no cover - background thread callback
+    def _make_stage_event_callback(
+        self, loop: asyncio.AbstractEventLoop, job_id: str
+    ) -> Callable[..., None]:  # pragma: no cover - background thread callback
         """生成线程安全的任务阶段事件回调，供阻塞嵌入线程回传进度。"""
+
         def _progress(
             action: str,
             stage: Optional[str] = None,
@@ -388,6 +440,7 @@ class AdminDocumentsService:
                 )
             except RuntimeError:
                 return
+
         return _progress
 
     async def _handle_job_stage_event(  # pragma: no cover - background thread callback
@@ -415,7 +468,9 @@ class AdminDocumentsService:
             await self._enter_job_stage(job_id, stage, detail or progress_text or "")
             return
         if action == "heartbeat":
-            await self._heartbeat_job_stage(job_id, detail=detail or progress_text, progress_text=progress_text)
+            await self._heartbeat_job_stage(
+                job_id, detail=detail or progress_text, progress_text=progress_text
+            )
             return
         if action == "complete":
             await self._complete_job_stage(job_id, detail=detail or progress_text)
@@ -448,7 +503,9 @@ class AdminDocumentsService:
                 progress_text="任务开始执行",
                 started=True,
             )
-            watchdog_task = asyncio.create_task(self._watch_job_soft_timeout(job_id), name=f"watchdog:{job_id}")
+            watchdog_task = asyncio.create_task(
+                self._watch_job_soft_timeout(job_id), name=f"watchdog:{job_id}"
+            )
             async with self._job_lock:
                 if job_id in self._jobs:
                     self._jobs[job_id]["_watchdog_task"] = watchdog_task
@@ -500,7 +557,12 @@ class AdminDocumentsService:
         response_data["message"] = "任务已提交到后台处理"
         return {"ok": True, "data": response_data}
 
-    def _validate_file(self, file_bytes: bytes, filename: str) -> str:
+    def _validate_file(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        declared_mime: str | None = None,
+    ) -> str:
         """校验上传文件基础约束并返回扩展名。
 
         Args:
@@ -513,31 +575,17 @@ class AdminDocumentsService:
         Raises:
             RuntimeError: 文件名、内容、大小或格式不满足要求。
         """
-        if not filename:
-            raise RuntimeError("文件名不能为空")
-        if not file_bytes:
-            raise RuntimeError("上传文件为空")
-        if len(file_bytes) > 50 * 1024 * 1024:
-            raise RuntimeError("文件大小不能超过 50MB")
-
-        allowed_extensions = {
-            ".pdf",
-            ".docx",
-            ".doc",
-            ".pptx",
-            ".ppt",
-            ".html",
-            ".htm",
-            ".txt",
-            ".md",
-            ".jpg",
-            ".jpeg",
-            ".png",
-        }
-        file_ext = Path(filename).suffix.lower()
-        if file_ext not in allowed_extensions:
-            raise RuntimeError(f"不支持的文件格式: {file_ext}。支持的格式: {', '.join(sorted(allowed_extensions))}")
-        return file_ext
+        try:
+            inspection = inspect_upload(
+                content=file_bytes,
+                filename=filename,
+                declared_mime=declared_mime,
+                allowed_suffixes=DOCUMENT_UPLOAD_SUFFIXES,
+                max_bytes=DOCUMENT_UPLOAD_MAX_BYTES,
+            )
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        return inspection.suffix
 
     def _embed_text_document_blocking(  # pragma: no cover - external embedding runtime
         self,
@@ -564,10 +612,18 @@ class AdminDocumentsService:
         self._validate_file(file_bytes, filename)
         stage_callback("complete", "validate_file", "文件校验完成")
 
-        parser = DoclingParser(enable_image_ocr=True, strict_image_ocr=True, progress_callback=stage_callback)
+        parser = DoclingParser(
+            enable_image_ocr=True,
+            strict_image_ocr=True,
+            progress_callback=stage_callback,
+        )
         parsed = parser.parse_bytes(file_bytes, filename)
         metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
-        parser_used = "docling_with_pymupdf_fallback" if metadata.get("pdf_fallback_used") else "docling"
+        parser_used = (
+            "docling_with_pymupdf_fallback"
+            if metadata.get("pdf_fallback_used")
+            else "docling"
+        )
         parse_warning = str(metadata.get("pdf_fallback_reason") or "")
         docling_failed_pages = list(metadata.get("docling_failed_pages") or [])
 
@@ -579,7 +635,9 @@ class AdminDocumentsService:
             parent_chunk_overlap=conf.PARENT_CHUNK_OVERLAP,
             sub_chunk_overlap=conf.SUB_CHUNK_OVERLAP,
         )
-        chunk_source_text = (parsed.text or "").strip() or (parsed.markdown or "").strip()
+        chunk_source_text = (parsed.text or "").strip() or (
+            parsed.markdown or ""
+        ).strip()
         if not chunk_source_text:
             raise ValueError("Docling 解析结果为空，无法分块并嵌入")
 
@@ -600,7 +658,12 @@ class AdminDocumentsService:
         stage_callback("enter", "embed_vector_store", "正在写入文本向量数据库")
         vector_store = self._get_shared_vector_store()
         embedder = DocumentEmbedder(vector_store=vector_store)
-        embed_result = embedder.embed_docling_sub_chunks(sub_chunks, filename, parsed)
+        embed_result = embedder.embed_docling_sub_chunks(
+            sub_chunks,
+            filename,
+            parsed,
+            source_hash=hashlib.sha256(file_bytes).hexdigest(),
+        )
         collection_stats = embedder.get_collection_stats()
         stage_callback("complete", "embed_vector_store", "文本向量数据库写入完成")
 
@@ -616,11 +679,17 @@ class AdminDocumentsService:
             "pdf_fallback_used": bool(metadata.get("pdf_fallback_used")),
             "parent_chunks_count": len(hierarchical_chunks),
             "sub_chunks_count": embed_result.get("sub_chunks_count", 0),
-            "milvus_row_count": collection_stats.get("row_count", 0) if collection_stats.get("success") else None,
+            "milvus_row_count": (
+                collection_stats.get("row_count", 0)
+                if collection_stats.get("success")
+                else None
+            ),
             "message": embed_result.get("message", "文本嵌入完成"),
         }
 
-    async def _embed_text_document_job(self, file_bytes: bytes, filename: str, job_id: str) -> dict[str, Any]:  # pragma: no cover - external embedding runtime
+    async def _embed_text_document_job(
+        self, file_bytes: bytes, filename: str, job_id: str
+    ) -> dict[str, Any]:  # pragma: no cover - external embedding runtime
         """执行文本嵌入后台任务，并通过 keyed lock 串行化向量库写入。
 
         Args:
@@ -633,7 +702,9 @@ class AdminDocumentsService:
         """
         loop = asyncio.get_running_loop()
         stage_callback = self._make_stage_event_callback(loop, job_id)
-        await self._enter_job_stage(job_id, "waiting_for_lock", "等待文本向量数据库写入锁")
+        await self._enter_job_stage(
+            job_id, "waiting_for_lock", "等待文本向量数据库写入锁"
+        )
         async with concurrency_guard.keyed_lock(
             f"rag-milvus:write:{self._config.MILVUS_COLLECTION_NAME}",
             timeout=max(1, int(self._config.TEXT_EMBED_MAX_CONCURRENCY or 1)) * 300,
@@ -660,12 +731,19 @@ class AdminDocumentsService:
         filename = file.filename or "uploaded_file"
         try:
             file_bytes = await file.read()
-            self._validate_file(file_bytes, filename)
+            self._validate_file(file_bytes, filename, file.content_type)
             return await self._start_background_job(
-                runner=lambda job_id: self._embed_text_document_job(file_bytes, filename, job_id),
+                runner=lambda job_id: self._embed_text_document_job(
+                    file_bytes, filename, job_id
+                ),
             )
         except Exception as exc:
-            self._log_api_error("/admin/text-embedding/jobs/embed", "text_embedding_submit", exc, filename=filename)
+            self._log_api_error(
+                "/admin/text-embedding/jobs/embed",
+                "text_embedding_submit",
+                exc,
+                filename=filename,
+            )
             return {"ok": False, "error": f"提交文本嵌入任务失败: {exc}"}
 
     async def get_text_embedding_job(self, job_id: str) -> dict[str, Any]:

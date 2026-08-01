@@ -57,7 +57,9 @@ class A2ADispatchService:
         return getter()
 
     @staticmethod
-    def build_rpc_fallback(data: dict[str, Any], trace_id: str, detail: str) -> dict[str, Any]:
+    def build_rpc_fallback(
+        data: dict[str, Any], trace_id: str, detail: str
+    ) -> dict[str, Any]:
         """构建 A2A RPC 兜底错误响应。"""
         return {
             "jsonrpc": "2.0",
@@ -100,9 +102,19 @@ class A2ADispatchService:
             service = self._get_service(service_kind)
             response = await service.ahandle_rpc(data, trace_id)
             return JSONResponse(status_code=200, content=response)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error(endpoint, "runtime", exc)
-            fallback = self.build_rpc_fallback(data=data, trace_id=trace_id, detail=str(exc))
+            fallback = self.build_rpc_fallback(
+                data=data, trace_id=trace_id, detail=str(exc)
+            )
             return JSONResponse(status_code=200, content=fallback)
 
     async def list_tasks(
@@ -118,9 +130,21 @@ class A2ADispatchService:
             service = self._get_service(service_kind)
             rows = await service.alist_tasks(context_id, limit)
             return {"ok": True, "tasks": rows, "trace_id": trace_id}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error(endpoint, "runtime", exc, context_id=context_id)
-            return {"ok": False, "error": f"a2a_list_tasks_error:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"a2a_list_tasks_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
 
     async def get_task(
         self,
@@ -136,12 +160,29 @@ class A2ADispatchService:
             if not task:
                 return JSONResponse(
                     status_code=404,
-                    content={"ok": False, "error": "task_not_found", "task_id": task_id, "trace_id": trace_id},
+                    content={
+                        "ok": False,
+                        "error": "task_not_found",
+                        "task_id": task_id,
+                        "trace_id": trace_id,
+                    },
                 )
             return {"ok": True, "task": task, "trace_id": trace_id}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error(endpoint, "runtime", exc, task_id=task_id)
-            return {"ok": False, "error": f"a2a_get_task_error:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"a2a_get_task_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
 
     async def stream_task_events(
         self,
@@ -166,11 +207,23 @@ class A2ADispatchService:
         )
         try:
             service = self._get_service(service_kind)
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error(endpoint, "runtime", exc, task_id=task_id)
             return JSONResponse(
                 status_code=500,
-                content={"ok": False, "error": f"a2a_stream_init_error:{str(exc)}", "trace_id": trace_id},
+                content={
+                    "ok": False,
+                    "error": f"a2a_stream_init_error:{str(exc)}",
+                    "trace_id": trace_id,
+                },
             )
 
         safe_cursor = max(0, int(cursor or 0))
@@ -199,7 +252,11 @@ class A2ADispatchService:
             while True:
                 snapshot = await service.aget_task_updates(task_id, safe_cursor)
                 if snapshot is None:
-                    payload = {"type": "error", "error": "task_not_found", "task_id": task_id}
+                    payload = {
+                        "type": "error",
+                        "error": "task_not_found",
+                        "task_id": task_id,
+                    }
                     yield f"event: error\\ndata: {json.dumps(payload, ensure_ascii=False)}\\n\\n"
                     break
 
@@ -282,13 +339,33 @@ class A2ADispatchService:
         try:
             service = self._get_service(service_kind)
             result = await service.acancel_task(task_id, reason)
-            if not bool(result.get("ok")) and str(result.get("error") or "") == "task_not_found":
+            if (
+                not bool(result.get("ok"))
+                and str(result.get("error") or "") == "task_not_found"
+            ):
                 return JSONResponse(
                     status_code=404,
-                    content={"ok": False, "error": "task_not_found", "task_id": task_id, "trace_id": trace_id},
+                    content={
+                        "ok": False,
+                        "error": "task_not_found",
+                        "task_id": task_id,
+                        "trace_id": trace_id,
+                    },
                 )
             result["trace_id"] = trace_id
             return result
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error(endpoint, "runtime", exc, task_id=task_id)
-            return {"ok": False, "error": f"a2a_cancel_task_error:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"a2a_cancel_task_error:{str(exc)}",
+                "trace_id": trace_id,
+            }

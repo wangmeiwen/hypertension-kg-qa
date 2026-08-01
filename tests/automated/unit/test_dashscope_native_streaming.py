@@ -2,9 +2,6 @@ import asyncio
 import pathlib
 import sys
 
-import pytest
-
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -65,7 +62,11 @@ class _FakeAsyncClient:
         return _FakeJsonResponse(
             {
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
             }
         )
 
@@ -96,7 +97,9 @@ class _FakeJsonResponse:
 def test_llm_client_parses_dashscope_stream(monkeypatch):
     """验证 DashScope 兼容流式响应能解析 delta 和 usage。"""
     monkeypatch.setenv("MODEL_API_KEY", "test-key")
-    monkeypatch.setenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv(
+        "MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
     monkeypatch.setenv("MODEL_NAME", "qwen-plus")
 
     from app.a2a.agent import llm_client as llm_client_module
@@ -112,6 +115,7 @@ def test_llm_client_parses_dashscope_stream(monkeypatch):
     monkeypatch.setattr(llm_client_module.httpx, "AsyncClient", _FakeAsyncClient)
 
     client = llm_client_module.LLMClient()
+
     async def _collect():
         rows = []
         async for event in client.stream_chat_with_tokens_async(
@@ -131,13 +135,17 @@ def test_llm_client_parses_dashscope_stream(monkeypatch):
     assert events[-1].completion_tokens == 2
     assert events[-1].total_tokens == 10
     assert _FakeAsyncClient.payloads[0]["json"]["stream"] is True
-    assert _FakeAsyncClient.payloads[0]["json"]["stream_options"] == {"include_usage": True}
+    assert _FakeAsyncClient.payloads[0]["json"]["stream_options"] == {
+        "include_usage": True
+    }
     assert len(_FakeAsyncClient.instances) == 1
 
 
 def test_llm_client_reuses_async_client_for_non_stream_calls(monkeypatch):
     monkeypatch.setenv("MODEL_API_KEY", "test-key")
-    monkeypatch.setenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv(
+        "MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
     monkeypatch.setenv("MODEL_NAME", "qwen-plus")
 
     from app.a2a.agent import llm_client as llm_client_module
@@ -151,8 +159,12 @@ def test_llm_client_reuses_async_client_for_non_stream_calls(monkeypatch):
     client = llm_client_module.LLMClient()
 
     async def _call_twice():
-        first = await client.chat_with_tokens_async(messages=[{"role": "user", "content": "one"}], timeout=3)
-        second = await client.chat_with_tokens_async(messages=[{"role": "user", "content": "two"}], timeout=4)
+        first = await client.chat_with_tokens_async(
+            messages=[{"role": "user", "content": "one"}], timeout=3
+        )
+        second = await client.chat_with_tokens_async(
+            messages=[{"role": "user", "content": "two"}], timeout=4
+        )
         await client.aclose()
         return first, second
 
@@ -166,7 +178,9 @@ def test_llm_client_reuses_async_client_for_non_stream_calls(monkeypatch):
 
 def test_llm_client_reuses_async_client_for_stream_calls(monkeypatch):
     monkeypatch.setenv("MODEL_API_KEY", "test-key")
-    monkeypatch.setenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv(
+        "MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
     monkeypatch.setenv("MODEL_NAME", "qwen-plus")
 
     from app.a2a.agent import llm_client as llm_client_module
@@ -185,7 +199,9 @@ def test_llm_client_reuses_async_client_for_stream_calls(monkeypatch):
     async def _collect_twice():
         rows = []
         for _ in range(2):
-            async for event in client.stream_chat_with_tokens_async(messages=[{"role": "user", "content": "hi"}], timeout=6):
+            async for event in client.stream_chat_with_tokens_async(
+                messages=[{"role": "user", "content": "hi"}], timeout=6
+            ):
                 rows.append(event)
         await client.aclose()
         return rows
@@ -199,7 +215,9 @@ def test_llm_client_reuses_async_client_for_stream_calls(monkeypatch):
 
 def test_llm_client_recreates_async_client_after_aclose(monkeypatch):
     monkeypatch.setenv("MODEL_API_KEY", "test-key")
-    monkeypatch.setenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv(
+        "MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
     monkeypatch.setenv("MODEL_NAME", "qwen-plus")
 
     from app.a2a.agent import llm_client as llm_client_module
@@ -213,9 +231,13 @@ def test_llm_client_recreates_async_client_after_aclose(monkeypatch):
     client = llm_client_module.LLMClient()
 
     async def _call_close_call():
-        await client.chat_with_tokens_async(messages=[{"role": "user", "content": "one"}])
+        await client.chat_with_tokens_async(
+            messages=[{"role": "user", "content": "one"}]
+        )
         await client.aclose()
-        await client.chat_with_tokens_async(messages=[{"role": "user", "content": "two"}])
+        await client.chat_with_tokens_async(
+            messages=[{"role": "user", "content": "two"}]
+        )
         await client.aclose()
 
     asyncio.run(_call_close_call())
@@ -226,7 +248,9 @@ def test_llm_client_recreates_async_client_after_aclose(monkeypatch):
 
 def test_llm_client_reuses_sync_session(monkeypatch):
     monkeypatch.setenv("MODEL_API_KEY", "test-key")
-    monkeypatch.setenv("MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv(
+        "MODEL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
     monkeypatch.setenv("MODEL_NAME", "qwen-plus")
 
     from app.a2a.agent import llm_client as llm_client_module
@@ -250,8 +274,14 @@ def test_llm_client_reuses_sync_session(monkeypatch):
             )
             return _FakeJsonResponse(
                 {
-                    "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    "choices": [
+                        {"message": {"content": "ok"}, "finish_reason": "stop"}
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
                 }
             )
 
@@ -261,8 +291,12 @@ def test_llm_client_reuses_sync_session(monkeypatch):
     monkeypatch.setattr(llm_client_module.requests, "Session", FakeSession)
 
     client = llm_client_module.LLMClient()
-    first = client.chat_with_tokens(messages=[{"role": "user", "content": "one"}], timeout=7)
-    second = client.chat_with_tokens(messages=[{"role": "user", "content": "two"}], timeout=8)
+    first = client.chat_with_tokens(
+        messages=[{"role": "user", "content": "one"}], timeout=7
+    )
+    second = client.chat_with_tokens(
+        messages=[{"role": "user", "content": "two"}], timeout=8
+    )
     asyncio.run(client.aclose())
 
     assert first.content == "ok"
@@ -284,8 +318,16 @@ class _FakeA2AService:
         if self._calls == 1:
             return {
                 "events": [
-                    {"event": "answer_delta", "detail": "你", "metadata": {"delta": "你"}},
-                    {"event": "answer_delta", "detail": "好", "metadata": {"delta": "好"}},
+                    {
+                        "event": "answer_delta",
+                        "detail": "你",
+                        "metadata": {"delta": "你"},
+                    },
+                    {
+                        "event": "answer_delta",
+                        "detail": "好",
+                        "metadata": {"delta": "好"},
+                    },
                 ],
                 "next_cursor": 2,
                 "state": "running",
@@ -303,7 +345,9 @@ class _FakeA2AService:
                         "parts": [{"kind": "text", "text": "你好"}],
                     }
                 ],
-                "status": {"message": {"parts": [{"kind": "text", "text": "task_completed"}]}},
+                "status": {
+                    "message": {"parts": [{"kind": "text", "text": "task_completed"}]}
+                },
             },
         }
 
@@ -312,6 +356,7 @@ def test_event_stream_forwards_answer_delta_without_duplicate_final_reply():
     from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 
     service = A2AEventStreamService(get_a2a=lambda: _FakeA2AService())
+
     async def _collect():
         rows = []
         async for event in service.generate_a2a_stream_events(
@@ -325,7 +370,7 @@ def test_event_stream_forwards_answer_delta_without_duplicate_final_reply():
 
     events = asyncio.run(_collect())
 
-    assert events[0]["type"] == "job"
-    assert [event["type"] for event in events[1:]] == ["msg", "reply", "reply", "done"]
-    assert [event["msg"] for event in events if event["type"] == "reply"] == ["你", "好"]
-    assert events[-1]["msg"] == "你好"
+    assert events[0].type == "job"
+    assert [event.type for event in events[1:]] == ["msg", "reply", "reply", "done"]
+    assert [event.delta for event in events if event.type == "reply"] == ["你", "好"]
+    assert "msg" not in events[-1].model_dump()

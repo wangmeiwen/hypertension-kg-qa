@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backend.app_factory import BackendAppTestOverrides, create_app
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
 from app.backend.testing.deterministic_support import (
     DeterministicA2AService,
@@ -17,9 +17,9 @@ from app.backend.testing.deterministic_support import (
 )
 from app.core.config import Config
 from app.backend.infrastructure.database_health import check_databases
+from app.backend.repositories.database import close_database
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.rag_core.kg_milvus_store import KgMilvusStore
-
 
 pytestmark = [pytest.mark.integration, pytest.mark.db]
 
@@ -59,7 +59,7 @@ def _build_real_fastapi_app(
         get_shared_vector_store=get_shared_vector_store,
     )
     app = create_app(test_overrides=overrides)
-    app.dependency_overrides[require_admin_login] = lambda: None
+    app.dependency_overrides[require_admin_access] = lambda: None
     return app
 
 
@@ -98,7 +98,9 @@ async def test_mysql_session_and_admin_routes_roundtrip(
     client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
     session_id = ""
     try:
-        created = await client.post("/sessions", json={"user_id": user_id, "title": "测试会话"})
+        created = await client.post(
+            "/sessions", json={"user_id": user_id, "title": "测试会话"}
+        )
         assert created.status_code == 200
         session_id = created.json()["data"]["id"]
 
@@ -114,7 +116,9 @@ async def test_mysql_session_and_admin_routes_roundtrip(
         )
         assert add_assistant.status_code == 200
 
-        messages = await client.get(f"/sessions/{session_id}/messages", params={"user_id": user_id})
+        messages = await client.get(
+            f"/sessions/{session_id}/messages", params={"user_id": user_id}
+        )
         assert messages.status_code == 200
         assert len(messages.json()["data"]) == 2
 
@@ -140,6 +144,7 @@ async def test_mysql_session_and_admin_routes_roundtrip(
         await client.aclose()
         cleanup_session_artifacts(session_id)
         await cleanup_mysql_prefix(test_data_prefix)
+        await close_database()
 
 
 @pytest.mark.asyncio
@@ -165,17 +170,22 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
     transport = httpx.ASGITransport(app=app)
     client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
     try:
-        graph = await client.get("/graph/visualization", params={"keyword": test_run_id, "limit": 20})
+        graph = await client.get(
+            "/graph/visualization", params={"keyword": test_run_id, "limit": 20}
+        )
         assert graph.status_code == 200
         graph_nodes = graph.json()["nodes"]
         assert any(
             test_run_id in str(row.get("name") or "")
-            or test_run_id in str((row.get("properties") or {}).get("test_run_id") or "")
+            or test_run_id
+            in str((row.get("properties") or {}).get("test_run_id") or "")
             for row in graph_nodes
         )
 
         node_id = next(
-            row["id"] for row in graph_nodes if "PytestDisease" in (row.get("labels") or [row.get("label")])
+            row["id"]
+            for row in graph_nodes
+            if "PytestDisease" in (row.get("labels") or [row.get("label")])
         )
         detail = await client.get(f"/graph/entity/{node_id}")
         assert detail.status_code == 200
@@ -187,7 +197,10 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
             "/admin/graph/nodes",
             json={
                 "label": "PytestGuideline",
-                "properties": {"name": f"{test_run_id}_指南", "test_run_id": test_run_id},
+                "properties": {
+                    "name": f"{test_run_id}_指南",
+                    "test_run_id": test_run_id,
+                },
             },
         )
         assert created.status_code == 200
@@ -218,6 +231,15 @@ async def test_neo4j_graph_routes_roundtrip(test_run_id) -> None:
         assert cypher.status_code == 200
         assert cypher.json()["ok"] is True
 
+        quality_report = await client.get(
+            "/admin/graph/quality-report",
+            params={"max_nodes": 100000, "max_relationships": 200000},
+        )
+        assert quality_report.status_code == 200
+        assert quality_report.json()["ok"] is True
+        assert quality_report.json()["data"]["total_nodes"] >= 2
+        assert quality_report.json()["data"]["total_relationships"] >= 1
+
         deleted_rel = await client.delete(
             f"/admin/graph/relationships/{created_rel.json()['data']['rel_id']}"
         )
@@ -245,7 +267,9 @@ class _MilvusVectorStatsAdapter:
         )
         self.collection_name = collection_name
         if not self.client.has_collection(collection_name=self.collection_name):
-            self.client.create_collection(collection_name=self.collection_name, dimension=4)
+            self.client.create_collection(
+                collection_name=self.collection_name, dimension=4
+            )
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict
 
-from app.backend.repositories.database import MessageManager, SessionManager
+from app.backend.repositories.session_manager import MessageManager, SessionManager
 from app.backend.services.session_memory_service import SessionMemoryService
 from app.core.langsmith_tracing import set_trace_metadata
 
@@ -101,11 +101,15 @@ class SessionTurnService:
             )
             safe_session_id = str((created_session or {}).get("id") or "")
         else:
-            existed = await self._await_call(self._session_manager.get_session, safe_session_id)
+            existed = await self._await_call(
+                self._session_manager.get_session, safe_session_id
+            )
             if not existed or str(existed.get("user_id") or "") != safe_user_id:
                 return {"ok": False, "error": "session_not_found"}
             existed_title = str(existed.get("title") or "").strip()
-            message_count = await self._await_call(self._message_manager.count_messages, safe_session_id)
+            message_count = await self._await_call(
+                self._message_manager.count_messages, safe_session_id
+            )
             if message_count == 0 and existed_title in {"", self.DEFAULT_SESSION_TITLE}:
                 await self._await_call(
                     self._session_manager.update_session_title,
@@ -143,7 +147,15 @@ class SessionTurnService:
                 str(input_text or ""),
                 user_message_id,
             )
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error(
                 "/process_with_session",
                 "build_runtime_context",
@@ -156,6 +168,12 @@ class SessionTurnService:
             "user_id": safe_user_id,
             "session_id": safe_session_id,
             "user_message_id": user_message_id,
-            "original_input_text": str(runtime_payload.get("original_input_text") or input_text or ""),
-            "memory_context": runtime_payload.get("memory_context") if isinstance(runtime_payload.get("memory_context"), dict) else {},
+            "original_input_text": str(
+                runtime_payload.get("original_input_text") or input_text or ""
+            ),
+            "memory_context": (
+                runtime_payload.get("memory_context")
+                if isinstance(runtime_payload.get("memory_context"), dict)
+                else {}
+            ),
         }

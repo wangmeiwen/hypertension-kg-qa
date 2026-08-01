@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { clearAdminToken, fetchJson, fetchJsonEnvelope, fetchStream, getAdminToken, setAdminToken } from "./http";
-import { clearTestStorage, mockFetchJson, mockFetchStream, mockFetchText } from "../../test/testUtils";
+import {
+  clearAdminToken,
+  fetchJson,
+  fetchJsonEnvelope,
+  fetchStream,
+  getAdminToken,
+  setAdminToken,
+} from "./http";
+import {
+  clearTestStorage,
+  mockFetchJson,
+  mockFetchStream,
+  mockFetchText,
+} from "../../test/testUtils";
 
 describe("http client", () => {
   // 每个用例清理 localStorage 与全局 fetch mock，避免 token 状态串扰。
@@ -14,7 +26,9 @@ describe("http client", () => {
   it("unwraps API envelopes and validates the response schema", async () => {
     mockFetchJson({ ok: true, data: { id: "s1", title: "测试会话" } });
 
-    await expect(fetchJson("/sessions/s1", z.object({ id: z.string(), title: z.string() }))).resolves.toEqual({
+    await expect(
+      fetchJson("/sessions/s1", z.object({ id: z.string(), title: z.string() })),
+    ).resolves.toEqual({
       id: "s1",
       title: "测试会话",
     });
@@ -44,7 +58,9 @@ describe("http client", () => {
   it("rejects envelope responses with ok false", async () => {
     mockFetchJson({ ok: false, error: "会话加载失败" });
 
-    await expect(fetchJsonEnvelope("/admin/sessions", z.object({}), {}, { fallbackMessage: "加载失败" })).rejects.toMatchObject({
+    await expect(
+      fetchJsonEnvelope("/admin/sessions", z.object({}), {}, { fallbackMessage: "加载失败" }),
+    ).rejects.toMatchObject({
       code: "api_error",
       message: "会话加载失败",
     });
@@ -64,7 +80,9 @@ describe("http client", () => {
     setAdminToken("expired");
     mockFetchJson({ ok: false, error: "登录已过期" }, { status: 401 });
 
-    await expect(fetchJson("/admin/status", z.object({}), {}, { auth: true })).rejects.toMatchObject({
+    await expect(
+      fetchJson("/admin/status", z.object({}), {}, { auth: true }),
+    ).rejects.toMatchObject({
       code: "unauthorized",
       message: "登录已过期",
       status: 401,
@@ -105,6 +123,22 @@ describe("http client", () => {
 
     const stream = fetchStream("/process_with_session", { input: "高血压" });
     await expect(stream.next()).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("rejects an incompatible stream schema version", async () => {
+    mockFetchStream(['{"type":"done"}'], {
+      headers: { "X-Stream-Schema-Version": "0.9.0" },
+    });
+
+    const stream = fetchStream(
+      "/process_with_session",
+      { input: "高血压" },
+      "问答流式请求失败",
+      "1.0.0",
+    );
+    await expect(stream.next()).rejects.toMatchObject({
+      code: "schema_version_error",
+    });
   });
 
   it("manages the admin token lifecycle", () => {

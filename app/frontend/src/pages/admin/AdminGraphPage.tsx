@@ -11,7 +11,11 @@ export default function AdminGraphPage() {
 
   return (
     <div className={styles.layout}>
-      <PageHeader eyebrow={t("admin.eyebrow")} title={t("admin.graph")} description={t("admin.description")} />
+      <PageHeader
+        eyebrow={t("admin.eyebrow")}
+        title={t("admin.graph")}
+        description={t("admin.description")}
+      />
       <AdminSubnav />
       <AdminGraphWorkspace />
     </div>

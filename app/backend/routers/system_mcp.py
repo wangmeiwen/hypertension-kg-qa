@@ -50,7 +50,9 @@ def create_system_mcp_router(
         """返回服务 readiness 分级状态。"""
         report = await await_call(build_readiness_report)
         status_code = 200 if report["level"] != "unavailable" else 503
-        return JSONResponse(status_code=status_code, content={"ok": report["ready"], "data": report})
+        return JSONResponse(
+            status_code=status_code, content={"ok": report["ready"], "data": report}
+        )
 
     @router.get("/agent/tools")
     async def agent_tools() -> dict[str, Any]:
@@ -77,7 +79,15 @@ def create_system_mcp_router(
         except RuntimeError as exc:
             log_api_error("/mcp/tools", "runtime", exc)
             return {"ok": False, "error": f"mcp_runtime_error:{str(exc)}"}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             log_api_error("/mcp/tools", "unknown", exc)
             return {"ok": False, "error": f"mcp_unknown_error:{str(exc)}"}
 
@@ -90,7 +100,9 @@ def create_system_mcp_router(
         payload_obj = data.get("payload", {})
         payload = payload_obj if isinstance(payload_obj, dict) else {}
         user_id = str(data.get("user_id") or payload.get("user_id") or "").strip()
-        session_id = str(data.get("session_id") or payload.get("session_id") or "").strip()
+        session_id = str(
+            data.get("session_id") or payload.get("session_id") or ""
+        ).strip()
 
         set_trace_metadata(
             {
@@ -126,12 +138,14 @@ def create_system_mcp_router(
                 if str(server_name or "").strip()
                 else str(tool_name).strip()
             )
-            rows = await mcp.ainvoke_batch([
-                {
-                    "tool_name": resolved_tool_name,
-                    "payload": payload,
-                }
-            ])
+            rows = await mcp.ainvoke_batch(
+                [
+                    {
+                        "tool_name": resolved_tool_name,
+                        "payload": payload,
+                    }
+                ]
+            )
             row_obj = rows[0] if isinstance(rows, list) and rows else {}
             result = (
                 row_obj
@@ -152,13 +166,51 @@ def create_system_mcp_router(
                     result["trace_id"] = trace_id
             return result
         except ValueError as exc:
-            log_api_error("/mcp/invoke", "payload_validation", exc, tool_name=tool_name, server_name=server_name)
-            return {"ok": False, "error": f"invalid_payload:{str(exc)}", "trace_id": trace_id}
+            log_api_error(
+                "/mcp/invoke",
+                "payload_validation",
+                exc,
+                tool_name=tool_name,
+                server_name=server_name,
+            )
+            return {
+                "ok": False,
+                "error": f"invalid_payload:{str(exc)}",
+                "trace_id": trace_id,
+            }
         except RuntimeError as exc:
-            log_api_error("/mcp/invoke", "runtime", exc, tool_name=tool_name, server_name=server_name)
-            return {"ok": False, "error": f"mcp_runtime_error:{str(exc)}", "trace_id": trace_id}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
-            log_api_error("/mcp/invoke", "unknown", exc, tool_name=tool_name, server_name=server_name)
-            return {"ok": False, "error": f"mcp_unknown_error:{str(exc)}", "trace_id": trace_id}
+            log_api_error(
+                "/mcp/invoke",
+                "runtime",
+                exc,
+                tool_name=tool_name,
+                server_name=server_name,
+            )
+            return {
+                "ok": False,
+                "error": f"mcp_runtime_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
+            log_api_error(
+                "/mcp/invoke",
+                "unknown",
+                exc,
+                tool_name=tool_name,
+                server_name=server_name,
+            )
+            return {
+                "ok": False,
+                "error": f"mcp_unknown_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
 
     return router

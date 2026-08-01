@@ -43,7 +43,9 @@ def read_int_env(name: str, default: int, min_value: int, max_value: int) -> int
     return value
 
 
-def read_float_env(name: str, default: float, min_value: float, max_value: float) -> float:
+def read_float_env(
+    name: str, default: float, min_value: float, max_value: float
+) -> float:
     """读取浮点环境变量并限制取值范围。"""
     raw = str(os.getenv(name, str(default))).strip()
     try:
@@ -59,8 +61,12 @@ def read_float_env(name: str, default: float, min_value: float, max_value: float
 
 def build_backend_config() -> BackendConfig:
     """构建后端配置对象。"""
-    raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
-    allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    raw_origins = os.getenv(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"
+    )
+    allowed_origins = [
+        origin.strip() for origin in raw_origins.split(",") if origin.strip()
+    ]
 
     heavy_endpoint_limits: dict[str, dict[str, int]] = {
         "/agent/run": {
@@ -69,18 +75,24 @@ def build_backend_config() -> BackendConfig:
         },
         "/process_with_session": {
             "user_limit": read_int_env("RATE_LIMIT_PROCESS_SESSION_USER", 20, 1, 5000),
-            "session_limit": read_int_env("RATE_LIMIT_PROCESS_SESSION_SESSION", 30, 1, 5000),
+            "session_limit": read_int_env(
+                "RATE_LIMIT_PROCESS_SESSION_SESSION", 30, 1, 5000
+            ),
         },
         "/mcp/invoke": {
             "user_limit": read_int_env("RATE_LIMIT_MCP_INVOKE_USER", 60, 1, 20000),
-            "session_limit": read_int_env("RATE_LIMIT_MCP_INVOKE_SESSION", 80, 1, 20000),
+            "session_limit": read_int_env(
+                "RATE_LIMIT_MCP_INVOKE_SESSION", 80, 1, 20000
+            ),
         },
     }
 
     return BackendConfig(
         allowed_origins=allowed_origins,
         upload_dir=Path("uploads"),
-        preload_kg_entity_relation_embedder=env_bool("KG_ENTITY_RELATION_PRELOAD_EMBEDDER", True),
+        preload_kg_entity_relation_embedder=env_bool(
+            "KG_ENTITY_RELATION_PRELOAD_EMBEDDER", True
+        ),
         rate_limit_window_seconds=read_float_env(
             "HEAVY_API_RATE_LIMIT_WINDOW_SECONDS",
             60.0,

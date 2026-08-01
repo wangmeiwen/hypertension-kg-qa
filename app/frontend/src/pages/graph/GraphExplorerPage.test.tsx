@@ -18,7 +18,13 @@ vi.mock("../../shared/api/graphClient", () => ({
 vi.mock("../../entities/graph/ui/KnowledgeGraphCanvas", () => ({
   DEFAULT_GRAPH_LIMIT: 80,
   GRAPH_LIMIT_OPTIONS: [30, 80, 150],
-  default: ({ onOpenDetail, emptyText }: { onOpenDetail?: (id: string) => void; emptyText?: string }) => (
+  default: ({
+    onOpenDetail,
+    emptyText,
+  }: {
+    onOpenDetail?: (id: string) => void;
+    emptyText?: string;
+  }) => (
     <div>
       <div>{emptyText}</div>
       <button type="button" onClick={() => onOpenDetail?.("1")}>
@@ -39,7 +45,9 @@ describe("GraphExplorerPage", () => {
     graphClientMocks.getEntityDetail.mockResolvedValue({
       entity: { id: "1", name: "高血压", labels: ["Disease"], properties: { code: "I10" } },
       relationships: {
-        incoming: [{ rel_type: "RELATED_TO", source_name: "血压升高", rel_props: { evidence: "指南" } }],
+        incoming: [
+          { rel_type: "RELATED_TO", source_name: "血压升高", rel_props: { evidence: "指南" } },
+        ],
         outgoing: [{ rel_type: "TREATS", target_name: "降压药", rel_props: {} }],
       },
     });

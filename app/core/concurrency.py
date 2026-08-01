@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-import time
 from collections import defaultdict
 from typing import Any, AsyncIterator, Iterator
 from uuid import uuid4
@@ -27,6 +26,7 @@ class AsyncReaderWriterLock:
 
     async def acquire_read(self, timeout: float | None = None) -> None:
         """获取读锁，存在等待写者时会等待以避免写饥饿。"""
+
         async def _wait() -> None:
             """等待当前写锁释放并登记读者。"""
             async with self._condition:
@@ -45,6 +45,7 @@ class AsyncReaderWriterLock:
 
     async def acquire_write(self, timeout: float | None = None) -> None:
         """获取写锁，等待所有读者和写者退出。"""
+
         async def _wait() -> None:
             """登记等待写者并等待独占进入条件。"""
             async with self._condition:
@@ -82,11 +83,15 @@ class ConcurrencyGuard:
     def __init__(self) -> None:
         """初始化按 key 复用的异步锁、读写锁和同步锁容器。"""
         self._async_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._rw_locks: defaultdict[str, AsyncReaderWriterLock] = defaultdict(AsyncReaderWriterLock)
+        self._rw_locks: defaultdict[str, AsyncReaderWriterLock] = defaultdict(
+            AsyncReaderWriterLock
+        )
         self._sync_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
     @contextlib.asynccontextmanager
-    async def keyed_lock(self, key: str, timeout: float | None = None) -> AsyncIterator[None]:
+    async def keyed_lock(
+        self, key: str, timeout: float | None = None
+    ) -> AsyncIterator[None]:
         """获取指定 key 的进程内异步互斥锁。"""
         lock = self._async_locks[str(key)]
         await _wait_with_timeout(lock.acquire(), timeout)
@@ -96,7 +101,9 @@ class ConcurrencyGuard:
             lock.release()
 
     @contextlib.asynccontextmanager
-    async def reader_lock(self, key: str, timeout: float | None = None) -> AsyncIterator[None]:
+    async def reader_lock(
+        self, key: str, timeout: float | None = None
+    ) -> AsyncIterator[None]:
         """获取指定 key 的进程内读锁。"""
         lock = self._rw_locks[str(key)]
         await lock.acquire_read(timeout=timeout)
@@ -106,7 +113,9 @@ class ConcurrencyGuard:
             await lock.release_read()
 
     @contextlib.asynccontextmanager
-    async def writer_lock(self, key: str, timeout: float | None = None) -> AsyncIterator[None]:
+    async def writer_lock(
+        self, key: str, timeout: float | None = None
+    ) -> AsyncIterator[None]:
         """获取指定 key 的进程内写锁。"""
         lock = self._rw_locks[str(key)]
         await lock.acquire_write(timeout=timeout)
@@ -147,18 +156,31 @@ class ConcurrencyGuard:
                 expires_at = IF(expires_at < UTC_TIMESTAMP(), VALUES(expires_at), expires_at),
                 heartbeat_at = IF(expires_at < UTC_TIMESTAMP(), VALUES(heartbeat_at), heartbeat_at)
             """,
-            {"lock_key": safe_key, "job_id": str(job_id or ""), "owner": safe_owner, "ttl": expires_seconds},
+            {
+                "lock_key": safe_key,
+                "job_id": str(job_id or ""),
+                "owner": safe_owner,
+                "ttl": expires_seconds,
+            },
         )
-        row = await fetch_one("SELECT owner FROM operation_locks WHERE lock_key = :lock_key", {"lock_key": safe_key})
+        row = await fetch_one(
+            "SELECT owner FROM operation_locks WHERE lock_key = :lock_key",
+            {"lock_key": safe_key},
+        )
         if str((row or {}).get("owner") or "") != safe_owner:
             raise LockAcquireTimeout(f"mysql_lock_busy:{safe_key}")
+
         async def _heartbeat_loop() -> None:
             interval = max(1.0, min(30.0, expires_seconds / 3))
             while True:
                 await asyncio.sleep(interval)
-                await self.heartbeat_mysql_lock(safe_key, safe_owner, ttl_seconds=expires_seconds)
+                await self.heartbeat_mysql_lock(
+                    safe_key, safe_owner, ttl_seconds=expires_seconds
+                )
 
-        heartbeat_task = asyncio.create_task(_heartbeat_loop(), name=f"operation-lock-heartbeat:{safe_key}")
+        heartbeat_task = asyncio.create_task(
+            _heartbeat_loop(), name=f"operation-lock-heartbeat:{safe_key}"
+        )
         try:
             yield {"lock_key": safe_key, "owner": safe_owner}
         finally:
@@ -170,7 +192,9 @@ class ConcurrencyGuard:
                 {"lock_key": safe_key, "owner": safe_owner},
             )
 
-    async def heartbeat_mysql_lock(self, key: str, owner: str, ttl_seconds: int = 900) -> None:
+    async def heartbeat_mysql_lock(
+        self, key: str, owner: str, ttl_seconds: int = 900
+    ) -> None:
         """刷新 MySQL 持久锁的心跳和过期时间。"""
         from app.backend.repositories.database import execute
 
@@ -181,7 +205,11 @@ class ConcurrencyGuard:
                 expires_at = TIMESTAMPADD(SECOND, :ttl, UTC_TIMESTAMP())
             WHERE lock_key = :lock_key AND owner = :owner
             """,
-            {"lock_key": str(key), "owner": str(owner), "ttl": max(1, int(ttl_seconds or 900))},
+            {
+                "lock_key": str(key),
+                "owner": str(owner),
+                "ttl": max(1, int(ttl_seconds or 900)),
+            },
         )
 
 

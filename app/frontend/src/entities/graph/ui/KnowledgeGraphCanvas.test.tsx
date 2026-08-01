@@ -46,7 +46,9 @@ vi.mock("./ForceGraphCanvas", () => ({
 
 describe("KnowledgeGraphCanvas", () => {
   it("renders empty state", () => {
-    renderWithProviders(<KnowledgeGraphCanvas graph={{ nodes: [], links: [] }} emptyText="暂无测试图谱" />);
+    renderWithProviders(
+      <KnowledgeGraphCanvas graph={{ nodes: [], links: [] }} emptyText="暂无测试图谱" />,
+    );
 
     expect(screen.getByText("暂无测试图谱")).toBeVisible();
   });

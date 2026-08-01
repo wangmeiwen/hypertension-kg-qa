@@ -3,7 +3,6 @@
 提供 RAG 子代理 LangGraph 拓扑构建、编译和降级运行能力。
 """
 
-
 from __future__ import annotations
 
 import logging
@@ -23,18 +22,29 @@ from app.a2a.subagents.rag.state import RagSubAgentState
 logger = logging.getLogger(__name__)
 
 try:
-    from langgraph.graph import END, StateGraph
+    from langgraph.graph import END as _IMPORTED_LANGGRAPH_END
+    from langgraph.graph import StateGraph as _ImportedLangGraphStateGraph
 
+    _LANGGRAPH_END: Any = _IMPORTED_LANGGRAPH_END
+    _state_graph_factory: Any = _ImportedLangGraphStateGraph
     _LANGGRAPH_AVAILABLE = True
-except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+except (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    OSError,
+    ImportError,
+) as exc:
     logger.warning(
         "LangGraph import failed for RAG subagent, fallback runner enabled: error_type=%s error=%s",
         type(exc).__name__,
         exc,
         exc_info=True,
     )
-    END = "__end__"
-    StateGraph = None
+    _LANGGRAPH_END = "__end__"
+    _state_graph_factory = None
     _LANGGRAPH_AVAILABLE = False
 
 
@@ -92,7 +102,7 @@ def build_rag_graph(tool_gateway: MCPToolGateway) -> Any:
         """
         return await node_execute_rag_search(state, tool_gateway)
 
-    builder: StateGraph = StateGraph(RagSubAgentState)
+    builder = _state_graph_factory(RagSubAgentState)
     builder.add_node("validate_constraints", node_validate_constraints)
     builder.add_node("generate_query_statement", node_generate_query_statement)
     builder.add_node("execute_rag_search", _execute_rag_search)
@@ -111,7 +121,7 @@ def build_rag_graph(tool_gateway: MCPToolGateway) -> Any:
             "done": "build_response",
         },
     )
-    builder.add_edge("build_response", END)
+    builder.add_edge("build_response", _LANGGRAPH_END)
     return builder
 
 
@@ -130,7 +140,9 @@ def compile_rag_graph(tool_gateway: MCPToolGateway) -> Any:
     return graph.compile()
 
 
-async def run_rag_graph(compiled_graph: Any, state: RagSubAgentState) -> RagSubAgentState:
+async def run_rag_graph(
+    compiled_graph: Any, state: RagSubAgentState
+) -> RagSubAgentState:
     """运行已编译的 RAG 子代理执行图。
 
     Args:
@@ -140,25 +152,8 @@ async def run_rag_graph(compiled_graph: Any, state: RagSubAgentState) -> RagSubA
     Returns:
         图执行后的最终状态；异常兼容分支下至少返回原始状态。
     """
-    ainvoke: Callable[[RagSubAgentState], Awaitable[RagSubAgentState]] = getattr(compiled_graph, "ainvoke")
-    output_keys = list(
-        dict.fromkeys(
-            [
-                *list(state.keys()),
-                "query_statements",
-                "tool_calls",
-                "tool_results",
-                "evidence",
-                "no_signal",
-                "reason",
-                "telemetry",
-                "attempt_count",
-                "final_result",
-            ]
-        )
+    ainvoke: Callable[[RagSubAgentState], Awaitable[RagSubAgentState]] = getattr(
+        compiled_graph, "ainvoke"
     )
-    try:
-        output = await ainvoke(state, output_keys=output_keys)
-    except TypeError:
-        output = await ainvoke(state)
+    output = await ainvoke(state)
     return output if isinstance(output, dict) else state

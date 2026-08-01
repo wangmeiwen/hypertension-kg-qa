@@ -47,7 +47,11 @@ def _normalize_refine_terms(arguments: dict[str, Any]) -> list[str]:
     """从 arguments 中提取并标准化 refine_terms。"""
     if not isinstance(arguments, dict):
         return []
-    return _normalize_query_terms(arguments.get("refine_terms") if isinstance(arguments.get("refine_terms"), list) else [])
+    return _normalize_query_terms(
+        arguments.get("refine_terms")
+        if isinstance(arguments.get("refine_terms"), list)
+        else []
+    )
 
 
 def _append_refine_terms(base_query: str, refine_terms: list[str]) -> str:
@@ -83,7 +87,10 @@ def build_kg_query_payload(
     refine_terms = _normalize_refine_terms(args)
     fallback_query = _fallback_query_from_terms(q, terms)
     cypher = str(args.get("cypher") or "").strip()
-    keyword = _append_refine_terms(str(args.get("keyword") or args.get("query") or fallback_query).strip(), refine_terms)
+    keyword = _append_refine_terms(
+        str(args.get("keyword") or args.get("query") or fallback_query).strip(),
+        refine_terms,
+    )
     list_all_nodes = bool(args.get("list_all_nodes"))
     # 主控策略固定使用保守 limit，避免外部参数放大单轮召回。
     limit = int(conf.KG_RETRIEVAL_TOP_K_DEFAULT)
@@ -123,7 +130,9 @@ def build_kg_entity_relation_payload(
     top_k = int(conf.KG_RETRIEVAL_TOP_K_DEFAULT)
     top_k = max(1, min(top_k, conf.KG_RETRIEVAL_TOP_K_MAX))
     payload = {
-        "query": _append_refine_terms(str(args.get("query") or fallback_query).strip(), refine_terms),
+        "query": _append_refine_terms(
+            str(args.get("query") or fallback_query).strip(), refine_terms
+        ),
         "top_k": top_k,
     }
     optional_fields = [
@@ -140,7 +149,9 @@ def build_kg_entity_relation_payload(
     return payload
 
 
-def validate_generated_payload(tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+def validate_generated_payload(
+    tool_name: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     """校验生成的 KG 工具载荷是否满足目标工具的最低要求。
 
     Args:

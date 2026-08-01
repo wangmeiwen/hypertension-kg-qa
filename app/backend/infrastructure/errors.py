@@ -7,6 +7,10 @@ class UnauthorizedError(Exception):
     """未授权异常。"""
 
 
+class ForbiddenError(Exception):
+    """权限不足异常。"""
+
+
 class NotFoundError(Exception):
     """资源不存在异常。"""
 
@@ -16,7 +20,25 @@ class InvalidRequestError(Exception):
 
 
 class RateLimitedError(Exception):
-    """限流异常。"""
+    """包含标准限流响应字段的异常。"""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        dimension: str,
+        retry_after_ms: int,
+        trace_id: str,
+        limit: int,
+        window_seconds: float,
+    ):
+        super().__init__("rate_limited")
+        self.endpoint = endpoint
+        self.dimension = dimension
+        self.retry_after_ms = retry_after_ms
+        self.trace_id = trace_id
+        self.limit = limit
+        self.window_seconds = window_seconds
 
 
 class ServiceUnavailableError(Exception):

@@ -29,7 +29,9 @@ class DatabaseManager:
         Returns:
             None: 无返回值。
         """
-        self.neo4j_host = self._normalize_loopback_host(self._parse_host(conf.NEO4J_URI))
+        self.neo4j_host = self._normalize_loopback_host(
+            self._parse_host(conf.NEO4J_URI)
+        )
         self.neo4j_port = 7687
         self.milvus_host = self._normalize_loopback_host(conf.MILVUS_HOST)
         self.milvus_port = int(conf.MILVUS_PORT)
@@ -87,7 +89,9 @@ class DatabaseManager:
             bool: True 表示端口可连，False 表示不可连或连接失败。
         """
         try:
-            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=timeout
+            )
             writer.close()
             await writer.wait_closed()
             _ = reader
@@ -146,8 +150,12 @@ class DatabaseManager:
         Returns:
             Dict[str, Any]: 聚合后的数据库健康状态报告。
         """
-        neo4j_status, milvus_status = await asyncio.gather(self.check_neo4j(), self.check_milvus())
-        all_running = bool(neo4j_status.get("is_running")) and bool(milvus_status.get("is_running"))
+        neo4j_status, milvus_status = await asyncio.gather(
+            self.check_neo4j(), self.check_milvus()
+        )
+        all_running = bool(neo4j_status.get("is_running")) and bool(
+            milvus_status.get("is_running")
+        )
         return {
             "all_running": all_running,
             "neo4j": neo4j_status,

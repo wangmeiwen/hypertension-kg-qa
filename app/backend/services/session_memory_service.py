@@ -7,15 +7,20 @@ import logging
 from difflib import SequenceMatcher
 from typing import Any
 
+from pydantic import ValidationError
+
+from app.a2a.models import Evidence
 from app.backend.repositories.database import fetch_all, fetch_one
+from app.backend.repositories.row_utils import to_iso_timestamp
 from app.backend.repositories.session_memory_manager import SessionMemoryManager
 from app.backend.services.session_memory_types import (
+    EvidencePayload,
+    LegacyRetrievalRecord,
     MemoryContext,
     QAMemoryEntry,
     QAMemorySnapshot,
     RetrievalHistoryEntry,
     RetrievalMemorySnapshot,
-    RetrievalRecord,
     RuntimeMemoryPayload,
     SessionMemorySnapshot,
 )
@@ -70,15 +75,19 @@ class SessionMemoryService:
             "qa_pairs": [],
         }
 
-    def _empty_retrieval_memory(self, last_message_id: int = 0) -> RetrievalMemorySnapshot:
+    def _empty_retrieval_memory(
+        self, last_message_id: int = 0
+    ) -> RetrievalMemorySnapshot:
         """构造空的检索历史记忆快照。"""
         return {
-            "version": 2,
+            "version": 3,
             "last_message_id": max(0, int(last_message_id or 0)),
             "questions": [],
         }
 
-    def _empty_snapshot(self, last_message_id: int = 0, updated_at: str = "") -> SessionMemorySnapshot:
+    def _empty_snapshot(
+        self, last_message_id: int = 0, updated_at: str = ""
+    ) -> SessionMemorySnapshot:
         """构造空的会话记忆总快照。"""
         return {
             "qa_memory": self._empty_qa_memory(last_message_id),
@@ -98,7 +107,9 @@ class SessionMemoryService:
             "user_question": question,
             "assistant_answer": answer,
             "user_message_id": max(0, self._to_int(row.get("user_message_id"), 0)),
-            "assistant_message_id": max(0, self._to_int(row.get("assistant_message_id"), 0)),
+            "assistant_message_id": max(
+                0, self._to_int(row.get("assistant_message_id"), 0)
+            ),
             "created_at": self._sanitize_text(row.get("created_at"), 64),
         }
 
@@ -106,7 +117,8 @@ class SessionMemoryService:
         """标准化问答记忆对象并应用窗口裁剪。"""
         source = data if isinstance(data, dict) else {}
         rows: list[QAMemoryEntry] = []
-        for item in source.get("qa_pairs") if isinstance(source.get("qa_pairs"), list) else []:
+        source_pairs = source.get("qa_pairs")
+        for item in source_pairs if isinstance(source_pairs, list) else []:
             normalized = self._sanitize_qa_entry(item)
             if normalized is not None:
                 rows.append(normalized)
@@ -116,65 +128,196 @@ class SessionMemoryService:
             "qa_pairs": rows[-self._QA_WINDOW :],
         }
 
-    def _sanitize_retrieval_record(self, row: Any) -> RetrievalRecord | None:
-        """标准化单条检索记录。"""
+    def _sanitize_retrieval_record(self, row: Any) -> LegacyRetrievalRecord | None:
+        """标准化 v2 检索记录，仅用于旧数据迁移。"""
         if not isinstance(row, dict):
             return None
         query = self._sanitize_text(row.get("query"), self._QUESTION_MAX_LEN)
-        result_content = self._sanitize_text(row.get("result_content"), self._RESULT_MAX_LEN)
+        result_content = self._sanitize_text(
+            row.get("result_content"), self._RESULT_MAX_LEN
+        )
         if not query or not result_content:
             return None
-        record: RetrievalRecord = {
+        record: LegacyRetrievalRecord = {
             "agent": self._sanitize_text(row.get("agent"), 24) or "unknown",
             "query": query,
             "result_content": result_content,
             "captured_at": self._sanitize_text(row.get("captured_at"), 64),
-            "citations": self._sanitize_list(row.get("citations"), max_items=6, max_len=120),
+            "citations": self._sanitize_list(
+                row.get("citations"), max_items=6, max_len=120
+            ),
         }
-        for key in ("page_num", "start_page", "end_page"):
-            value = row.get(key)
-            if value not in (None, ""):
-                record[key] = self._to_int(value, 0)
+        page_num = row.get("page_num")
+        start_page = row.get("start_page")
+        end_page = row.get("end_page")
+        if page_num not in (None, ""):
+            record["page_num"] = self._to_int(page_num, 0)
+        if start_page not in (None, ""):
+            record["start_page"] = self._to_int(start_page, 0)
+        if end_page not in (None, ""):
+            record["end_page"] = self._to_int(end_page, 0)
         chunk_id = self._sanitize_text(row.get("chunk_id"), 120)
         if chunk_id:
             record["chunk_id"] = chunk_id
         return record
+
+    @staticmethod
+    def _sanitize_provenance(value: Any) -> dict[str, Any]:
+        """限制历史 Evidence provenance 体积并保持可追溯字段。"""
+        if not isinstance(value, dict):
+            return {}
+        try:
+            serialized = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return {}
+        if len(serialized) <= 2400:
+            parsed = json.loads(serialized)
+            return parsed if isinstance(parsed, dict) else {}
+        compact = {
+            key: value.get(key)
+            for key in (
+                "tool",
+                "kind",
+                "start_page",
+                "end_page",
+                "timestamp",
+            )
+            if value.get(key) not in (None, "")
+        }
+        compact["truncated"] = True
+        return compact
+
+    def _sanitize_evidence_item(self, row: Any) -> EvidencePayload | None:
+        """校验并裁剪单条历史 Evidence。"""
+        if not isinstance(row, dict):
+            return None
+        try:
+            evidence = Evidence.model_validate(row)
+        except ValidationError:
+            return None
+        content = self._sanitize_text(evidence.content, self._RESULT_MAX_LEN)
+        if not content:
+            return None
+        return Evidence(
+            source_type=self._sanitize_text(evidence.source_type, 32),
+            source_id=self._sanitize_text(evidence.source_id, 160),
+            document_id=self._sanitize_text(evidence.document_id, 160),
+            chunk_id=self._sanitize_text(evidence.chunk_id, 160),
+            page=evidence.page,
+            section=self._sanitize_text(evidence.section, 160),
+            content=content,
+            score=evidence.score,
+            retrieval_method=self._sanitize_text(evidence.retrieval_method, 80),
+            provenance=self._sanitize_provenance(evidence.provenance),
+        ).model_dump()
+
+    def _legacy_record_to_evidence(
+        self, row: LegacyRetrievalRecord
+    ) -> EvidencePayload | None:
+        """将 v2 query_record 转换为 v3 Evidence。"""
+        citations = self._sanitize_list(row.get("citations"), max_items=6, max_len=120)
+        agent = self._sanitize_text(row.get("agent"), 24) or "unknown"
+        chunk_id = self._sanitize_text(row.get("chunk_id"), 160)
+        source_id = citations[0] if citations else chunk_id
+        source_type = (
+            "knowledge_graph"
+            if agent == "kg"
+            else "document" if agent == "rag" else "history"
+        )
+        page_value = row.get("page_num")
+        page = self._to_int(page_value, 0) if page_value not in (None, "") else None
+        evidence = Evidence(
+            source_type=source_type,
+            source_id=source_id,
+            document_id=source_id if source_type == "document" else "",
+            chunk_id=chunk_id,
+            page=page,
+            content=self._sanitize_text(
+                row.get("result_content"), self._RESULT_MAX_LEN
+            ),
+            retrieval_method="legacy_history",
+            provenance={
+                "tool": "history_v2_migration",
+                "agent": agent,
+                "query": self._sanitize_text(row.get("query"), self._QUESTION_MAX_LEN),
+                "captured_at": self._sanitize_text(row.get("captured_at"), 64),
+                "citations": citations,
+                "start_page": row.get("start_page"),
+                "end_page": row.get("end_page"),
+            },
+        )
+        return self._sanitize_evidence_item(evidence.model_dump())
+
+    def _sanitize_evidence(self, rows: Any) -> list[EvidencePayload]:
+        """批量校验并限制历史 Evidence 数量。"""
+        if not isinstance(rows, list):
+            return []
+        evidence: list[EvidencePayload] = []
+        for item in rows[:18]:
+            normalized = self._sanitize_evidence_item(item)
+            if normalized is not None:
+                evidence.append(normalized)
+        return evidence
+
     def _sanitize_retrieval_entry(self, row: Any) -> RetrievalHistoryEntry | None:
         """标准化单条历史检索问题记录。"""
         if not isinstance(row, dict):
             return None
         history_id = self._sanitize_text(row.get("history_id"), 64)
-        user_question = self._sanitize_text(row.get("user_question"), self._QUESTION_MAX_LEN)
+        user_question = self._sanitize_text(
+            row.get("user_question"), self._QUESTION_MAX_LEN
+        )
         if not history_id or not user_question:
             return None
-        records: list[RetrievalRecord] = []
-        for item in row.get("records") if isinstance(row.get("records"), list) else []:
-            normalized = self._sanitize_retrieval_record(item)
-            if normalized is not None:
-                records.append(normalized)
-        if not records:
+        evidence = self._sanitize_evidence(row.get("evidence"))
+        if not evidence:
+            source_records = row.get("records")
+            for item in source_records if isinstance(source_records, list) else []:
+                legacy_record = self._sanitize_retrieval_record(item)
+                if legacy_record is None:
+                    continue
+                migrated = self._legacy_record_to_evidence(legacy_record)
+                if migrated is not None:
+                    evidence.append(migrated)
+        if not evidence:
             return None
-        agent_types = self._sanitize_list(row.get("agent_types"), max_items=3, max_len=24)
+        agent_types = self._sanitize_list(
+            row.get("agent_types"), max_items=3, max_len=24
+        )
         if not agent_types:
-            agent_types = sorted({str(item.get("agent") or "unknown") for item in records})
+            agent_types = sorted(
+                {
+                    (
+                        "kg"
+                        if item.get("source_type") == "knowledge_graph"
+                        else (
+                            "rag"
+                            if item.get("source_type") == "document"
+                            else "history"
+                        )
+                    )
+                    for item in evidence
+                }
+            )
         return {
             "history_id": history_id,
             "user_question": user_question,
             "created_at": self._sanitize_text(row.get("created_at"), 64),
             "agent_types": agent_types,
-            "records": records,
+            "evidence": evidence,
         }
 
     def _sanitize_retrieval_memory(self, data: Any) -> RetrievalMemorySnapshot:
         """标准化检索记忆对象并限制历史长度。"""
         source = data if isinstance(data, dict) else {}
         rows: list[RetrievalHistoryEntry] = []
-        for item in source.get("questions") if isinstance(source.get("questions"), list) else []:
+        source_questions = source.get("questions")
+        for item in source_questions if isinstance(source_questions, list) else []:
             normalized = self._sanitize_retrieval_entry(item)
             if normalized is not None:
                 rows.append(normalized)
         return {
-            "version": max(2, self._to_int(source.get("version"), 2)),
+            "version": max(3, self._to_int(source.get("version"), 3)),
             "last_message_id": max(0, self._to_int(source.get("last_message_id"), 0)),
             "questions": rows[-self._RETRIEVAL_HISTORY_LIMIT :],
         }
@@ -232,12 +375,14 @@ class SessionMemoryService:
                     "role": self._sanitize_text(row.get("role"), 20).lower(),
                     "content": str(row.get("content") or ""),
                     "think_content": str(row.get("think_content") or ""),
-                    "created_at": row.get("created_at").isoformat() if row.get("created_at") else "",
+                    "created_at": to_iso_timestamp(row.get("created_at")) or "",
                 }
             )
         return output
 
-    def _build_qa_pairs_from_messages(self, messages: list[dict[str, Any]]) -> QAMemorySnapshot:
+    def _build_qa_pairs_from_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> QAMemorySnapshot:
         """从消息序列重建最近问答对记忆。"""
         pending_users: list[dict[str, Any]] = []
         pairs: list[QAMemoryEntry] = []
@@ -255,7 +400,9 @@ class SessionMemoryService:
             if role != "assistant" or not pending_users:
                 continue
             user_row = pending_users.pop(0)
-            question = self._sanitize_text(user_row.get("content"), self._QUESTION_MAX_LEN)
+            question = self._sanitize_text(
+                user_row.get("content"), self._QUESTION_MAX_LEN
+            )
             answer = self._sanitize_text(content, self._ANSWER_MAX_LEN)
             if not question or not answer:
                 continue
@@ -265,7 +412,9 @@ class SessionMemoryService:
                     "assistant_answer": answer,
                     "user_message_id": self._to_int(user_row.get("id"), 0),
                     "assistant_message_id": message_id,
-                    "created_at": self._sanitize_text(row.get("created_at") or user_row.get("created_at"), 64),
+                    "created_at": self._sanitize_text(
+                        row.get("created_at") or user_row.get("created_at"), 64
+                    ),
                 }
             )
         return {
@@ -274,67 +423,76 @@ class SessionMemoryService:
             "qa_pairs": pairs[-self._QA_WINDOW :],
         }
 
-    def _build_retrieval_question_index(self, retrieval_memory: RetrievalMemorySnapshot) -> list[dict[str, object]]:
+    def _build_retrieval_question_index(
+        self, retrieval_memory: RetrievalMemorySnapshot
+    ) -> list[dict[str, object]]:
         """从检索记忆构建轻量问题索引。"""
         rows: list[dict[str, object]] = []
-        for item in retrieval_memory.get("questions", []):
+        for item in retrieval_memory["questions"]:
             if not isinstance(item, dict):
                 continue
-            records = item.get("records") if isinstance(item.get("records"), list) else []
+            evidence = item["evidence"]
             rows.append(
                 {
                     "history_id": self._sanitize_text(item.get("history_id"), 64),
-                    "user_question": self._sanitize_text(item.get("user_question"), self._QUESTION_MAX_LEN),
+                    "user_question": self._sanitize_text(
+                        item.get("user_question"), self._QUESTION_MAX_LEN
+                    ),
                     "created_at": self._sanitize_text(item.get("created_at"), 64),
-                    "agent_types": self._sanitize_list(item.get("agent_types"), max_items=3, max_len=24),
-                    "record_count": len(records),
+                    "agent_types": self._sanitize_list(
+                        item.get("agent_types"), max_items=3, max_len=24
+                    ),
+                    "evidence_count": len(evidence),
                 }
             )
         return rows[-self._RETRIEVAL_HISTORY_LIMIT :]
 
     def _format_qa_memory_text(self, qa_memory: QAMemorySnapshot) -> str:
         """将问答记忆快照格式化为提示词文本。"""
-        rows = qa_memory.get("qa_pairs") if isinstance(qa_memory.get("qa_pairs"), list) else []
+        rows = (
+            qa_memory.get("qa_pairs")
+            if isinstance(qa_memory.get("qa_pairs"), list)
+            else []
+        )
         if not rows:
             return "当前暂无问答对"
         parts: list[str] = []
         for idx, row in enumerate(rows[-self._QA_WINDOW :], start=1):
             if not isinstance(row, dict):
                 continue
-            question = self._sanitize_text(row.get("user_question"), self._QUESTION_MAX_LEN)
-            answer = self._sanitize_text(row.get("assistant_answer"), self._ANSWER_MAX_LEN)
+            question = self._sanitize_text(
+                row.get("user_question"), self._QUESTION_MAX_LEN
+            )
+            answer = self._sanitize_text(
+                row.get("assistant_answer"), self._ANSWER_MAX_LEN
+            )
             parts.append(f"{idx}. 用户：{question}\n助手：{answer}")
         return "\n".join(parts) if parts else "当前暂无问答对"
 
-    def _format_retrieval_question_index_text(self, rows: list[dict[str, object]]) -> str:
+    def _format_retrieval_question_index_text(
+        self, rows: list[dict[str, object]]
+    ) -> str:
         """将检索问题索引格式化为提示词文本。"""
         if not rows:
             return "当前暂无历史检索问题"
         output: list[str] = []
         for item in rows:
             history_id = self._sanitize_text(item.get("history_id"), 64)
-            question = self._sanitize_text(item.get("user_question"), self._INDEX_PREVIEW_MAX_LEN)
-            agents = self._sanitize_list(item.get("agent_types"), max_items=3, max_len=24)
-            record_count = max(0, self._to_int(item.get("record_count"), 0))
+            question = self._sanitize_text(
+                item.get("user_question"), self._INDEX_PREVIEW_MAX_LEN
+            )
+            agents = self._sanitize_list(
+                item.get("agent_types"), max_items=3, max_len=24
+            )
+            evidence_count = max(0, self._to_int(item.get("evidence_count"), 0))
             output.append(
-                f"- history_id={history_id} | 问题={question} | agent={','.join(agents) or 'unknown'} | records={record_count}"
+                f"- history_id={history_id} | 问题={question} | agent={','.join(agents) or 'unknown'} | evidence={evidence_count}"
             )
         return "\n".join(output)
 
     def _build_history_id(self, user_message_id: int, assistant_message_id: int) -> str:
         """根据消息 ID 生成稳定历史检索记录 ID。"""
         return f"h-{max(0, int(user_message_id or 0))}-{max(0, int(assistant_message_id or 0))}"
-
-    def _sanitize_query_records(self, rows: Any) -> list[RetrievalRecord]:
-        """批量清洗 query_records。"""
-        if not isinstance(rows, list):
-            return []
-        records: list[RetrievalRecord] = []
-        for item in rows:
-            normalized = self._sanitize_retrieval_record(item)
-            if normalized is not None:
-                records.append(normalized)
-        return records
 
     def _append_retrieval_history(
         self,
@@ -343,24 +501,36 @@ class SessionMemoryService:
         user_question: str,
         user_message_id: int,
         assistant_message_id: int,
-        query_records: list[RetrievalRecord],
+        evidence: list[EvidencePayload],
         captured_at: str,
     ) -> RetrievalMemorySnapshot:
         """将当前轮检索结果追加到检索记忆。"""
-        if not query_records:
+        if not evidence:
             return retrieval_memory
-        questions = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []
-        updated_rows = [item for item in questions if isinstance(item, dict)]
+        updated_rows: list[RetrievalHistoryEntry] = list(retrieval_memory["questions"])
         new_entry: RetrievalHistoryEntry = {
             "history_id": self._build_history_id(user_message_id, assistant_message_id),
             "user_question": self._sanitize_text(user_question, self._QUESTION_MAX_LEN),
             "created_at": self._sanitize_text(captured_at, 64),
-            "agent_types": sorted({self._sanitize_text(item.get("agent"), 24) or "unknown" for item in query_records}),
-            "records": query_records,
+            "agent_types": sorted(
+                {
+                    (
+                        "kg"
+                        if item.get("source_type") == "knowledge_graph"
+                        else (
+                            "rag"
+                            if item.get("source_type") == "document"
+                            else "history"
+                        )
+                    )
+                    for item in evidence
+                }
+            ),
+            "evidence": evidence,
         }
         updated_rows.append(new_entry)
         return {
-            "version": 2,
+            "version": 3,
             "last_message_id": max(
                 self._to_int(retrieval_memory.get("last_message_id"), 0),
                 max(0, int(assistant_message_id or 0)),
@@ -384,11 +554,15 @@ class SessionMemoryService:
         updated_text = updated_at.isoformat() if updated_at else ""
         return {
             "qa_memory": self._parse_qa_memory(str(row.get("summary_text") or "")),
-            "retrieval_memory": self._parse_retrieval_memory(str(row.get("retrieval_summary_text") or "")),
+            "retrieval_memory": self._parse_retrieval_memory(
+                str(row.get("retrieval_summary_text") or "")
+            ),
             "updated_at": updated_text,
         }
 
-    async def save_memory(self, session_id: str, snapshot: SessionMemorySnapshot) -> None:
+    async def save_memory(
+        self, session_id: str, snapshot: SessionMemorySnapshot
+    ) -> None:
         """将会话记忆快照写回数据库。
 
         Args:
@@ -399,7 +573,9 @@ class SessionMemoryService:
             None: 无返回值。
         """
         qa_memory = self._sanitize_qa_memory(snapshot.get("qa_memory"))
-        retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
+        retrieval_memory = self._sanitize_retrieval_memory(
+            snapshot.get("retrieval_memory")
+        )
         await SessionMemoryManager.upsert_summary(
             str(session_id or ""),
             json.dumps(qa_memory, ensure_ascii=False),
@@ -420,7 +596,9 @@ class SessionMemoryService:
         """
         await SessionMemoryManager.clear_summary(str(session_id or ""))
 
-    async def ensure_memory_current(self, session_id: str, current_message_id: int) -> SessionMemorySnapshot:
+    async def ensure_memory_current(
+        self, session_id: str, current_message_id: int
+    ) -> SessionMemorySnapshot:
         """基于最新消息重建问答记忆并合并已有检索记忆。
 
         Args:
@@ -433,10 +611,14 @@ class SessionMemoryService:
         snapshot = await self.load_memory(session_id)
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
-        qa_memory["last_message_id"] = max(qa_memory.get("last_message_id", 0), int(current_message_id or 0))
+        qa_memory["last_message_id"] = max(
+            qa_memory.get("last_message_id", 0), int(current_message_id or 0)
+        )
         return {
             "qa_memory": qa_memory,
-            "retrieval_memory": self._sanitize_retrieval_memory(snapshot.get("retrieval_memory")),
+            "retrieval_memory": self._sanitize_retrieval_memory(
+                snapshot.get("retrieval_memory")
+            ),
             "updated_at": snapshot.get("updated_at", ""),
         }
 
@@ -458,13 +640,17 @@ class SessionMemoryService:
         """
         snapshot = await self.ensure_memory_current(session_id, current_message_id)
         qa_memory = self._sanitize_qa_memory(snapshot.get("qa_memory"))
-        retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
+        retrieval_memory = self._sanitize_retrieval_memory(
+            snapshot.get("retrieval_memory")
+        )
         retrieval_index = self._build_retrieval_question_index(retrieval_memory)
         memory_context: MemoryContext = {
             "qa_pairs": qa_memory.get("qa_pairs", []),
             "retrieval_question_index": retrieval_index,
             "qa_memory_text": self._format_qa_memory_text(qa_memory),
-            "retrieval_question_index_text": self._format_retrieval_question_index_text(retrieval_index),
+            "retrieval_question_index_text": self._format_retrieval_question_index_text(
+                retrieval_index
+            ),
         }
         return {
             "original_input_text": str(input_text or ""),
@@ -490,18 +676,22 @@ class SessionMemoryService:
         snapshot = await self.load_memory(session_id)
         messages = await self._get_messages(session_id)
         qa_memory = self._build_qa_pairs_from_messages(messages)
-        retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
+        retrieval_memory = self._sanitize_retrieval_memory(
+            snapshot.get("retrieval_memory")
+        )
 
-        user_question = self._sanitize_text(turn_artifacts.get("user_question"), self._QUESTION_MAX_LEN)
+        user_question = self._sanitize_text(
+            turn_artifacts.get("user_question"), self._QUESTION_MAX_LEN
+        )
         user_message_id = self._to_int(turn_artifacts.get("user_message_id"), 0)
         captured_at = self._sanitize_text(turn_artifacts.get("captured_at"), 64)
-        query_records = self._sanitize_query_records(turn_artifacts.get("query_records"))
+        evidence = self._sanitize_evidence(turn_artifacts.get("evidence"))
         retrieval_memory = self._append_retrieval_history(
             retrieval_memory,
             user_question=user_question,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            query_records=query_records,
+            evidence=evidence,
             captured_at=captured_at,
         )
 
@@ -533,7 +723,9 @@ class SessionMemoryService:
         qa_memory = self._build_qa_pairs_from_messages(messages)
         snapshot: SessionMemorySnapshot = {
             "qa_memory": qa_memory,
-            "retrieval_memory": self._empty_retrieval_memory(qa_memory.get("last_message_id", 0)),
+            "retrieval_memory": self._empty_retrieval_memory(
+                qa_memory.get("last_message_id", 0)
+            ),
             "updated_at": "",
         }
         await self.save_memory(session_id, snapshot)
@@ -557,38 +749,53 @@ class SessionMemoryService:
             dict[str, Any]: 匹配到的检索记录，未匹配时返回空记录列表。
         """
         snapshot = await self.load_memory(session_id)
-        retrieval_memory = self._sanitize_retrieval_memory(snapshot.get("retrieval_memory"))
-        rows = retrieval_memory.get("questions") if isinstance(retrieval_memory.get("questions"), list) else []
+        retrieval_memory = self._sanitize_retrieval_memory(
+            snapshot.get("retrieval_memory")
+        )
+        rows = retrieval_memory["questions"]
         safe_history_id = self._sanitize_text(history_id, 64)
         safe_question = self._sanitize_text(user_question, self._QUESTION_MAX_LEN)
 
         matched: RetrievalHistoryEntry | None = None
         if safe_history_id:
             for item in rows:
-                if isinstance(item, dict) and str(item.get("history_id") or "") == safe_history_id:
+                if str(item.get("history_id") or "") == safe_history_id:
                     matched = item
                     break
         elif safe_question:
             best_score = 0.0
             for item in rows:
-                if not isinstance(item, dict):
-                    continue
-                candidate = self._sanitize_text(item.get("user_question"), self._QUESTION_MAX_LEN)
-                score = SequenceMatcher(None, safe_question.lower(), candidate.lower()).ratio()
+                candidate = self._sanitize_text(
+                    item.get("user_question"), self._QUESTION_MAX_LEN
+                )
+                score = SequenceMatcher(
+                    None, safe_question.lower(), candidate.lower()
+                ).ratio()
                 if score > best_score:
                     best_score = score
                     matched = item
             if best_score < 0.45:
                 matched = None
         if not matched:
-            return {"history_id": safe_history_id, "matched": False, "records": [], "user_question": safe_question}
+            return {
+                "history_id": safe_history_id,
+                "matched": False,
+                "evidence": [],
+                "user_question": safe_question,
+            }
 
-        records = matched.get("records") if isinstance(matched.get("records"), list) else []
+        evidence = (
+            matched.get("evidence") if isinstance(matched.get("evidence"), list) else []
+        )
         return {
             "matched": True,
             "history_id": self._sanitize_text(matched.get("history_id"), 64),
-            "user_question": self._sanitize_text(matched.get("user_question"), self._QUESTION_MAX_LEN),
+            "user_question": self._sanitize_text(
+                matched.get("user_question"), self._QUESTION_MAX_LEN
+            ),
             "created_at": self._sanitize_text(matched.get("created_at"), 64),
-            "agent_types": self._sanitize_list(matched.get("agent_types"), max_items=3, max_len=24),
-            "records": records,
+            "agent_types": self._sanitize_list(
+                matched.get("agent_types"), max_items=3, max_len=24
+            ),
+            "evidence": evidence,
         }

@@ -20,9 +20,15 @@ describe("AdminSettingsPage", () => {
   // 设置页当前是只读面板，测试锁定运行时、队列和性能 JSON 展示。
   beforeEach(() => {
     vi.clearAllMocks();
-    runtimeClientMocks.getAdminRuntimeFlags.mockResolvedValue({ flags: { test_mode: true }, updated_at: "2026-01-01T00:00:00Z" });
+    runtimeClientMocks.getAdminRuntimeFlags.mockResolvedValue({
+      flags: { test_mode: true },
+      updated_at: "2026-01-01T00:00:00Z",
+    });
     runtimeClientMocks.getAdminQueueStatus.mockResolvedValue({ graph: { running: 1 } });
-    runtimeClientMocks.getAdminPerfBaseline.mockResolvedValue({ window_days: 1, active_threads: 2 });
+    runtimeClientMocks.getAdminPerfBaseline.mockResolvedValue({
+      window_days: 1,
+      active_threads: 2,
+    });
   });
 
   it("renders runtime, queue, backend, and language information", async () => {

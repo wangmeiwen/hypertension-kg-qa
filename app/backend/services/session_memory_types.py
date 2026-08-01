@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypeAlias, TypedDict
+
+EvidencePayload: TypeAlias = dict[str, Any]
 
 
 class QAMemoryEntry(TypedDict):
@@ -23,8 +25,8 @@ class QAMemorySnapshot(TypedDict):
     qa_pairs: list[QAMemoryEntry]
 
 
-class RetrievalRecord(TypedDict, total=False):
-    """单条有效检索记录。"""
+class LegacyRetrievalRecord(TypedDict, total=False):
+    """v2 检索记忆中的旧检索记录，仅用于读取迁移。"""
 
     agent: str
     query: str
@@ -38,13 +40,13 @@ class RetrievalRecord(TypedDict, total=False):
 
 
 class RetrievalHistoryEntry(TypedDict):
-    """按用户问题分组的一组检索记录。"""
+    """按用户问题分组的一组 Evidence。"""
 
     history_id: str
     user_question: str
     created_at: str
     agent_types: list[str]
-    records: list[RetrievalRecord]
+    evidence: list[EvidencePayload]
 
 
 class RetrievalMemorySnapshot(TypedDict):

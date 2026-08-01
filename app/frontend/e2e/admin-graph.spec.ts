@@ -27,11 +27,14 @@ test("后台图谱管理支持节点、关系、Cypher、导入和向量化", as
   await expect(page.getByText('"label": "Disease"')).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "取消" }).click();
 
-  await page.locator('input[type="file"]').first().setInputFiles({
-    name: "graph-import.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("高血压 图谱导入 测试"),
-  });
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: "graph-import.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("高血压 图谱导入 测试"),
+    });
   await page.getByRole("button", { name: "导入图谱" }).click();
   await expect(page.getByText("图谱导入任务已提交。").first()).toBeVisible();
 

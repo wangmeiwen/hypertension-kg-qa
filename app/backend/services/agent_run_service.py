@@ -16,7 +16,11 @@ from app.backend.services.a2a_event_stream_service import (
     safe_float,
 )
 from app.core.langsmith_tracing import set_trace_metadata
-from app.backend.observability.session_logger import ensure_session_meta, reset_session_context, set_session_context
+from app.backend.observability.session_logger import (
+    ensure_session_meta,
+    reset_session_context,
+    set_session_context,
+)
 
 
 class AgentRunService:
@@ -119,7 +123,9 @@ class AgentRunService:
                 max_turns=max_turns,
                 trace_id=trace_id,
             )
-            traces = self.build_traces_from_processing_steps(result.get("processing_steps", []))
+            traces = self.build_traces_from_processing_steps(
+                result.get("processing_steps", [])
+            )
             response: Dict[str, Any] = {
                 "ok": True,
                 "answer": result.get("output", ""),
@@ -139,13 +145,33 @@ class AgentRunService:
             return response
         except ValueError as exc:
             self._log_api_error("/agent/run", "validation", exc, strategy=strategy)
-            return {"ok": False, "error": f"invalid_request:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"invalid_request:{str(exc)}",
+                "trace_id": trace_id,
+            }
         except RuntimeError as exc:
             self._log_api_error("/agent/run", "runtime", exc, strategy=strategy)
-            return {"ok": False, "error": f"agent_runtime_error:{str(exc)}", "trace_id": trace_id}
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError, ImportError) as exc:
+            return {
+                "ok": False,
+                "error": f"agent_runtime_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            ImportError,
+        ) as exc:
             self._log_api_error("/agent/run", "unknown", exc, strategy=strategy)
-            return {"ok": False, "error": f"agent_unknown_error:{str(exc)}", "trace_id": trace_id}
+            return {
+                "ok": False,
+                "error": f"agent_unknown_error:{str(exc)}",
+                "trace_id": trace_id,
+            }
         finally:
             reset_session_context(session_tokens)
 
@@ -214,7 +240,9 @@ class AgentRunService:
             3.0,
             min(
                 safe_float(
-                    os.getenv("AGENT_RUN_A2A_TIMEOUT_SECONDS", str(int(default_agent_timeout))),
+                    os.getenv(
+                        "AGENT_RUN_A2A_TIMEOUT_SECONDS", str(int(default_agent_timeout))
+                    ),
                     default=default_agent_timeout,
                 ),
                 7200.0,
@@ -223,7 +251,9 @@ class AgentRunService:
         poll_ms = max(
             100,
             min(
-                int(safe_float(os.getenv("AGENT_RUN_A2A_POLL_MS", "250"), default=250.0)),
+                int(
+                    safe_float(os.getenv("AGENT_RUN_A2A_POLL_MS", "250"), default=250.0)
+                ),
                 3000,
             ),
         )
@@ -248,7 +278,9 @@ class AgentRunService:
             metadata_obj = message_obj.get("metadata")
             status_meta = metadata_obj if isinstance(metadata_obj, dict) else {}
             if not status_text:
-                status_text = str(status_meta.get("error") or status_meta.get("error_type") or state)
+                status_text = str(
+                    status_meta.get("error") or status_meta.get("error_type") or state
+                )
             raise RuntimeError(f"a2a_task_{state}:{status_text}")
 
         final_answer_obj = extract_a2a_artifact(snapshot, "final_answer")
@@ -263,11 +295,15 @@ class AgentRunService:
         confidence = safe_float(message_meta.get("confidence"), default=0.0)
 
         tool_observations_obj = extract_a2a_artifact(snapshot, "tool_observations")
-        tool_observations = tool_observations_obj if isinstance(tool_observations_obj, list) else []
+        tool_observations = (
+            tool_observations_obj if isinstance(tool_observations_obj, list) else []
+        )
         telemetry_obj = extract_a2a_artifact(snapshot, "telemetry")
         telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
         progress_events_obj = extract_a2a_artifact(snapshot, "progress_events")
-        progress_events = progress_events_obj if isinstance(progress_events_obj, list) else []
+        progress_events = (
+            progress_events_obj if isinstance(progress_events_obj, list) else []
+        )
         processing_steps = build_processing_steps_from_progress_events(progress_events)
 
         return {

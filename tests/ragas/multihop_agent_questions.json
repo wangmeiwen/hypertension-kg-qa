@@ -1,0 +1,58 @@
+[
+  {
+    "id": "kg_multihop_01",
+    "question": "请仅根据知识图谱进行两跳推理：哪种测量方法既用于识别单纯夜间高血压，又由哪份指南作为来源支持？请同时回答方法和指南。",
+    "expected_term_groups": [
+      ["ABPM", "动态血压监测"],
+      ["中国动态血压监测指南"]
+    ],
+    "min_expected_groups": 2,
+    "requires_multihop": true
+  },
+  {
+    "id": "kg_multihop_02",
+    "question": "请仅根据知识图谱比较两个经诊室血压情境相连的人群控制目标：65~79岁老年人与80岁及以上高龄老年人的收缩压和舒张压目标分别是多少？",
+    "expected_term_groups": [
+      ["140"],
+      ["150"],
+      ["90"]
+    ],
+    "min_expected_groups": 3,
+    "requires_multihop": true
+  },
+  {
+    "id": "kg_multihop_03",
+    "question": "请仅根据知识图谱进行两跳推理：一般高血压的强化控制目标通过哪种测量情境表达，收缩压和舒张压分别应低于多少？",
+    "expected_term_groups": [
+      ["诊室血压"],
+      ["130"],
+      ["80"]
+    ],
+    "min_expected_groups": 3,
+    "requires_multihop": true
+  },
+  {
+    "id": "kg_multihop_04",
+    "question": "请仅根据知识图谱进行两跳推理：家庭血压诊断高血压时，收缩压和舒张压阈值是多少，并说明它关联的疾病。",
+    "expected_term_groups": [
+      ["家庭血压"],
+      ["135"],
+      ["85"],
+      ["高血压"]
+    ],
+    "min_expected_groups": 4,
+    "requires_multihop": true
+  },
+  {
+    "id": "kg_multihop_05",
+    "question": "请仅根据知识图谱进行两跳推理：能识别隐蔽性高血压的测量方法，还能测量哪两个基础血压指标？请回答方法和两个指标。",
+    "expected_term_groups": [
+      ["ABPM", "动态血压监测"],
+      ["隐蔽性高血压"],
+      ["收缩压"],
+      ["舒张压"]
+    ],
+    "min_expected_groups": 4,
+    "requires_multihop": true
+  }
+]

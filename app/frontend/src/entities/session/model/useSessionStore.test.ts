@@ -25,7 +25,9 @@ describe("useSessionStore", () => {
     const file = new File(["data"], "report.txt", { type: "text/plain" });
 
     useSessionStore.getState().appendMessages({ role: "user", content: "问题" });
-    useSessionStore.getState().updateMessages((messages) => [...messages, { role: "assistant", content: "回答" }]);
+    useSessionStore
+      .getState()
+      .updateMessages((messages) => [...messages, { role: "assistant", content: "回答" }]);
     useSessionStore.getState().setDraft("草稿");
     useSessionStore.getState().setSelectedFile(file);
     useSessionStore.getState().setFilePreview("data:image/png;base64,abc");

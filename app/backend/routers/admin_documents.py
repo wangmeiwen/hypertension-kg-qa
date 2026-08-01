@@ -6,13 +6,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, UploadFile
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.services.admin_documents_service import AdminDocumentsService
 
 
 def create_admin_documents_router(service: AdminDocumentsService) -> APIRouter:
     """创建管理员文档路由。"""
-    router = APIRouter(dependencies=[Depends(require_admin_login)])
+    router = APIRouter(dependencies=[Depends(require_admin_access)])
 
     @router.post("/admin/documents/upload")
     async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:

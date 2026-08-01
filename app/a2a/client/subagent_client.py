@@ -46,7 +46,9 @@ class SubAgentClientFactory:
             first_item = {}
 
         query_statements_obj = first_item.get("query_statements")
-        query_statements = query_statements_obj if isinstance(query_statements_obj, list) else []
+        query_statements = (
+            query_statements_obj if isinstance(query_statements_obj, list) else []
+        )
         queries_used_obj = first_item.get("queries_used")
         queries_used = queries_used_obj if isinstance(queries_used_obj, list) else []
         query_records_obj = first_item.get("query_records")
@@ -60,7 +62,9 @@ class SubAgentClientFactory:
         coverage_obj = first_item.get("coverage")
         coverage = coverage_obj if isinstance(coverage_obj, dict) else {}
         missing_points_obj = first_item.get("missing_points")
-        missing_points = missing_points_obj if isinstance(missing_points_obj, list) else []
+        missing_points = (
+            missing_points_obj if isinstance(missing_points_obj, list) else []
+        )
         direct_support = bool(first_item.get("direct_support"))
         suggested_next_route = str(first_item.get("suggested_next_route") or "").strip()
 
@@ -75,7 +79,11 @@ class SubAgentClientFactory:
             evidence_count = len(evidence)
             coverage = {
                 "coverage_status": "none" if evidence_count == 0 else "partial",
-                "coverage_ratio": 0.0 if evidence_count == 0 else min(1.0, round(float(evidence_count) / 3.0, 4)),
+                "coverage_ratio": (
+                    0.0
+                    if evidence_count == 0
+                    else min(1.0, round(float(evidence_count) / 3.0, 4))
+                ),
                 "evidence_count": evidence_count,
             }
 
@@ -86,7 +94,12 @@ class SubAgentClientFactory:
                     continue
                 payload_obj = statement.get("payload")
                 payload = payload_obj if isinstance(payload_obj, dict) else {}
-                query = str(payload.get("query") or payload.get("keyword") or payload.get("cypher") or "").strip()
+                query = str(
+                    payload.get("query")
+                    or payload.get("keyword")
+                    or payload.get("cypher")
+                    or ""
+                ).strip()
                 if query:
                     queries_used.append(query)
 
@@ -108,7 +121,11 @@ class SubAgentClientFactory:
             reason=reason,
             token_usage=token_usage,
             telemetry={
-                "raw_summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+                "raw_summary": (
+                    payload.get("summary")
+                    if isinstance(payload.get("summary"), dict)
+                    else {}
+                ),
             },
         )
 

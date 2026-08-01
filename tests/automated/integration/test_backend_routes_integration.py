@@ -5,20 +5,20 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from app.backend.dependencies.admin_auth import require_admin_login
+from app.backend.dependencies.admin_auth import require_admin_access
 from app.backend.infrastructure.errors import UnauthorizedError
-
 
 pytestmark = pytest.mark.integration
 
 
 def allow_admin(app: FastAPI) -> None:
     """在测试 app 中绕过管理员登录依赖。"""
-    app.dependency_overrides[require_admin_login] = lambda: None
+    app.dependency_overrides[require_admin_access] = lambda: None
 
 
 def install_unauthorized_handler(app: FastAPI) -> None:
     """安装 UnauthorizedError 到 401 JSON 响应的测试异常处理器。"""
+
     @app.exception_handler(UnauthorizedError)
     async def _handle_unauthorized(_, exc: UnauthorizedError) -> JSONResponse:
         return JSONResponse(status_code=401, content={"ok": False, "error": str(exc)})
@@ -41,14 +41,25 @@ def test_admin_auth_router_success_failure_and_logout(monkeypatch) -> None:
     monkeypatch.setattr(service_module, "verify_login", fake_verify_login)
     monkeypatch.setattr(service_module, "is_logged_in", lambda: state["logged_in"])
     monkeypatch.setattr(service_module, "get_current_admin_user", lambda: state["user"])
-    monkeypatch.setattr(service_module, "logout", lambda: state.update({"logged_in": False, "user": None}) or True)
+    monkeypatch.setattr(
+        service_module,
+        "logout",
+        lambda: state.update({"logged_in": False, "user": None}) or True,
+    )
 
     app = FastAPI()
     app.include_router(create_admin_auth_router(AdminAuthService()))
     client = TestClient(app)
 
-    assert client.post("/admin/login", json={"username": "admin", "password": "bad"}).json()["ok"] is False
-    login = client.post("/admin/login", json={"username": "admin", "password": "secret"})
+    assert (
+        client.post(
+            "/admin/login", json={"username": "admin", "password": "bad"}
+        ).json()["ok"]
+        is False
+    )
+    login = client.post(
+        "/admin/login", json={"username": "admin", "password": "secret"}
+    )
     assert login.status_code == 200
     assert login.json()["token"] == "token-1"
     assert client.get("/admin/status").json()["logged_in"] is True
@@ -83,7 +94,12 @@ def test_admin_runtime_router_protected_routes() -> None:
 
     allow_admin(app)
     assert client.get("/admin/runtime/flags").json()["ok"] is True
-    assert client.get("/admin/perf/baseline", params={"days": 3}).json()["data"]["window_days"] == 3
+    assert (
+        client.get("/admin/perf/baseline", params={"days": 3}).json()["data"][
+            "window_days"
+        ]
+        == 3
+    )
     assert client.get("/admin/qa/queue/status").json()["data"]["queue"] == []
     assert client.post("/admin/qa/jobs/job-1/cancel").json()["job_id"] == "job-1"
     assert client.get("/admin/stats").json()["data"]["total_sessions"] == 0
@@ -93,8 +109,16 @@ def test_graph_public_router_routes() -> None:
     from app.backend.routers.graph_public import create_graph_public_router
 
     class GraphPublicServiceStub:
-        async def graph_visualization(self, keyword: str = "", limit: int = 200) -> dict[str, Any]:
-            return {"ok": True, "keyword": keyword, "limit": limit, "nodes": [], "links": []}
+        async def graph_visualization(
+            self, keyword: str = "", limit: int = 200
+        ) -> dict[str, Any]:
+            return {
+                "ok": True,
+                "keyword": keyword,
+                "limit": limit,
+                "nodes": [],
+                "links": [],
+            }
 
         async def get_entity_detail(self, entity_id: str) -> dict[str, Any]:
             return {"ok": True, "entity": {"id": entity_id}}
@@ -119,7 +143,9 @@ def test_system_mcp_router_readiness_tools_invoke_and_rate_limit() -> None:
         async def list_tools(self) -> list[dict[str, Any]]:
             return [{"name": "search"}]
 
-        async def ainvoke_batch(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        async def ainvoke_batch(
+            self, rows: list[dict[str, Any]]
+        ) -> list[dict[str, Any]]:
             return [{"ok": True, "result": rows[0]["payload"], "meta": {}}]
 
     async def await_call(func, *args, **kwargs):
@@ -131,7 +157,9 @@ def test_system_mcp_router_readiness_tools_invoke_and_rate_limit() -> None:
 
     def enforce_rate_limit(**kwargs):
         if kwargs.get("user_id") == "limited":
-            return JSONResponse(status_code=429, content={"ok": False, "error": "rate_limited"})
+            return JSONResponse(
+                status_code=429, content={"ok": False, "error": "rate_limited"}
+            )
         return None
 
     app = FastAPI()
@@ -155,9 +183,22 @@ def test_system_mcp_router_readiness_tools_invoke_and_rate_limit() -> None:
     assert readiness.json()["ok"] is True
     assert client.get("/agent/tools").json()["mcp_tools"][0]["name"] == "search"
     assert client.get("/mcp/tools").json()["tools"][0]["name"] == "search"
-    assert client.post("/mcp/invoke", json={"tool_name": "search", "payload": {"q": "x"}}).json()["meta"]["trace_id"] == "trace-1"
-    assert client.post("/mcp/invoke", json={"payload": {}}).json()["error"] == "tool_name_required"
-    assert client.post("/mcp/invoke", json={"tool_name": "search", "user_id": "limited"}).status_code == 429
+    assert (
+        client.post(
+            "/mcp/invoke", json={"tool_name": "search", "payload": {"q": "x"}}
+        ).json()["meta"]["trace_id"]
+        == "trace-1"
+    )
+    assert (
+        client.post("/mcp/invoke", json={"payload": {}}).json()["error"]
+        == "tool_name_required"
+    )
+    assert (
+        client.post(
+            "/mcp/invoke", json={"tool_name": "search", "user_id": "limited"}
+        ).status_code
+        == 429
+    )
 
 
 def test_a2a_router_task_lifecycle(a2a_service_stub) -> None:
@@ -171,7 +212,11 @@ def test_a2a_router_task_lifecycle(a2a_service_stub) -> None:
         log_api_error=lambda *args, **kwargs: None,
     )
     app = FastAPI()
-    app.include_router(create_a2a_router(lambda request=None: "trace-1", lambda: a2a_service_stub, dispatch))
+    app.include_router(
+        create_a2a_router(
+            lambda request=None: "trace-1", lambda: a2a_service_stub, dispatch
+        )
+    )
     client = TestClient(app)
 
     assert client.get("/a2a/agent-card").json()["agent_card"]["name"] == "pytest-agent"
@@ -183,7 +228,10 @@ def test_a2a_router_task_lifecycle(a2a_service_stub) -> None:
     stream = client.get("/a2a/tasks/task-1/events")
     assert stream.status_code == 200
     assert "event: done" in stream.text
-    assert client.post("/a2a/tasks/task-1/cancel", json={"reason": "test"}).json()["ok"] is True
+    assert (
+        client.post("/a2a/tasks/task-1/cancel", json={"reason": "test"}).json()["ok"]
+        is True
+    )
     assert client.post("/a2a/tasks/missing/cancel").status_code == 404
 
 
@@ -204,7 +252,11 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
             return None
 
         async def run_agent(self, **kwargs) -> dict[str, Any]:
-            return {"ok": True, "answer": kwargs["input_text"], "trace_id": kwargs["trace_id"]}
+            return {
+                "ok": True,
+                "answer": kwargs["input_text"],
+                "trace_id": kwargs["trace_id"],
+            }
 
     class SessionTurnServiceStub:
         def bind_process_session_trace_metadata(self, **kwargs) -> None:
@@ -251,10 +303,44 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
 
     process = client.post("/process", json={"input": "question", "user_id": "user-1"})
     assert process.status_code == 200
+    assert process.headers["content-type"].startswith("application/x-ndjson")
+    assert process.headers["x-stream-schema-version"] == "1.0.0"
     assert '"type":"done"' in process.text
-    assert client.post("/agent/run", json={"input": ""}).json()["error"] == "input_required"
-    assert client.post("/agent/run", json={"input": "question"}).json()["answer"] == "question"
-    assert client.post("/agent/run", json={"input": "question", "a2a_mode": "bad"}).json()["ok"] is False
-    with_session = client.post("/process_with_session", json={"input": "question", "user_id": "user-1"})
+    assert (
+        client.post("/agent/run", json={"input": ""}).json()["error"]
+        == "input_required"
+    )
+    assert (
+        client.post("/agent/run", json={"input": "question"}).json()["answer"]
+        == "question"
+    )
+    assert (
+        client.post("/agent/run", json={"input": "question", "a2a_mode": "bad"}).json()[
+            "ok"
+        ]
+        is False
+    )
+    with_session = client.post(
+        "/process_with_session", json={"input": "question", "user_id": "user-1"}
+    )
+    assert with_session.headers["content-type"].startswith("application/x-ndjson")
+    assert with_session.headers["x-stream-schema-version"] == "1.0.0"
     assert '"session_id":"session-1"' in with_session.text
-    assert client.post("/process_with_session", json={"input": "bad", "user_id": "user-1"}).json()["error"] == "bad_input"
+    assert (
+        client.post(
+            "/process_with_session", json={"input": "bad", "user_id": "user-1"}
+        ).json()["error"]
+        == "bad_input"
+    )
+
+    schema = client.get("/schemas/stream-events.json").json()
+    assert schema["x-schema-version"] == "1.0.0"
+    openapi_response = client.get("/openapi.json").json()["paths"]["/process"]["post"][
+        "responses"
+    ]["200"]
+    assert (
+        openapi_response["content"]["application/x-ndjson"]["x-stream-event-schema"][
+            "$ref"
+        ]
+        == "/schemas/stream-events.json"
+    )

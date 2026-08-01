@@ -1,0 +1,23 @@
+vulnerabilities:
+  # Milvus 2.6.13 官方 Compose 栈仍内置存在上游通告的 Go 依赖；仅忽略固定二进制目标。
+  - id: CVE-2026-33186
+    paths:
+      - "milvus/bin/milvus"
+      - "milvus/lib/libmilvus-planparser.so"
+      - "usr/local/bin/etcd"
+      - "usr/local/bin/etcdctl"
+      - "usr/local/bin/etcdutl"
+      - "usr/bin/mc"
+      - "usr/bin/minio"
+    expired_at: "2026-10-31T23:59:59Z"
+  - id: CVE-2025-68121
+    paths:
+      - "milvus/bin/milvus"
+      - "milvus/lib/libmilvus-planparser.so"
+      - "usr/local/bin/etcd"
+      - "usr/local/bin/etcdctl"
+      - "usr/local/bin/etcdutl"
+      - "usr/bin/mc"
+      - "usr/bin/minio"
+      - "usr/local/bin/gosu"
+    expired_at: "2026-10-31T23:59:59Z"

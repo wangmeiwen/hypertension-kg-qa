@@ -47,11 +47,21 @@ export interface RollbackQuestionResult {
 }
 
 export type StreamProcessEvent =
-  | { type: "job"; job_id?: string }
-  | { type: "session"; session_id?: string; user_message_id?: number }
-  | { type: "persisted"; session_id?: string; user_message_id?: number; assistant_message_id?: number }
-  | { type: "msg"; msg?: string; stage?: string }
-  | { type: "reply"; msg?: string }
-  | { type: "done"; msg?: string; status?: string };
+  | { type: "job"; job_id: string; request_id: string; task_id: string }
+  | { type: "session"; session_id: string; user_message_id: number }
+  | { type: "persisted"; session_id: string; user_message_id: number; assistant_message_id: number }
+  | { type: "msg"; msg: string; stage: "orchestrator" | "subagent" | "answer"; task_id: string }
+  | { type: "reply"; delta: string; task_id: string }
+  | {
+      type: "done";
+      status: "done" | "failed" | "cancelled";
+      task_id: string;
+      traces: Record<string, unknown>[];
+      processing_steps: string[];
+      tool_observations: Record<string, unknown>[];
+      evidence_summary: Record<string, unknown>;
+      telemetry: Record<string, unknown>;
+    }
+  | { type: "error"; code: string; message: string; task_id: string; recoverable: boolean };
 
 export type ThinkStatus = string;

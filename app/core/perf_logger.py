@@ -151,5 +151,3 @@ def log_perf_event(event: str, **kwargs) -> None:
     _ensure_logger_configured()
     payload = _mask_sensitive({"event": event, **kwargs})
     logger.info("[性能事件] %s", json.dumps(payload, ensure_ascii=False, default=str))
-
-
