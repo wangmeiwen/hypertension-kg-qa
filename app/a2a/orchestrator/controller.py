@@ -15,7 +15,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
     jieba = None
 
 from app.a2a.agent.llm_client import LLMClient
-from app.a2a.client.subagent_client import SubAgentClientFactory
+from app.a2a.client.subagent_client import SubAgentClient
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_bundle import build_evidence_bundle
 from app.a2a.evidence_fusion import EvidenceFusionResult, fuse_evidence
@@ -93,7 +93,7 @@ class UnifiedOrchestratorController:
 
     def __init__(
         self,
-        subagent_client: SubAgentClientFactory,
+        subagent_client: SubAgentClient,
         *,
         conf: Config | None = None,
         llm_client: LLMClient | None = None,

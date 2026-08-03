@@ -8,7 +8,7 @@ from typing import Any
 from app.a2a.models import SubAgentResult, SubTask
 
 
-class SubAgentClientFactory:
+class SubAgentClient:
     """主代理子代理客户端。"""
 
     def __init__(self, graph_subagent: Any, rag_subagent: Any):

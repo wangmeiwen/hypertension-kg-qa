@@ -1277,7 +1277,7 @@ async def test_kg_subagent_selects_mcp_tool_internally() -> None:
 
 
 async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
-    from app.a2a.client.subagent_client import SubAgentClientFactory
+    from app.a2a.client.subagent_client import SubAgentClient
     from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 
     class FakeLlmClient:
@@ -1285,7 +1285,7 @@ async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
             return None
 
     controller = UnifiedOrchestratorController(
-        SubAgentClientFactory(graph_subagent=None, rag_subagent=None),
+        SubAgentClient(graph_subagent=None, rag_subagent=None),
         llm_client=FakeLlmClient(),
     )
     prompt = controller._build_system_prompt()
