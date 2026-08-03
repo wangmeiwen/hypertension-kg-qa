@@ -2126,6 +2126,41 @@ class UnifiedOrchestratorController:
         }
         return self._attach_medical_risk_telemetry(result, assessment)
 
+    def _build_safety_caution_result(
+        self,
+        *,
+        assessment: MedicalRiskAssessment,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        """主体或当前状态不明确时给出保守安全分流。"""
+        result = {
+            "output": (
+                "如果这些症状或危险血压是你本人或他人当前正在发生的情况，请立即联系当地急救服务或尽快前往急诊，"
+                "不要等待在线问答，也不要自行调整药物。若你只是在咨询医学知识，请补充说明这是知识问题、历史情况还是当前症状。"
+            ),
+            "output_type": "orchestrator_medical_risk_clarification",
+            "confidence": 0.0,
+            "tool_observations": [],
+            "reflection_events": [],
+            "processing_steps": ["医疗风险语境不明确，已执行保守安全分流"],
+            "telemetry": {
+                "controller_mode": "medical_risk_gate",
+                "retrieval_round": 0,
+                "trace_id": trace_id,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "final_source": "medical_risk_gate",
+            },
+            "evidence_summary": {
+                "answer_mode": "medical_risk_clarification",
+                "supported_points": [],
+                "citations": [],
+                "evidence_count": 0,
+            },
+        }
+        return self._attach_medical_risk_telemetry(result, assessment)
+
     async def run(
         self,
         *,
@@ -2147,6 +2182,11 @@ class UnifiedOrchestratorController:
         medical_risk = assess_medical_risk(safe_question)
         if medical_risk.action == "urgent_redirect":
             return self._build_urgent_redirect_result(
+                assessment=medical_risk,
+                trace_id=safe_trace_id,
+            )
+        if medical_risk.action == "safety_caution":
+            return self._build_safety_caution_result(
                 assessment=medical_risk,
                 trace_id=safe_trace_id,
             )

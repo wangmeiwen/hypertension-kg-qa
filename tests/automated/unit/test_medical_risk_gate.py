@@ -17,9 +17,12 @@ from app.a2a.question_planner import build_question_plan
 @pytest.mark.parametrize(
     "question",
     [
-        "血压 190/125，而且胸痛",
-        "突然呼吸困难并且意识不清",
-        "高血压急症应该怎么办",
+        "我现在血压 190/100，而且胸痛",
+        "我目前突然呼吸困难并且意识不清",
+        "医生说我现在发生高血压急症",
+        "我刚测得血压 170/125",
+        "我现在收缩压达到 185",
+        "我目前舒张压达到 122",
     ],
 )
 def test_emergency_signals_trigger_urgent_redirect(question: str) -> None:
@@ -27,6 +30,9 @@ def test_emergency_signals_trigger_urgent_redirect(question: str) -> None:
 
     assert assessment.risk_level == "emergency"
     assert assessment.action == "urgent_redirect"
+    assert assessment.context_type == "current_self_report"
+    assert assessment.rule_version == "medical_risk.v2"
+    assert assessment.trigger_excerpts
 
 
 @pytest.mark.parametrize(
@@ -48,10 +54,52 @@ def test_high_risk_questions_require_two_sources(question: str) -> None:
 
 
 def test_negated_emergency_signal_does_not_trigger_redirect() -> None:
-    assessment = assess_medical_risk("目前没有胸痛，只想了解家庭血压监测")
+    assessments = [
+        assess_medical_risk("我不觉得有胸痛，只想了解家庭血压监测"),
+        assess_medical_risk("我之前胸痛，现在没有"),
+        assess_medical_risk("医生排除了高血压急症"),
+    ]
+
+    assert {item.risk_level for item in assessments} == {"low"}
+    assert {item.action for item in assessments} == {"standard"}
+    assert {item.context_type for item in assessments} == {"negated_symptom"}
+
+
+def test_knowledge_query_does_not_trigger_urgent_redirect() -> None:
+    assessment = assess_medical_risk("高血压急症的定义是什么？")
 
     assert assessment.risk_level == "low"
     assert assessment.action == "standard"
+    assert assessment.context_type == "knowledge_query"
+
+
+def test_historical_report_is_not_treated_as_current_emergency() -> None:
+    historical = assess_medical_risk("我昨天出现胸痛，现在已经缓解")
+    recurrent = assess_medical_risk("我昨天胸痛，今天又出现胸痛")
+
+    assert historical.risk_level == "low"
+    assert historical.context_type == "negated_symptom"
+    assert recurrent.risk_level == "emergency"
+    assert recurrent.context_type == "current_self_report"
+
+
+@pytest.mark.parametrize(
+    ("question", "context_type"),
+    [
+        ("胸痛怎么办", "uncertain"),
+        ("我父亲现在胸痛", "third_party_case"),
+        ("患者血压 190/125", "third_party_case"),
+    ],
+)
+def test_unconfirmed_emergency_context_uses_safety_caution(
+    question: str, context_type: str
+) -> None:
+    assessment = assess_medical_risk(question)
+
+    assert assessment.risk_level == "high"
+    assert assessment.action == "safety_caution"
+    assert assessment.context_type == context_type
+    assert assessment.uncertainty_reasons
 
 
 def test_controller_redirects_before_calling_llm() -> None:
@@ -59,7 +107,7 @@ def test_controller_redirects_before_calling_llm() -> None:
 
     result = asyncio.run(
         controller.run(
-            input_text="血压 190/125，并且出现胸痛",
+            input_text="我现在血压 190/125，并且出现胸痛",
             trace_id="trace-1",
         )
     )
@@ -67,6 +115,23 @@ def test_controller_redirects_before_calling_llm() -> None:
     assert result["output_type"] == "orchestrator_urgent_redirect"
     assert result["telemetry"]["final_source"] == "medical_risk_gate"
     assert result["telemetry"]["medical_risk"]["risk_level"] == "emergency"
+    assert result["telemetry"]["medical_risk"]["context_type"] == "current_self_report"
+    assert result["tool_observations"] == []
+
+
+def test_controller_returns_caution_when_subject_is_uncertain() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+
+    result = asyncio.run(
+        controller.run(
+            input_text="血压 190/125，而且胸痛",
+            trace_id="trace-2",
+        )
+    )
+
+    assert result["output_type"] == "orchestrator_medical_risk_clarification"
+    assert result["telemetry"]["final_source"] == "medical_risk_gate"
+    assert result["telemetry"]["medical_risk"]["context_type"] == "uncertain"
     assert result["tool_observations"] == []
 
 
