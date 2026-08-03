@@ -35,6 +35,7 @@ from app.a2a.recommendation_claims import (
     recommendation_polarities_conflict,
     recommendation_polarity,
 )
+from app.a2a.relation_claims import relation_direction
 
 _ANSWER_SEGMENT_PATTERN = re.compile(
     r"[^。！？!?\n]+(?:[。！？!?](?:[ \t]*\[[^\]\n]+\])*)?"
@@ -44,6 +45,17 @@ _MEASUREMENT_CONTEXT_APPLICABILITY = {
     "clinic": "诊室血压",
     "ambulatory": "动态血压",
 }
+_DIRECTIONAL_RELATION_PATTERN = re.compile(
+    r"(?:导致|引起|造成|诱发|促进|增加|降低|升高|减少|->|→)"
+)
+
+
+def _evidence_relation_direction(evidence: Evidence) -> tuple[str, str, str]:
+    if evidence.source_type != "knowledge_graph":
+        return "", "", ""
+    raw_obj = evidence.provenance.get("raw")
+    raw = raw_obj if isinstance(raw_obj, dict) else {}
+    return relation_direction(raw)
 
 
 def evidence_citation(evidence: Evidence) -> str:
@@ -93,6 +105,9 @@ def build_answer_generation_context(
                 or assessment.support_excerpt not in evidence.content
             ):
                 continue
+            relation_source, relation_type, relation_target = (
+                _evidence_relation_direction(evidence)
+            )
             supporting_evidence.append(
                 AnswerEvidenceContext(
                     task_id=assessment.task_id,
@@ -104,6 +119,9 @@ def build_answer_generation_context(
                     support_status=assessment.support_status,
                     support_excerpt=assessment.support_excerpt,
                     applicability_conditions=assessment.applicability_conditions,
+                    relation_source=relation_source,
+                    relation_type=relation_type,
+                    relation_target=relation_target,
                 )
             )
             seen_evidence_ids.add(canonical_evidence_id)
@@ -282,6 +300,37 @@ def _recommendation_claims_are_faithful(
     return not mismatched_claim_ids, list(dict.fromkeys(mismatched_claim_ids))
 
 
+def _relation_claims_are_faithful(
+    *,
+    item: AnswerMustCoverContext,
+    answer_claims: list[StructuredAnswerClaim],
+) -> tuple[bool, list[str]]:
+    if item.claim_type != "relation":
+        return True, []
+    evidence_by_id = {row.evidence_id: row for row in item.supporting_evidence}
+    mismatched_claim_ids: list[str] = []
+    for answer_claim in answer_claims:
+        for evidence_id in answer_claim.evidence_ids:
+            evidence = evidence_by_id.get(evidence_id)
+            if evidence is None or not (
+                evidence.relation_source and evidence.relation_target
+            ):
+                continue
+            source_position = answer_claim.text.find(evidence.relation_source)
+            target_position = answer_claim.text.find(evidence.relation_target)
+            if source_position < 0 or target_position < 0:
+                continue
+            if target_position >= source_position:
+                continue
+            between = answer_claim.text[
+                target_position + len(evidence.relation_target) : source_position
+            ]
+            if _DIRECTIONAL_RELATION_PATTERN.search(between):
+                mismatched_claim_ids.append(answer_claim.claim_id)
+                break
+    return not mismatched_claim_ids, list(dict.fromkeys(mismatched_claim_ids))
+
+
 def validate_answer_generation(
     answer: str, context: AnswerGenerationContext
 ) -> AnswerValidationResult:
@@ -349,12 +398,18 @@ def validate_answer_generation(
             answer_claims=item_answer_claims,
         )
         unsupported_claim_ids.extend(polarity_mismatches)
+        relation_faithful, relation_mismatches = _relation_claims_are_faithful(
+            item=item,
+            answer_claims=item_answer_claims,
+        )
+        unsupported_claim_ids.extend(relation_mismatches)
         if (
             supported
             and has_citation
             and not missing_conditions
             and numeric_faithful
             and polarity_faithful
+            and relation_faithful
         ):
             covered_ids.append(item.item_id)
             continue
@@ -363,7 +418,9 @@ def validate_answer_generation(
             missing_citation_ids.append(item.item_id)
         if missing_conditions:
             missing_applicability[item.item_id] = missing_conditions
-        if has_citation and (not numeric_faithful or not polarity_faithful):
+        if has_citation and (
+            not numeric_faithful or not polarity_faithful or not relation_faithful
+        ):
             unsupported_claim_ids.extend(row.claim_id for row in item_answer_claims)
 
     unresolved_conflict_ids = [

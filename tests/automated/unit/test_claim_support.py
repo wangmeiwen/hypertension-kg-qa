@@ -444,6 +444,19 @@ def test_relation_validator_requires_relationship_shape() -> None:
         source_type="knowledge_graph",
         source_id="rel-1",
         content="高血压 -[增加风险]-> 慢性肾病",
+        provenance={
+            "kind": "relationship",
+            "raw": {
+                "source_name": "高血压",
+                "relation_type": "增加风险",
+                "target_name": "慢性肾病",
+            },
+        },
+    )
+    directionless = Evidence(
+        source_type="knowledge_graph",
+        source_id="rel-2",
+        content="高血压 -[增加风险]-> 慢性肾病",
         provenance={"kind": "relationship", "raw": {"relation_type": "增加风险"}},
     )
     entity = Evidence(
@@ -457,10 +470,16 @@ def test_relation_validator_requires_relationship_shape() -> None:
         task=task, must_cover=item, evidence=relationship
     )
     partial = deterministic_claim_support(task=task, must_cover=item, evidence=entity)
+    missing_direction = deterministic_claim_support(
+        task=task, must_cover=item, evidence=directionless
+    )
 
     assert supported is not None and supported.support_status == "supported"
     assert partial is not None and partial.support_status == "partially_supported"
     assert partial.reason == "relationship_structure_missing"
+    assert missing_direction is not None
+    assert missing_direction.support_status == "partially_supported"
+    assert missing_direction.reason == "relationship_direction_missing"
 
 
 def test_source_validator_requires_publication_and_locator() -> None:

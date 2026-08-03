@@ -273,6 +273,45 @@ def test_post_validation_rejects_reversed_recommendation_polarity() -> None:
     assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
 
 
+def test_post_validation_rejects_reversed_kg_relation_direction() -> None:
+    plan = build_question_plan("高血压和慢性肾病有什么关系？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "kg")
+    evidence = Evidence(
+        source_type="knowledge_graph",
+        source_id="rel-1",
+        origin_document_id="guide-a",
+        content="高血压 -[增加风险]-> 慢性肾病",
+        provenance={
+            "kind": "relationship",
+            "raw": {
+                "source_name": "高血压",
+                "relation_type": "增加风险",
+                "target_name": "慢性肾病",
+            },
+        },
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("kg", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation("慢性肾病导致高血压。[rel-1]", context)
+
+    assert result.valid is False
+    assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
+
+
 def test_post_validation_accepts_explicit_systolic_explanation_of_bp_pair() -> None:
     plan = build_question_plan(
         "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()

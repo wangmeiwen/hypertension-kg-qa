@@ -19,7 +19,7 @@ from app.a2a.numeric_claims import (
     extract_structured_numeric_claims,
     numeric_claim_matches_requirement,
 )
-from app.a2a.relation_claims import relation_endpoints
+from app.a2a.relation_claims import relation_direction, relation_endpoints
 from app.a2a.telemetry import empty_token_usage
 
 _INTERVAL_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:-|—|~|～|至|到)\s*\d+(?:\.\d+)?")
@@ -200,6 +200,10 @@ def deterministic_claim_support(
             raw_payload.get(field)
             for field in ("relation_type", "rel_type", "target_name", "path")
         )
+        relation_source, relation_type, relation_target = relation_direction(
+            raw_payload
+        )
+        direction_complete = bool(relation_source and relation_type and relation_target)
         endpoints = relation_endpoints(must_cover.question)
         endpoints_complete = all(endpoint in content for endpoint in endpoints)
         requires_path = any(
@@ -208,12 +212,15 @@ def deterministic_claim_support(
         has_path = kind in {"path", "multi_hop"} or bool(raw_payload.get("path"))
         if (
             not has_relation_shape
+            or not direction_complete
             or not endpoints_complete
             or (requires_path and not has_path)
             or not applicability_complete
         ):
             if not has_relation_shape:
                 reason = "relationship_structure_missing"
+            elif not direction_complete:
+                reason = "relationship_direction_missing"
             elif not endpoints_complete:
                 reason = "relationship_endpoint_missing"
             elif requires_path and not has_path:

@@ -42,3 +42,24 @@ def relation_hop_bounds(question: str) -> tuple[int, int] | None:
         hops = max(1, min(int(matched.group("count")), 3))
         return (hops, hops)
     return (2, 3)
+
+
+def relation_direction(raw: dict[str, object]) -> tuple[str, str, str]:
+    """从关系或路径 Evidence 原始载荷中提取有序起点、关系和终点。"""
+    path_obj = raw.get("path")
+    path = path_obj if isinstance(path_obj, list) else []
+    edges = [edge for edge in path if isinstance(edge, dict)]
+    if edges:
+        source = str(edges[0].get("source_name") or "").strip()
+        target = str(edges[-1].get("target_name") or "").strip()
+        relation_types = [
+            str(edge.get("relation_type") or "").strip()
+            for edge in edges
+            if str(edge.get("relation_type") or "").strip()
+        ]
+        return source, " -> ".join(relation_types), target
+    return (
+        str(raw.get("source_name") or "").strip(),
+        str(raw.get("relation_type") or raw.get("rel_type") or "").strip(),
+        str(raw.get("target_name") or "").strip(),
+    )

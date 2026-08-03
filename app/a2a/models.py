@@ -381,6 +381,9 @@ class AnswerEvidenceContext(BaseModel):
     support_status: ClaimSupportStatus
     support_excerpt: str = Field(max_length=2000)
     applicability_conditions: list[str] = Field(default_factory=list)
+    relation_source: str = ""
+    relation_type: str = ""
+    relation_target: str = ""
 
 
 class AnswerMustCoverContext(BaseModel):
