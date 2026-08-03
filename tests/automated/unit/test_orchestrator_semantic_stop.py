@@ -8,7 +8,7 @@ from typing import Any
 
 from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
-from app.a2a.models import Evidence, SubAgentResult, SubTask
+from app.a2a.models import ClaimEvidenceAssessment, Evidence, SubAgentResult, SubTask
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -35,6 +35,15 @@ def test_answer_readiness_requires_all_must_cover_items() -> None:
 
     pending = controller._assess_answer_readiness(
         observations, MedicalRiskAssessment(), plan
+    )
+    evidence = Evidence.model_validate(observations[0]["evidence"][0])
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=plan.retrieval_tasks[0].task_id,
+            must_cover_id=plan.must_cover[0].item_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+        )
     )
     plan.must_cover[0].support_status = "supported"
     plan.must_cover[0].status = "covered"
@@ -167,7 +176,7 @@ def test_run_stops_after_two_retrieval_rounds_without_progress() -> None:
         if decision_count == 2:
             return {"action": "final_answer", "answer": "证据不足"}, {"total_tokens": 1}
         return {
-            "action": "call_kg",
+            "action": f"call_{planned_task.target_agent}",
             "task_id": planned_task.task_id,
             "must_cover_id": planned_task.must_cover_id,
             "reason": "继续检索",

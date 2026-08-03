@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
+from pydantic import ValidationError
 
 from app.a2a.conflict_detection import detect_evidence_conflicts
-from app.a2a.evidence_fusion import fuse_evidence
+from app.a2a.evidence_fusion import evidence_identity, fuse_evidence
 from app.a2a.models import (
     AgentType,
     Evidence,
@@ -14,11 +15,9 @@ from app.a2a.models import (
     QuestionPlan,
 )
 
-_MULTI_SOURCE_CLAIM_TYPES = {"numeric", "comparison"}
-
 
 def _available_evidence_types(
-    rows: list[tuple[str, Evidence | dict[str, Any]]],
+    rows: Sequence[tuple[str, Evidence | dict[str, Any]]],
     evidence: list[Evidence],
 ) -> list[AgentType]:
     """根据代理来源和 Evidence 类型确定已取得的证据类型。"""
@@ -36,34 +35,80 @@ def _available_evidence_types(
     return sorted(available)
 
 
+def _supported_rows(
+    *,
+    rows: list[tuple[str, Evidence | dict[str, Any]]],
+    supported_evidence_ids: set[str],
+) -> list[tuple[str, Evidence]]:
+    """仅保留有显式支持判定且通过 Evidence 契约的记录。"""
+    supported: list[tuple[str, Evidence]] = []
+    for agent, raw_evidence in rows:
+        try:
+            evidence = (
+                raw_evidence
+                if isinstance(raw_evidence, Evidence)
+                else Evidence.model_validate(raw_evidence)
+            )
+        except (ValidationError, ValueError, TypeError):
+            continue
+        if evidence_identity(evidence) in supported_evidence_ids:
+            supported.append((agent, evidence))
+    return supported
+
+
 def assess_evidence_sufficiency(
     *,
     question_plan: QuestionPlan,
     evidence_by_item: dict[str, list[tuple[str, Evidence | dict[str, Any]]]],
-    minimum_distinct_publications: int,
 ) -> EvidenceSufficiencyAssessment:
-    """逐个 must-cover 评估证据类型、来源数、冲突和覆盖状态。"""
+    """按每个 must-cover 的 MinimumEvidencePolicy 评估充分性。"""
     item_results: list[MustCoverSufficiency] = []
     for item in question_plan.must_cover:
         rows = evidence_by_item.get(item.item_id, [])
         fusion = fuse_evidence(rows)
-        available_types = _available_evidence_types(rows, fusion.evidence)
-        required_sources = max(
-            minimum_distinct_publications,
-            2 if item.claim_type in _MULTI_SOURCE_CLAIM_TYPES else 1,
+        policy = item.evidence_policy
+        accepted_assessments = [
+            assessment
+            for assessment in question_plan.claim_evidence_assessments
+            if assessment.must_cover_id == item.item_id
+            and assessment.support_status in policy.required_support_statuses
+        ]
+        supported_evidence_ids = {
+            assessment.evidence_id for assessment in accepted_assessments
+        }
+        supported_rows = _supported_rows(
+            rows=rows,
+            supported_evidence_ids=supported_evidence_ids,
+        )
+        supported_fusion = fuse_evidence(supported_rows)
+        available_types = _available_evidence_types(
+            supported_rows, supported_fusion.evidence
+        )
+        conflicts = detect_evidence_conflicts(supported_fusion.evidence)
+        observed_applicability = {
+            condition
+            for assessment in accepted_assessments
+            for condition in assessment.applicability_conditions
+        }
+        applicability_complete = set(policy.required_applicability_fields).issubset(
+            observed_applicability
         )
         missing_reasons: list[str] = []
-        if item.support_status != "supported":
+        if item.support_status not in policy.required_support_statuses:
             missing_reasons.append("claim_not_supported")
-        if not fusion.evidence:
-            missing_reasons.append("direct_evidence")
-        if fusion.evidence and fusion.distinct_publication_count < required_sources:
+        if len(supported_fusion.evidence) < policy.minimum_supported_evidence:
+            missing_reasons.append("supported_evidence")
+        if (
+            supported_fusion.distinct_publication_count
+            < policy.minimum_distinct_publications
+        ):
             missing_reasons.append("distinct_publications")
-        if item.claim_type == "relation" and "kg" not in available_types:
-            missing_reasons.append("knowledge_graph_evidence")
-        if item.claim_type == "source" and "rag" not in available_types:
-            missing_reasons.append("document_evidence")
-        if detect_evidence_conflicts(fusion.evidence):
+        for required_retriever in policy.required_retrievers:
+            if required_retriever not in available_types:
+                missing_reasons.append(f"required_retriever:{required_retriever}")
+        if not applicability_complete:
+            missing_reasons.append("applicability_conditions")
+        if conflicts and policy.conflict_policy == "block_unresolved":
             missing_reasons.append("unresolved_conflict")
         item_results.append(
             MustCoverSufficiency(
@@ -72,9 +117,15 @@ def assess_evidence_sufficiency(
                 support_status=item.support_status,
                 sufficient=not missing_reasons,
                 evidence_count=len(fusion.evidence),
-                distinct_publication_count=fusion.distinct_publication_count,
-                required_publication_count=required_sources,
+                supported_evidence_count=len(supported_fusion.evidence),
+                distinct_publication_count=(
+                    supported_fusion.distinct_publication_count
+                ),
+                required_publication_count=policy.minimum_distinct_publications,
                 available_evidence_types=available_types,
+                applicability_complete=applicability_complete,
+                unresolved_conflict_count=len(conflicts),
+                policy=policy,
                 missing_reasons=missing_reasons,
             )
         )

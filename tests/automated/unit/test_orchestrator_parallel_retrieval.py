@@ -56,7 +56,14 @@ def _action(plan: QuestionPlan, target_agent: str = "kg") -> dict[str, str]:
     }
 
 
-def test_builds_independent_kg_and_rag_tasks_for_same_must_cover() -> None:
+def _require_both_retrievers(plan: QuestionPlan) -> None:
+    plan.must_cover[0].evidence_policy.required_retrievers = ["kg", "rag"]
+    plan.must_cover[0].evidence_policy.optional_retrievers = []
+    for task in plan.retrieval_tasks:
+        task.retriever_requirement = "required"
+
+
+def test_optional_retriever_does_not_force_sibling_execution() -> None:
     controller = _controller(_ConcurrentSubagentClient())
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
 
@@ -66,7 +73,7 @@ def test_builds_independent_kg_and_rag_tasks_for_same_must_cover() -> None:
         question_plan=plan,
     )
 
-    assert [task.target_agent for task in tasks] == ["kg", "rag"]
+    assert [task.target_agent for task in tasks] == ["kg"]
     assert len({task.subtask_id for task in tasks}) == 1
     assert len({task.question for task in tasks}) == 1
 
@@ -74,7 +81,9 @@ def test_builds_independent_kg_and_rag_tasks_for_same_must_cover() -> None:
 def test_dependency_blocks_task_from_parallel_batch() -> None:
     controller = _controller(_ConcurrentSubagentClient())
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
-    plan.retrieval_tasks[1].dependency_on = ["uncovered-item"]
+    _require_both_retrievers(plan)
+    rag_task = next(task for task in plan.retrieval_tasks if task.target_agent == "rag")
+    rag_task.dependency_on = ["uncovered-item"]
 
     tasks = controller._build_ready_subtasks(
         action=_action(plan),
@@ -89,6 +98,7 @@ def test_executes_tasks_concurrently_and_isolates_single_failure() -> None:
     client = _ConcurrentSubagentClient(failing_target="rag")
     controller = _controller(client)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    _require_both_retrievers(plan)
     tasks = controller._build_ready_subtasks(
         action=_action(plan),
         max_tool_calls=3,

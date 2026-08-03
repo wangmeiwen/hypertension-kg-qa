@@ -141,7 +141,7 @@ def test_decide_action_rejects_markdown_wrapped_json_after_one_retry() -> None:
 
 def test_decide_action_retries_when_task_binding_is_invalid() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
-    kg_task = plan.retrieval_tasks[0]
+    kg_task = next(task for task in plan.retrieval_tasks if task.target_agent == "kg")
     controller = _build_controller(
         [
             (

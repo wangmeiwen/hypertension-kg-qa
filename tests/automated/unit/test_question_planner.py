@@ -23,7 +23,8 @@ def test_question_plan_is_stable_and_splits_must_cover_items() -> None:
     assert len(first.must_cover) == 2
     assert first.must_cover[0].claim_type == "comparison"
     assert first.must_cover[1].claim_type == "source"
-    assert first.must_cover[1].required_evidence_types == ["rag"]
+    assert first.must_cover[1].evidence_policy.required_retrievers == ["rag"]
+    assert first.must_cover[1].evidence_policy.optional_retrievers == ["kg"]
     assert "诊室血压" in first.must_cover[0].applicability_conditions
     assert "家庭血压" in first.must_cover[0].applicability_conditions
 
@@ -34,14 +35,36 @@ def test_question_plan_routes_relation_questions_to_kg() -> None:
     )
 
     assert plan.must_cover[0].claim_type == "relation"
-    assert plan.must_cover[0].required_evidence_types == ["kg"]
-    assert [task.target_agent for task in plan.retrieval_tasks] == ["kg"]
+    assert plan.must_cover[0].evidence_policy.required_retrievers == ["kg"]
+    assert plan.must_cover[0].evidence_policy.optional_retrievers == ["rag"]
+    assert [task.target_agent for task in plan.retrieval_tasks] == ["kg", "rag"]
+    assert [task.retriever_requirement for task in plan.retrieval_tasks] == [
+        "required",
+        "optional",
+    ]
+
+
+def test_question_plan_separates_optional_retrievers_from_evidence_minimums() -> None:
+    fact = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    fact_policy = fact.must_cover[0].evidence_policy
+    assert fact_policy.required_retrievers == []
+    assert fact_policy.optional_retrievers == ["rag", "kg"]
+    assert fact_policy.minimum_supported_evidence == 1
+    assert fact_policy.minimum_distinct_publications == 1
+
+    numeric = build_question_plan("血压目标是多少？", MedicalRiskAssessment())
+    numeric_policy = numeric.must_cover[0].evidence_policy
+    assert numeric_policy.required_retrievers == []
+    assert numeric_policy.minimum_supported_evidence == 2
+    assert numeric_policy.minimum_distinct_publications == 2
 
 
 def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
-    planned_kg_task = plan.retrieval_tasks[0]
+    planned_kg_task = next(
+        task for task in plan.retrieval_tasks if task.target_agent == "kg"
+    )
     kg_task = controller._build_subtask(
         action={
             "action": "call_kg",
@@ -56,7 +79,7 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     assert kg_task.task_id == planned_kg_task.task_id
     assert kg_task.must_cover_id == planned_kg_task.must_cover_id
     assert kg_task.question == plan.must_cover[0].question
-    assert kg_task.evidence_type_required == ["kg", "rag"]
+    assert kg_task.evidence_type_required == []
     assert kg_task.must_cover == [plan.must_cover[0].question]
     assert kg_task.coverage_status == "pending"
 
@@ -85,7 +108,9 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     assert plan.must_cover[0].support_status == "supported"
     assert plan.must_cover[0].status == "covered"
 
-    planned_rag_task = plan.retrieval_tasks[1]
+    planned_rag_task = next(
+        task for task in plan.retrieval_tasks if task.target_agent == "rag"
+    )
     rag_task = controller._build_subtask(
         action={
             "action": "call_rag",
@@ -202,7 +227,8 @@ def test_contradicted_assessment_overrides_supported_claim_state() -> None:
 def test_plan_action_requires_exact_task_binding() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
-    kg_task, rag_task = plan.retrieval_tasks
+    kg_task = next(task for task in plan.retrieval_tasks if task.target_agent == "kg")
+    rag_task = next(task for task in plan.retrieval_tasks if task.target_agent == "rag")
 
     controller._validate_plan_action(
         {

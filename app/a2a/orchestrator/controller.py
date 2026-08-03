@@ -1035,7 +1035,9 @@ class UnifiedOrchestratorController:
             intent="retrieve_for_answer",
             entities=[],
             dependency_on=dependencies,
-            evidence_type_required=(list(planned_item.required_evidence_types)),
+            evidence_type_required=(
+                list(planned_item.evidence_policy.required_retrievers)
+            ),
             must_cover=[planned_item.question],
             priority=50,
             coverage_status=planned_item.status,
@@ -1081,6 +1083,12 @@ class UnifiedOrchestratorController:
             if item.must_cover_id == must_cover_item.item_id
             and item.status in {"pending", "needs_supplement"}
             and all(dependency in covered_ids for dependency in item.dependency_on)
+        ]
+        required_retrievers = set(must_cover_item.evidence_policy.required_retrievers)
+        if primary.target_agent not in required_retrievers:
+            return [primary]
+        ready_tasks = [
+            item for item in ready_tasks if item.target_agent in required_retrievers
         ]
         primary_target = primary.target_agent
         ready_tasks.sort(key=lambda item: item.target_agent != primary_target)
@@ -1495,15 +1503,8 @@ class UnifiedOrchestratorController:
         conflicts = self._detect_evidence_conflicts(evidence)
         if not evidence:
             missing_points.append("direct_evidence")
-        if risk_flags:
+        if risk_flags and question_plan is None:
             missing_points.append("unresolved_conflict")
-        assessment = medical_risk or MedicalRiskAssessment()
-        if (
-            evidence
-            and fusion.distinct_publication_count
-            < assessment.minimum_distinct_publications
-        ):
-            missing_points.append("distinct_publications")
         plan_coverage = (
             self._question_plan_coverage(question_plan)
             if question_plan is not None
@@ -1515,9 +1516,6 @@ class UnifiedOrchestratorController:
                 question_plan=question_plan,
                 evidence_by_item=self._evidence_by_must_cover(
                     tool_observations, question_plan
-                ),
-                minimum_distinct_publications=(
-                    assessment.minimum_distinct_publications
                 ),
             )
             if evidence and not sufficiency.sufficient:

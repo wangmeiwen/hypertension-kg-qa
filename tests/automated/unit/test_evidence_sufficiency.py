@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
 from app.a2a.medical_risk import MedicalRiskAssessment
-from app.a2a.models import Evidence
+from app.a2a.models import ClaimEvidenceAssessment, Evidence
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -27,16 +28,41 @@ def _knowledge_graph(source_id: str, content: str) -> Evidence:
     )
 
 
+def _mark_supported(
+    plan,
+    item,
+    evidence: list[Evidence],
+    *,
+    applicability: list[str] | None = None,
+) -> None:
+    item.support_status = "supported"
+    item.status = "covered"
+    task_id = next(
+        task.task_id
+        for task in plan.retrieval_tasks
+        if task.must_cover_id == item.item_id
+    )
+    plan.claim_evidence_assessments.extend(
+        ClaimEvidenceAssessment(
+            task_id=task_id,
+            must_cover_id=item.item_id,
+            evidence_id=evidence_identity(row),
+            support_status="supported",
+            applicability_conditions=list(applicability or []),
+        )
+        for row in evidence
+    )
+
+
 def test_fact_claim_accepts_one_direct_source_after_coverage() -> None:
     plan = build_question_plan("高血压如何监测？", MedicalRiskAssessment())
     item = plan.must_cover[0]
-    item.support_status = "supported"
-    item.status = "covered"
+    evidence = _document("guide", "规律监测")
+    _mark_supported(plan, item, [evidence])
 
     assessment = assess_evidence_sufficiency(
         question_plan=plan,
-        evidence_by_item={item.item_id: [("rag", _document("guide", "规律监测"))]},
-        minimum_distinct_publications=1,
+        evidence_by_item={item.item_id: [("rag", evidence)]},
     )
 
     assert assessment.sufficient is True
@@ -54,7 +80,6 @@ def test_evidence_presence_cannot_replace_claim_support() -> None:
         evidence_by_item={
             item.item_id: [("rag", _document("guide", "老年人应定期监测血压"))]
         },
-        minimum_distinct_publications=1,
     )
 
     assert assessment.sufficient is False
@@ -65,52 +90,51 @@ def test_evidence_presence_cannot_replace_claim_support() -> None:
 def test_numeric_claim_requires_two_distinct_publications() -> None:
     plan = build_question_plan("血压目标是多少？", MedicalRiskAssessment())
     item = plan.must_cover[0]
-    item.support_status = "supported"
-    item.status = "covered"
-    one_source = {item.item_id: [("rag", _document("guide-a", "目标为130 mmHg"))]}
+    guide_a = _document("guide-a", "目标为130 mmHg")
+    guide_b = _document("guide-b", "目标为130 mmHg")
+    _mark_supported(plan, item, [guide_a, guide_b])
+    one_source = {item.item_id: [("rag", guide_a)]}
     two_sources = {
         item.item_id: [
-            ("rag", _document("guide-a", "目标为130 mmHg")),
-            ("rag", _document("guide-b", "目标为130 mmHg")),
+            ("rag", guide_a),
+            ("rag", guide_b),
         ]
     }
 
     insufficient = assess_evidence_sufficiency(
         question_plan=plan,
         evidence_by_item=one_source,
-        minimum_distinct_publications=1,
     )
     sufficient = assess_evidence_sufficiency(
         question_plan=plan,
         evidence_by_item=two_sources,
-        minimum_distinct_publications=1,
     )
 
     assert insufficient.sufficient is False
-    assert insufficient.items[0].missing_reasons == ["distinct_publications"]
+    assert insufficient.items[0].missing_reasons == [
+        "supported_evidence",
+        "distinct_publications",
+    ]
     assert sufficient.sufficient is True
 
 
 def test_relation_claim_requires_knowledge_graph_evidence() -> None:
     plan = build_question_plan("高血压和肾病有什么关系？", MedicalRiskAssessment())
     item = plan.must_cover[0]
-    item.support_status = "supported"
-    item.status = "covered"
+    document = _document("guide", "两者相关")
+    graph_evidence = _knowledge_graph("relation-1", "两者相关")
+    _mark_supported(plan, item, [document, graph_evidence])
 
     document_only = assess_evidence_sufficiency(
         question_plan=plan,
-        evidence_by_item={item.item_id: [("rag", _document("guide", "两者相关"))]},
-        minimum_distinct_publications=1,
+        evidence_by_item={item.item_id: [("rag", document)]},
     )
     graph = assess_evidence_sufficiency(
         question_plan=plan,
-        evidence_by_item={
-            item.item_id: [("kg", _knowledge_graph("relation-1", "两者相关"))]
-        },
-        minimum_distinct_publications=1,
+        evidence_by_item={item.item_id: [("kg", graph_evidence)]},
     )
 
-    assert document_only.items[0].missing_reasons == ["knowledge_graph_evidence"]
+    assert document_only.items[0].missing_reasons == ["required_retriever:kg"]
     assert graph.sufficient is True
 
 
@@ -120,35 +144,57 @@ def test_high_risk_gate_raises_source_requirement_for_fact_claim() -> None:
         MedicalRiskAssessment(risk_level="high", action="evidence_required"),
     )
     item = plan.must_cover[0]
-    item.support_status = "supported"
-    item.status = "covered"
+    evidence = _document("guide", "规律监测")
+    _mark_supported(plan, item, [evidence], applicability=["孕妇"])
 
     assessment = assess_evidence_sufficiency(
         question_plan=plan,
-        evidence_by_item={item.item_id: [("rag", _document("guide", "规律监测"))]},
-        minimum_distinct_publications=2,
+        evidence_by_item={item.item_id: [("rag", evidence)]},
     )
 
     assert assessment.sufficient is False
     assert assessment.items[0].required_publication_count == 2
-    assert assessment.items[0].missing_reasons == ["distinct_publications"]
+    assert assessment.items[0].missing_reasons == [
+        "supported_evidence",
+        "distinct_publications",
+    ]
+
+
+def test_high_risk_policy_requires_applicability_match() -> None:
+    plan = build_question_plan(
+        "孕妇如何监测血压？",
+        MedicalRiskAssessment(risk_level="high", action="evidence_required"),
+    )
+    item = plan.must_cover[0]
+    evidence = [
+        _document("guide-a", "孕妇应规律监测"),
+        _document("guide-b", "孕妇应规律监测"),
+    ]
+    _mark_supported(plan, item, evidence)
+
+    assessment = assess_evidence_sufficiency(
+        question_plan=plan,
+        evidence_by_item={item.item_id: [("rag", row) for row in evidence]},
+    )
+
+    assert assessment.sufficient is False
+    assert assessment.items[0].applicability_complete is False
+    assert assessment.items[0].missing_reasons == ["applicability_conditions"]
 
 
 def test_unknown_kg_origin_cannot_satisfy_publication_requirement() -> None:
     plan = build_question_plan("高血压和肾病有什么关系？", MedicalRiskAssessment())
     item = plan.must_cover[0]
-    item.support_status = "supported"
-    item.status = "covered"
     unknown = Evidence(
         source_type="knowledge_graph",
         source_id="relation-1",
         content="高血压关联慢性肾病",
     )
+    _mark_supported(plan, item, [unknown])
 
     assessment = assess_evidence_sufficiency(
         question_plan=plan,
         evidence_by_item={item.item_id: [("kg", unknown)]},
-        minimum_distinct_publications=1,
     )
 
     assert assessment.sufficient is False
@@ -163,23 +209,24 @@ def test_controller_counts_evidence_per_must_cover_without_cross_contamination()
     plan = build_question_plan(
         "血压目标是多少，并说明指南来源", MedicalRiskAssessment()
     )
-    for item in plan.must_cover:
-        item.support_status = "supported"
-        item.status = "covered"
     numeric_item, source_item = plan.must_cover
+    numeric_evidence = [
+        _document("guide-a", "血压目标为130 mmHg"),
+        _document("guide-b", "血压目标为130 mmHg"),
+    ]
+    source_evidence = [_document("guide-c", "来源为指南原文")]
+    _mark_supported(plan, numeric_item, numeric_evidence)
+    _mark_supported(plan, source_item, source_evidence)
     observations = [
         {
             "agent": "rag",
             "must_cover_id": numeric_item.item_id,
-            "evidence": [
-                _document("guide-a", "血压目标为130 mmHg").model_dump(),
-                _document("guide-b", "血压目标为130 mmHg").model_dump(),
-            ],
+            "evidence": [item.model_dump() for item in numeric_evidence],
         },
         {
             "agent": "rag",
             "must_cover_id": source_item.item_id,
-            "evidence": [_document("guide-c", "来源为指南原文").model_dump()],
+            "evidence": [item.model_dump() for item in source_evidence],
         },
     ]
 

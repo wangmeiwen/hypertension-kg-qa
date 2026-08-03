@@ -8,6 +8,7 @@ import re
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import (
     AgentType,
+    MinimumEvidencePolicy,
     MustCoverItem,
     QuestionPlan,
     RetrievalTask,
@@ -45,22 +46,6 @@ def _split_question(question: str) -> list[str]:
     return clauses or [text]
 
 
-def _required_evidence_types(question: str) -> list[AgentType]:
-    """根据问题类型选择需要的检索来源。"""
-    text = str(question or "").lower()
-    requires_kg = any(
-        term in text for term in ("关系", "路径", "关联", "实体", "多跳", "连接")
-    )
-    requires_rag = any(
-        term in text for term in ("指南", "来源", "依据", "原文", "推荐", "为什么")
-    )
-    if requires_kg and not requires_rag:
-        return ["kg"]
-    if requires_rag and not requires_kg:
-        return ["rag"]
-    return ["kg", "rag"]
-
-
 def _claim_type(question: str) -> str:
     """推断 must-cover 的结论类型。"""
     text = str(question or "")
@@ -81,6 +66,41 @@ def _applicability_conditions(question: str) -> list[str]:
     return [term for term in _CONDITION_TERMS if term.lower() in lowered]
 
 
+def _evidence_policy(
+    *,
+    claim_type: str,
+    applicability_conditions: list[str],
+    medical_risk: MedicalRiskAssessment,
+) -> MinimumEvidencePolicy:
+    """按 claim 类型和风险生成检索器与最低证据策略。"""
+    required_retrievers: list[AgentType]
+    optional_retrievers: list[AgentType]
+    if claim_type == "relation":
+        required_retrievers = ["kg"]
+        optional_retrievers = ["rag"]
+    elif claim_type == "source":
+        required_retrievers = ["rag"]
+        optional_retrievers = ["kg"]
+    else:
+        required_retrievers = []
+        optional_retrievers = ["rag", "kg"]
+    conservative_multi_source = medical_risk.risk_level == "high" or claim_type in {
+        "numeric",
+        "comparison",
+    }
+    minimum_evidence = 2 if conservative_multi_source else 1
+    return MinimumEvidencePolicy(
+        minimum_supported_evidence=minimum_evidence,
+        minimum_distinct_publications=minimum_evidence,
+        required_applicability_fields=(
+            list(applicability_conditions) if conservative_multi_source else []
+        ),
+        conflict_policy="block_unresolved",
+        required_retrievers=required_retrievers,
+        optional_retrievers=optional_retrievers,
+    )
+
+
 def build_question_plan(
     question: str, medical_risk: MedicalRiskAssessment
 ) -> QuestionPlan:
@@ -92,21 +112,35 @@ def build_question_plan(
 
     for index, clause in enumerate(_split_question(original_question), start=1):
         item_id = _stable_id("mc", original_question, str(index), clause)
-        evidence_types = _required_evidence_types(clause)
+        claim_type = _claim_type(clause)
+        applicability_conditions = _applicability_conditions(original_question)
+        evidence_policy = _evidence_policy(
+            claim_type=claim_type,
+            applicability_conditions=applicability_conditions,
+            medical_risk=medical_risk,
+        )
         item = MustCoverItem(
             item_id=item_id,
             question=clause,
-            claim_type=_claim_type(clause),
-            required_evidence_types=evidence_types,
-            applicability_conditions=_applicability_conditions(original_question),
+            claim_type=claim_type,
+            evidence_policy=evidence_policy,
+            applicability_conditions=applicability_conditions,
         )
         must_cover.append(item)
-        for agent_type in evidence_types:
+        for agent_type in [
+            *evidence_policy.required_retrievers,
+            *evidence_policy.optional_retrievers,
+        ]:
             retrieval_tasks.append(
                 RetrievalTask(
                     task_id=_stable_id("task", item_id, agent_type),
                     must_cover_id=item_id,
                     target_agent=agent_type,
+                    retriever_requirement=(
+                        "required"
+                        if agent_type in evidence_policy.required_retrievers
+                        else "optional"
+                    ),
                     question=clause,
                 )
             )

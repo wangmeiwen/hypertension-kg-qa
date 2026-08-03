@@ -143,5 +143,6 @@ def test_high_risk_question_abstains_with_only_one_source() -> None:
     )
 
     assert result["output_type"] == "orchestrator_abstained_insufficient_evidence"
-    assert "distinct_publications" in result["evidence_summary"]["missing_points"]
+    sufficiency_items = result["evidence_summary"]["evidence_sufficiency"]["items"]
+    assert "distinct_publications" in sufficiency_items[0]["missing_reasons"]
     assert result["telemetry"]["medical_risk"]["risk_level"] == "high"

@@ -14,6 +14,28 @@ ClaimSupportStatus = Literal[
     "irrelevant",
     "uncertain",
 ]
+ConflictPolicy = Literal["block_unresolved", "allow_with_disclosure"]
+
+
+def _default_required_support_statuses() -> list[ClaimSupportStatus]:
+    return ["supported"]
+
+
+class MinimumEvidencePolicy(BaseModel):
+    """单个 must-cover 的最低证据要求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_version: Literal["minimum_evidence.v1"] = "minimum_evidence.v1"
+    minimum_supported_evidence: int = Field(default=1, ge=1, le=5)
+    minimum_distinct_publications: int = Field(default=1, ge=1, le=3)
+    required_support_statuses: list[ClaimSupportStatus] = Field(
+        default_factory=_default_required_support_statuses
+    )
+    required_applicability_fields: list[str] = Field(default_factory=list)
+    conflict_policy: ConflictPolicy = "block_unresolved"
+    required_retrievers: list[AgentType] = Field(default_factory=list)
+    optional_retrievers: list[AgentType] = Field(default_factory=list)
 
 
 class Evidence(BaseModel):
@@ -86,7 +108,9 @@ class MustCoverItem(BaseModel):
     item_id: str
     question: str
     claim_type: str = Field(default="fact")
-    required_evidence_types: list[AgentType] = Field(default_factory=list)
+    evidence_policy: MinimumEvidencePolicy = Field(
+        default_factory=MinimumEvidencePolicy
+    )
     dependency_on: list[str] = Field(default_factory=list)
     applicability_conditions: list[str] = Field(default_factory=list)
     support_status: ClaimSupportStatus = "uncertain"
@@ -116,6 +140,7 @@ class RetrievalTask(BaseModel):
     task_id: str
     must_cover_id: str
     target_agent: AgentType
+    retriever_requirement: Literal["required", "optional"] = "optional"
     question: str
     dependency_on: list[str] = Field(default_factory=list)
     status: Literal["pending", "completed", "failed", "needs_supplement"] = "pending"
@@ -148,9 +173,13 @@ class MustCoverSufficiency(BaseModel):
     support_status: ClaimSupportStatus = "uncertain"
     sufficient: bool
     evidence_count: int = Field(default=0, ge=0)
+    supported_evidence_count: int = Field(default=0, ge=0)
     distinct_publication_count: int = Field(default=0, ge=0)
     required_publication_count: int = Field(default=1, ge=1)
     available_evidence_types: list[AgentType] = Field(default_factory=list)
+    applicability_complete: bool = True
+    unresolved_conflict_count: int = Field(default=0, ge=0)
+    policy: MinimumEvidencePolicy = Field(default_factory=MinimumEvidencePolicy)
     missing_reasons: list[str] = Field(default_factory=list)
 
 

@@ -1298,7 +1298,9 @@ async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
     plan = build_question_plan(
         "高血压合并 CKD 和蛋白尿怎么用药？", MedicalRiskAssessment()
     )
-    planned_task = plan.retrieval_tasks[0]
+    planned_task = next(
+        task for task in plan.retrieval_tasks if task.target_agent == "kg"
+    )
     task = controller._build_subtask(
         action={
             "action": "call_kg",
