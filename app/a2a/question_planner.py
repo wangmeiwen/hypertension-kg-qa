@@ -29,6 +29,9 @@ _CONDITION_TERMS = (
     "家庭血压",
     "动态血压",
 )
+_AGE_CONDITION_PATTERN = re.compile(
+    r"(?:≥|<=|>=|≤|＜|＞|<|>)?\s*\d{1,3}\s*岁(?:及?以上|及?以下)?"
+)
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -63,7 +66,12 @@ def _claim_type(question: str) -> str:
 def _applicability_conditions(question: str) -> list[str]:
     """提取问题中明确出现的适用条件。"""
     lowered = str(question or "").lower()
-    return [term for term in _CONDITION_TERMS if term.lower() in lowered]
+    conditions = [term for term in _CONDITION_TERMS if term.lower() in lowered]
+    conditions.extend(
+        re.sub(r"\s+", "", matched.group())
+        for matched in _AGE_CONDITION_PATTERN.finditer(lowered)
+    )
+    return list(dict.fromkeys(conditions))
 
 
 def _evidence_policy(

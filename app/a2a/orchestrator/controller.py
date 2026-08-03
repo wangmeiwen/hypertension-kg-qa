@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClient
+from app.a2a.claim_support import verify_claim_evidence
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_bundle import build_evidence_bundle
 from app.a2a.evidence_fusion import (
@@ -1176,6 +1177,98 @@ class UnifiedOrchestratorController:
             ]
             question_plan.claim_evidence_assessments.append(assessment)
 
+    async def _verify_task_evidence(
+        self,
+        *,
+        question_plan: QuestionPlan,
+        task_id: str,
+        must_cover_id: str,
+        evidence_rows: Any,
+        existing_rows: Any,
+    ) -> tuple[list[ClaimEvidenceAssessment], dict[str, int]]:
+        """补齐当前任务尚未生成的 claim-evidence 支持判定。"""
+        retrieval_task = next(
+            (
+                item
+                for item in question_plan.retrieval_tasks
+                if item.task_id == task_id and item.must_cover_id == must_cover_id
+            ),
+            None,
+        )
+        must_cover_item = next(
+            (
+                item
+                for item in question_plan.must_cover
+                if item.item_id == must_cover_id
+            ),
+            None,
+        )
+        if retrieval_task is None or must_cover_item is None:
+            return [], empty_token_usage()
+        evidence: list[Evidence] = []
+        for row in _coerce_list(evidence_rows):
+            try:
+                evidence.append(
+                    row if isinstance(row, Evidence) else Evidence.model_validate(row)
+                )
+            except (ValidationError, ValueError, TypeError):
+                continue
+        allowed_ids = {evidence_identity(item) for item in evidence}
+        existing: list[ClaimEvidenceAssessment] = []
+        reusable_versions = {
+            "claim_support.deterministic.v1",
+            "claim_support.semantic.v1",
+        }
+        for row in _coerce_list(existing_rows):
+            try:
+                assessment = ClaimEvidenceAssessment.model_validate(row)
+            except (ValidationError, ValueError, TypeError):
+                continue
+            evidence_item = next(
+                (
+                    item
+                    for item in evidence
+                    if evidence_identity(item) == assessment.evidence_id
+                ),
+                None,
+            )
+            grounded_excerpt = assessment.support_status in {
+                "irrelevant",
+                "uncertain",
+            } or bool(
+                evidence_item
+                and assessment.support_excerpt
+                and assessment.support_excerpt in evidence_item.content
+            )
+            if (
+                assessment.task_id == task_id
+                and assessment.must_cover_id == must_cover_id
+                and assessment.evidence_id in allowed_ids
+                and assessment.verifier_version in reusable_versions
+                and grounded_excerpt
+            ):
+                existing.append(assessment)
+        assessed_ids = {item.evidence_id for item in existing}
+        missing_evidence = [
+            item for item in evidence if evidence_identity(item) not in assessed_ids
+        ]
+        if not missing_evidence:
+            return existing, empty_token_usage()
+        llm_client = getattr(self, "_client", None)
+        timeout = (
+            float(self._conf.LLM_REQUEST_TIMEOUT_SECONDS)
+            if llm_client is not None
+            else 0.0
+        )
+        verified, usage = await verify_claim_evidence(
+            task=retrieval_task,
+            must_cover=must_cover_item,
+            evidence=missing_evidence,
+            llm_client=llm_client,
+            timeout=timeout,
+        )
+        return [*existing, *verified], usage
+
     @staticmethod
     def _refresh_must_cover_support(
         question_plan: QuestionPlan, must_cover_id: str
@@ -2103,6 +2196,19 @@ class UnifiedOrchestratorController:
                     token_usage,
                     _coerce_dict(history_result.get("meta")).get("token_usage"),
                 )
+                history_payload = _coerce_dict(history_result.get("result"))
+                history_assessments, verifier_tokens = await self._verify_task_evidence(
+                    question_plan=question_plan,
+                    task_id=_sanitize_text(action.get("task_id"), 64),
+                    must_cover_id=_sanitize_text(action.get("must_cover_id"), 64),
+                    evidence_rows=history_payload.get("evidence"),
+                    existing_rows=history_payload.get("claim_assessments"),
+                )
+                history_payload["claim_assessments"] = [
+                    item.model_dump() for item in history_assessments
+                ]
+                history_result["result"] = history_payload
+                merge_token_usage(token_usage, verifier_tokens)
                 self._update_question_plan_from_history(
                     question_plan, action, history_result
                 )
@@ -2146,8 +2252,19 @@ class UnifiedOrchestratorController:
                     )
                 results = await self._execute_subtasks(tasks)
                 for task, result in zip(tasks, results):
+                    claim_assessments, verifier_tokens = (
+                        await self._verify_task_evidence(
+                            question_plan=question_plan,
+                            task_id=task.task_id,
+                            must_cover_id=task.must_cover_id,
+                            evidence_rows=result.evidence,
+                            existing_rows=result.claim_assessments,
+                        )
+                    )
+                    result.claim_assessments = claim_assessments
                     self._update_question_plan(question_plan, task, result)
                     merge_token_usage(token_usage, result.token_usage)
+                    merge_token_usage(token_usage, verifier_tokens)
                     result_action = {
                         **action,
                         "action": f"call_{task.target_agent}",

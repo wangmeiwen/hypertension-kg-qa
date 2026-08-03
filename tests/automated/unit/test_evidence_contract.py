@@ -518,6 +518,8 @@ def test_orchestrator_history_action_is_reachable() -> None:
                                 Evidence.model_validate(evidence)
                             ),
                             "support_status": "supported",
+                            "support_excerpt": "历史证据",
+                            "verifier_version": "claim_support.semantic.v1",
                         }
                     ],
                 },
