@@ -43,6 +43,47 @@ class SubAgentConstraints(BaseModel):
     max_tool_calls: int = Field(default=3, ge=1, le=3)
 
 
+class MustCoverItem(BaseModel):
+    """回答前必须取得证据的单个问题点。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    question: str
+    claim_type: str = Field(default="fact")
+    required_evidence_types: list[AgentType] = Field(default_factory=list)
+    dependency_on: list[str] = Field(default_factory=list)
+    applicability_conditions: list[str] = Field(default_factory=list)
+    status: Literal["pending", "covered", "missing"] = "pending"
+
+
+class RetrievalTask(BaseModel):
+    """由问题计划生成的检索任务。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    must_cover_id: str
+    target_agent: AgentType
+    question: str
+    dependency_on: list[str] = Field(default_factory=list)
+    status: Literal["pending", "completed", "failed"] = "pending"
+
+
+class QuestionPlan(BaseModel):
+    """主控在执行检索前生成的结构化问题计划。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str
+    original_question: str
+    intent: str = Field(default="medical_qa")
+    medical_risk_level: Literal["low", "high", "emergency"] = "low"
+    must_cover: list[MustCoverItem] = Field(default_factory=list)
+    retrieval_tasks: list[RetrievalTask] = Field(default_factory=list)
+    answer_constraints: list[str] = Field(default_factory=list)
+
+
 class SubTask(BaseModel):
     """主代理派发给子代理的任务单元。"""
 

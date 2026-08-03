@@ -20,9 +20,11 @@ from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
     Evidence,
     OrchestratorAction,
+    QuestionPlan,
     SubAgentConstraints,
     SubTask,
 )
+from app.a2a.question_planner import build_question_plan
 from app.a2a.telemetry import (
     empty_token_usage,
     merge_token_usage,
@@ -116,6 +118,7 @@ class UnifiedOrchestratorController:
             "4. call_history_read：按历史检索索引读取对应 Evidence。\n"
             "如果会话记忆已经可以回答此问题，直接回答。"
             "如果历史检索里有高度相关的问题，先使用 call_history_read 读取 Evidence，再决定回答或补检索。\n"
+            "必须遵循结构化问题计划，优先处理 status=pending 的 must-cover，且子问题不得偏离其要求。\n"
             "主控只负责拆分问题和选择子agent，不允许指定 MCP 工具名、Cypher、检索 payload 或底层工具参数。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
@@ -450,6 +453,7 @@ class UnifiedOrchestratorController:
         session_id: str,
         qa_memory_text: str,
         retrieval_index_text: str,
+        question_plan_text: str,
         tool_observations: list[dict[str, Any]],
         turn_index: int,
         max_turns: int,
@@ -468,6 +472,7 @@ class UnifiedOrchestratorController:
             f"用户问题：{question}\n\n"
             f"这是之前的问答情况：\n{qa_memory_text}\n\n"
             f"这是之前检索过的问题：\n{retrieval_index_text}\n\n"
+            f"这是本轮必须遵循的结构化问题计划：\n{question_plan_text}\n\n"
             "你可以直接回答、读取历史 Evidence，或把需要补证据的子问题交给 kg/rag 子agent。\n"
             f"{final_rule}\n\n"
             "这是你目前已经拿到的工具/历史读取结果：\n" + "\n".join(observation_lines)
@@ -530,6 +535,7 @@ class UnifiedOrchestratorController:
         session_id: str,
         qa_memory_text: str,
         retrieval_index_text: str,
+        question_plan_text: str,
         tool_observations: list[dict[str, Any]],
         turn_index: int,
         max_turns: int,
@@ -562,6 +568,7 @@ class UnifiedOrchestratorController:
                         session_id=session_id,
                         qa_memory_text=current_qa_memory_text,
                         retrieval_index_text=current_retrieval_index_text,
+                        question_plan_text=question_plan_text,
                         tool_observations=current_tool_observations,
                         turn_index=turn_index,
                         max_turns=max_turns,
@@ -640,6 +647,7 @@ class UnifiedOrchestratorController:
                         session_id=session_id,
                         qa_memory_text=current_qa_memory_text,
                         retrieval_index_text=current_retrieval_index_text,
+                        question_plan_text=question_plan_text,
                         tool_observations=current_tool_observations,
                         turn_index=turn_index,
                         max_turns=max_turns,
@@ -694,6 +702,7 @@ class UnifiedOrchestratorController:
         session_id: str,
         qa_memory_text: str,
         retrieval_index_text: str,
+        question_plan_text: str = "",
         tool_observations: list[dict[str, Any]],
         turn_index: int,
         max_turns: int,
@@ -710,6 +719,7 @@ class UnifiedOrchestratorController:
             session_id=session_id,
             qa_memory_text=qa_memory_text,
             retrieval_index_text=retrieval_index_text,
+            question_plan_text=question_plan_text,
             tool_observations=tool_observations,
             turn_index=turn_index,
             max_turns=max_turns,
@@ -888,18 +898,67 @@ class UnifiedOrchestratorController:
         action: dict[str, Any],
         default_question: str,
         max_tool_calls: int,
+        question_plan: QuestionPlan | None = None,
     ) -> SubTask:
         """根据主控动作构建子代理任务对象。"""
         target_agent: Literal["kg", "rag"] = (
             "kg" if str(action.get("action") or "") == "call_kg" else "rag"
         )
-        question = _sanitize_text(action.get("question"), 300) or default_question
+        planned_task = None
+        planned_item = None
+        if question_plan is not None:
+            planned_task = next(
+                (
+                    item
+                    for item in question_plan.retrieval_tasks
+                    if item.target_agent == target_agent and item.status == "pending"
+                ),
+                None,
+            )
+            if planned_task is not None:
+                planned_item = next(
+                    (
+                        item
+                        for item in question_plan.must_cover
+                        if item.item_id == planned_task.must_cover_id
+                    ),
+                    None,
+                )
+        question = (
+            planned_task.question
+            if planned_task is not None
+            else _sanitize_text(action.get("question"), 300) or default_question
+        )
+        subtask_id = 1
+        dependencies: list[int] = []
+        if planned_item is not None and question_plan is not None:
+            subtask_id = question_plan.must_cover.index(planned_item) + 1
+            item_indexes = {
+                item.item_id: index
+                for index, item in enumerate(question_plan.must_cover, start=1)
+            }
+            dependencies = [
+                item_indexes[item_id]
+                for item_id in planned_item.dependency_on
+                if item_id in item_indexes
+            ]
         return SubTask(
-            subtask_id=1,
+            subtask_id=subtask_id,
             target_agent=target_agent,
             question=question,
             intent="retrieve_for_answer",
+            entities=[],
+            dependency_on=dependencies,
+            evidence_type_required=(
+                list(planned_item.required_evidence_types) if planned_item else []
+            ),
+            must_cover=[planned_item.question] if planned_item else [],
             priority=50,
+            coverage_status=planned_item.status if planned_item else "unknown",
+            query_focus=planned_item.claim_type if planned_item else "",
+            query_directions=(
+                list(planned_item.applicability_conditions) if planned_item else []
+            ),
             constraints=SubAgentConstraints(
                 allow_extra_retrieval=False,
                 max_tool_calls=max_tool_calls,
@@ -908,6 +967,39 @@ class UnifiedOrchestratorController:
             arguments={},
             reason=_sanitize_text(action.get("reason"), 200),
         )
+
+    @staticmethod
+    def _update_question_plan(
+        question_plan: QuestionPlan, task: SubTask, result: Any
+    ) -> None:
+        """根据一次子代理结果更新检索任务与 must-cover 状态。"""
+        if task.subtask_id < 1 or task.subtask_id > len(question_plan.must_cover):
+            return
+        must_cover_item = question_plan.must_cover[task.subtask_id - 1]
+        matching_tasks = [
+            item
+            for item in question_plan.retrieval_tasks
+            if item.must_cover_id == must_cover_item.item_id
+            and item.target_agent == task.target_agent
+        ]
+        succeeded = bool(getattr(result, "direct_support", False)) or bool(
+            getattr(result, "evidence", [])
+        )
+        for retrieval_task in matching_tasks:
+            retrieval_task.status = "completed" if succeeded else "failed"
+
+        required_tasks = [
+            item
+            for item in question_plan.retrieval_tasks
+            if item.must_cover_id == must_cover_item.item_id
+        ]
+        statuses = {item.status for item in required_tasks}
+        if statuses == {"completed"}:
+            must_cover_item.status = "covered"
+        elif "pending" not in statuses and "failed" in statuses:
+            must_cover_item.status = "missing"
+        else:
+            must_cover_item.status = "pending"
 
     def _build_evidence_summary(
         self, tool_observations: list[dict[str, Any]]
@@ -1261,6 +1353,25 @@ class UnifiedOrchestratorController:
         result["telemetry"] = telemetry
         return result
 
+    @staticmethod
+    def _attach_question_plan(
+        result: dict[str, Any], question_plan: QuestionPlan
+    ) -> dict[str, Any]:
+        """将结构化问题计划及其覆盖状态写入结果。"""
+        status_counts = {
+            status: sum(1 for item in question_plan.must_cover if item.status == status)
+            for status in ("pending", "covered", "missing")
+        }
+        result["question_plan"] = question_plan.model_dump()
+        telemetry = _coerce_dict(result.get("telemetry"))
+        telemetry["question_plan"] = {
+            "plan_id": question_plan.plan_id,
+            "must_cover_count": len(question_plan.must_cover),
+            **status_counts,
+        }
+        result["telemetry"] = telemetry
+        return result
+
     def _build_urgent_redirect_result(
         self,
         *,
@@ -1320,6 +1431,7 @@ class UnifiedOrchestratorController:
                 assessment=medical_risk,
                 trace_id=safe_trace_id,
             )
+        question_plan = build_question_plan(safe_question, medical_risk)
         safe_memory = memory_context if isinstance(memory_context, dict) else {}
         qa_memory_text = str(safe_memory.get("qa_memory_text") or "当前暂无问答对")
         retrieval_index_text = str(
@@ -1339,6 +1451,7 @@ class UnifiedOrchestratorController:
         processing_steps: list[str] = [
             "已加载显式 QA 记忆与历史检索问题索引",
             f"医疗风险 Gate：{medical_risk.risk_level}",
+            f"已生成结构化问题计划：{len(question_plan.must_cover)} 个 must-cover",
         ]
         token_usage = empty_token_usage()
         retrieval_round = 0
@@ -1369,6 +1482,9 @@ class UnifiedOrchestratorController:
                     session_id=safe_session_id,
                     qa_memory_text=qa_memory_text,
                     retrieval_index_text=retrieval_index_text,
+                    question_plan_text=_safe_json(
+                        question_plan.model_dump(), max_len=12000
+                    ),
                     tool_observations=tool_observations,
                     turn_index=turn_index,
                     max_turns=safe_max_turns,
@@ -1380,31 +1496,37 @@ class UnifiedOrchestratorController:
                     progress_callback=progress_callback,
                 )
             except PromptBudgetExceededError:
-                return self._attach_medical_risk_telemetry(
-                    self._build_over_budget_result(
-                        tool_observations=tool_observations,
-                        processing_steps=processing_steps,
-                        retrieval_round=retrieval_round,
-                        max_turns=safe_max_turns,
-                        token_usage=token_usage,
-                        trace_id=safe_trace_id,
-                        compression_state=compression_state,
+                return self._attach_question_plan(
+                    self._attach_medical_risk_telemetry(
+                        self._build_over_budget_result(
+                            tool_observations=tool_observations,
+                            processing_steps=processing_steps,
+                            retrieval_round=retrieval_round,
+                            max_turns=safe_max_turns,
+                            token_usage=token_usage,
+                            trace_id=safe_trace_id,
+                            compression_state=compression_state,
+                        ),
+                        medical_risk,
                     ),
-                    medical_risk,
+                    question_plan,
                 )
             except OrchestratorActionValidationError as exc:
-                return self._attach_medical_risk_telemetry(
-                    self._build_invalid_decision_result(
-                        tool_observations=tool_observations,
-                        processing_steps=processing_steps,
-                        retrieval_round=retrieval_round,
-                        max_turns=safe_max_turns,
-                        token_usage=token_usage,
-                        trace_id=safe_trace_id,
-                        compression_state=compression_state,
-                        error=str(exc),
+                return self._attach_question_plan(
+                    self._attach_medical_risk_telemetry(
+                        self._build_invalid_decision_result(
+                            tool_observations=tool_observations,
+                            processing_steps=processing_steps,
+                            retrieval_round=retrieval_round,
+                            max_turns=safe_max_turns,
+                            token_usage=token_usage,
+                            trace_id=safe_trace_id,
+                            compression_state=compression_state,
+                            error=str(exc),
+                        ),
+                        medical_risk,
                     ),
-                    medical_risk,
+                    question_plan,
                 )
             merge_token_usage(token_usage, tokens)
             action_name = str(action.get("action") or "").strip()
@@ -1482,8 +1604,10 @@ class UnifiedOrchestratorController:
                     action=action,
                     default_question=safe_question,
                     max_tool_calls=safe_tool_calls,
+                    question_plan=question_plan,
                 )
                 result = await self._subagent_client.send_task(task)
+                self._update_question_plan(question_plan, task, result)
                 merge_token_usage(token_usage, result.token_usage)
                 tool_observations.append(
                     self._build_subagent_observation(result, action)
@@ -1495,18 +1619,21 @@ class UnifiedOrchestratorController:
 
         if not final_answer:
             readiness = self._assess_answer_readiness(tool_observations, medical_risk)
-            return self._attach_medical_risk_telemetry(
-                self._build_insufficient_evidence_result(
-                    tool_observations=tool_observations,
-                    processing_steps=processing_steps,
-                    retrieval_round=retrieval_round,
-                    max_turns=safe_max_turns,
-                    token_usage=token_usage,
-                    trace_id=safe_trace_id,
-                    compression_state=compression_state,
-                    readiness=readiness,
+            return self._attach_question_plan(
+                self._attach_medical_risk_telemetry(
+                    self._build_insufficient_evidence_result(
+                        tool_observations=tool_observations,
+                        processing_steps=processing_steps,
+                        retrieval_round=retrieval_round,
+                        max_turns=safe_max_turns,
+                        token_usage=token_usage,
+                        trace_id=safe_trace_id,
+                        compression_state=compression_state,
+                        readiness=readiness,
+                    ),
+                    medical_risk,
                 ),
-                medical_risk,
+                question_plan,
             )
 
         evidence_summary = self._build_evidence_summary(tool_observations)
@@ -1528,4 +1655,7 @@ class UnifiedOrchestratorController:
             },
             "evidence_summary": evidence_summary,
         }
-        return self._attach_medical_risk_telemetry(response_result, medical_risk)
+        return self._attach_question_plan(
+            self._attach_medical_risk_telemetry(response_result, medical_risk),
+            question_plan,
+        )
