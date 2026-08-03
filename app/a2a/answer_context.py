@@ -35,6 +35,11 @@ from app.a2a.numeric_claims import (
 _ANSWER_SEGMENT_PATTERN = re.compile(
     r"[^。！？!?\n]+(?:[。！？!?](?:[ \t]*\[[^\]\n]+\])*)?"
 )
+_MEASUREMENT_CONTEXT_APPLICABILITY = {
+    "home": "家庭血压",
+    "clinic": "诊室血压",
+    "ambulatory": "动态血压",
+}
 
 
 def evidence_citation(evidence: Evidence) -> str:
@@ -180,9 +185,11 @@ def _numeric_claims_are_faithful(
     satisfied_requirements: set[int] = set()
     for index, requirement in enumerate(requirements):
 
-        def scoped_claim(claim: StructuredNumericClaim) -> StructuredNumericClaim:
+        def scoped_claim(
+            claim: StructuredNumericClaim, *, allow_inheritance: bool
+        ) -> StructuredNumericClaim:
             if (
-                inherit_measurement_context
+                allow_inheritance
                 and requirement.measurement_context
                 and not claim.measurement_context
             ):
@@ -193,22 +200,42 @@ def _numeric_claims_are_faithful(
                 )
             return claim
 
+        def evidence_allows_inheritance(evidence_id: str) -> bool:
+            evidence = evidence_by_id[evidence_id]
+            return inherit_measurement_context and all(
+                _MEASUREMENT_CONTEXT_APPLICABILITY.get(context_name, "")
+                in evidence.applicability_conditions
+                for context_name in requirement.measurement_context
+            )
+
         for answer_claim in answer_claims:
             candidates = [
-                scoped_claim(claim)
+                scoped_claim(claim, allow_inheritance=inherit_measurement_context)
                 for claim in answer_claim.numeric_claims
-                if numeric_claim_matches_requirement(scoped_claim(claim), requirement)
+                if numeric_claim_matches_requirement(
+                    scoped_claim(claim, allow_inheritance=inherit_measurement_context),
+                    requirement,
+                )
             ]
             if not candidates:
                 continue
             cited_numeric_claims = [
-                claim
+                scoped_claim(
+                    claim,
+                    allow_inheritance=evidence_allows_inheritance(evidence_id),
+                )
                 for evidence_id in answer_claim.evidence_ids
                 if evidence_id in evidence_by_id
                 for claim in extract_structured_numeric_claims(
                     evidence_by_id[evidence_id].support_excerpt
                 )
-                if numeric_claim_matches_requirement(claim, requirement)
+                if numeric_claim_matches_requirement(
+                    scoped_claim(
+                        claim,
+                        allow_inheritance=evidence_allows_inheritance(evidence_id),
+                    ),
+                    requirement,
+                )
             ]
             faithful = all(
                 any(

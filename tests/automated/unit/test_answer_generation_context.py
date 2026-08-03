@@ -340,7 +340,10 @@ def test_post_validation_inherits_single_item_scope_and_rejects_added_number() -
         source_id="guide-a",
         origin_document_id="guide-a",
         source_page=7,
-        content="建议进行5~7d的HBPM，早晚各测量2~3个读数。",
+        content=(
+            "建议进行5~7d的HBPM，早晚各测量2~3个读数。"
+            "在不少于3d、12个测量值时取平均值。"
+        ),
     )
     plan.must_cover[0].support_status = "supported"
     plan.claim_evidence_assessments.append(
@@ -368,10 +371,25 @@ def test_post_validation_inherits_single_item_scope_and_rejects_added_number() -
         "每次测量2~3个读数[guide-a p7]。",
         context,
     )
+    supported_details = validate_answer_generation(
+        "针对家庭血压，建议连续测量5~7天，早晚各测量2~3个读数；"
+        "在不少于3d、12个测量值时取平均值[guide-a p7]。",
+        context,
+    )
+    wrong_details = validate_answer_generation(
+        "针对家庭血压，建议连续测量5~7天，早晚各测量2~3个读数；"
+        "在不少于4d、13个测量值时取平均值[guide-a p7]。",
+        context,
+    )
 
     assert valid.valid is True
+    assert supported_details.valid is True
     assert added_number.valid is False
     assert added_number.numeric_mismatch_ids == [added_number.answer_claims[0].claim_id]
+    assert wrong_details.valid is False
+    assert wrong_details.numeric_mismatch_ids == [
+        wrong_details.answer_claims[0].claim_id
+    ]
 
 
 def test_citation_must_be_locally_bound_to_answer_claim() -> None:

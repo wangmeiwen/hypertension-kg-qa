@@ -16,12 +16,12 @@ _SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?\n]+")
 _LOCAL_CLAUSE_SPLIT_PATTERN = re.compile(r"[，,；;]+")
 _NUMERIC_PATTERN = re.compile(
     r"(?P<comparator>≤|>=|≥|<=|＜|<|＞|>|低于|小于|不超过|以下|"
-    r"高于|大于|至少|不低于|以上)?\s*"
+    r"高于|大于|至少|不低于|不少于|以上)?\s*"
     r"(?P<value>\d{2,3}\s*[/／]\s*\d{2,3}|"
     r"\d+(?:\.\d+)?\s*(?:-|—|~|～|至|到)\s*\d+(?:\.\d+)?|"
     r"\d+(?:\.\d+)?)\s*"
     r"(?P<unit>mm\s*hg|毫米汞柱|kpa|mmol/l|mg|μg|ug|g|%|岁|年|天|d|"
-    r"次\s*[/／]\s*(?:日|天)|次|个读数)",
+    r"次\s*[/／]\s*(?:日|天)|次|个读数|个测量值)",
     flags=re.IGNORECASE,
 )
 _MEASUREMENT_ALIASES = (
@@ -58,6 +58,7 @@ _UNIT_DEFINITIONS = {
     "次/天": ("frequency", Decimal("1")),
     "次": ("frequency", Decimal("1")),
     "个读数": ("frequency", Decimal("1")),
+    "个测量值": ("frequency", Decimal("1")),
 }
 
 
@@ -116,7 +117,7 @@ def _comparator(
         return "lte"
     if raw_comparator in {"＞", ">", "高于", "大于"}:
         return "gt"
-    if raw_comparator in {"≥", ">=", "至少", "不低于", "以上"}:
+    if raw_comparator in {"≥", ">=", "至少", "不低于", "不少于", "以上"}:
         return "gte"
     return "eq"
 
