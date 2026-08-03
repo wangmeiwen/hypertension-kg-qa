@@ -6,16 +6,21 @@ tools:
     alias: kg_query
     description: |
       查询高血压知识图谱（Neo4j），返回统一 Evidence，适合做定义、分级、治疗策略等结构化事实检索。
-      支持三种模式：keyword 检索、list_all_nodes 浏览、只读 cypher 查询。
+      支持四种模式：结构化路径查询、keyword 检索、list_all_nodes 浏览、只读 cypher 查询。
       约束：cypher 必须是只读语句（建议以 MATCH/WITH 开头），禁止 CREATE/MERGE/DELETE/SET 等写操作。
       示例：
       - 关键词检索：{"keyword":"高血压 分级 标准","limit":5}
+      - 路径查询：{"path_start":"高血压","path_end":"家庭","min_hops":2,"max_hops":2,"limit":5}
       - 浏览节点：{"list_all_nodes":true,"limit":10}
       - 只读Cypher：{"cypher":"MATCH (n) WHERE toString(n.name) CONTAINS '高血压' RETURN labels(n) AS labels, properties(n) AS properties LIMIT 5"}
     input_schema:
       keyword: str?
       list_all_nodes: bool?
       cypher: str?
+      path_start: str?
+      path_end: str?
+      min_hops: int?
+      max_hops: int?
       limit: int?
 
   - server_name: local

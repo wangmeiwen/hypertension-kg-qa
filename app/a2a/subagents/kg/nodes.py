@@ -370,6 +370,10 @@ async def node_normalize_results(state: KgSubAgentState) -> KgSubAgentState:
         if not isinstance(row, dict):
             continue
         evidence.extend(_extract_evidence_from_row(row))
+    evidence.sort(
+        key=lambda item: str(item.get("provenance", {}).get("kind") or "")
+        not in {"path", "multi_hop"}
+    )
 
     state["evidence"] = evidence
     state["no_signal"] = len(evidence) == 0

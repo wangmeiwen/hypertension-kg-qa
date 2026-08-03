@@ -116,6 +116,65 @@ def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
     assert evidence["provenance"]["raw"]["labels"] == ["Disease"]
 
 
+def test_kg_structured_path_returns_path_evidence() -> None:
+    class Neo4jClientStub:
+        async def run_cypher(
+            self, cypher: str, params: dict[str, object]
+        ) -> list[dict[str, object]]:
+            assert "MATCH p=(start)-[*2..2]->(end)" in cypher
+            assert params == {
+                "path_start": "高血压",
+                "path_end": "家庭",
+                "limit": 5,
+            }
+            return [
+                {
+                    "path": [
+                        {
+                            "source_name": "高血压",
+                            "relation_type": "HAS_THRESHOLD",
+                            "target_name": "高血压家庭诊断阈值",
+                        },
+                        {
+                            "source_name": "高血压家庭诊断阈值",
+                            "relation_type": "MEASURED_IN_CONTEXT",
+                            "target_name": "家庭",
+                        },
+                    ],
+                    "hops": 2,
+                    "origin_guideline_ids": [""],
+                    "origin_document_ids": ["中国高血压防治指南2024.pdf"],
+                    "source_hashes": ["a" * 64],
+                    "source_pages": [5, 5],
+                    "source_chunk_ids": ["2", "2"],
+                }
+            ]
+
+    tool = object.__new__(KnowledgeGraphTool)
+    tool.client = Neo4jClientStub()
+    tool.forbidden = []
+
+    result = asyncio.run(
+        tool.query(
+            {
+                "path_start": "高血压",
+                "path_end": "家庭",
+                "min_hops": 2,
+                "max_hops": 2,
+                "limit": 5,
+            }
+        )
+    )
+
+    assert result["mode"] == "structured_path"
+    assert len(result["evidence"]) == 1
+    evidence = result["evidence"][0]
+    assert evidence["provenance"]["kind"] == "path"
+    assert len(evidence["provenance"]["raw"]["path"]) == 2
+    assert evidence["origin_document_id"] == "中国高血压防治指南2024.pdf"
+    assert "高血压 -[HAS_THRESHOLD]-> 高血压家庭诊断阈值" in evidence["content"]
+
+
 def test_subagent_result_enforces_evidence_model() -> None:
     result = SubAgentResult(
         target_agent="rag",

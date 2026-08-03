@@ -11,6 +11,7 @@ from app.a2a.claim_support import (
     deterministic_claim_support,
     verify_claim_evidence,
 )
+from app.a2a.relation_claims import relation_endpoints, relation_hop_bounds
 from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import Evidence, SubAgentResult
@@ -660,3 +661,18 @@ def test_controller_records_verifier_output_before_support_transition() -> None:
     assert item.support_status == "supported"
     assert item.status == "covered"
     assert plan.claim_evidence_assessments == assessments
+
+
+def test_relation_question_parses_path_endpoints_and_exact_hops() -> None:
+    assert relation_endpoints("高血压与家庭之间有什么两跳路径？") == [
+        "高血压",
+        "家庭",
+    ]
+    assert relation_hop_bounds("高血压与家庭之间有什么两跳路径？") == (2, 2)
+
+
+def test_relation_question_does_not_split_age_phrase_on_and_character() -> None:
+    assert relation_endpoints("80岁及以上人群与诊室血压的关系是什么？") == [
+        "80岁及以上人群",
+        "诊室血压",
+    ]

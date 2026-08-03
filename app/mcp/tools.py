@@ -15,11 +15,12 @@ MCP 工具装配与运行时探测模块。
 
 """
 
+import json
+import hashlib
+import logging
 import os
 import re
 import sys
-import json
-import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -129,6 +130,99 @@ class KnowledgeGraphTool:
                 seen.add(item)
         return terms
 
+    @staticmethod
+    def _first_path_value(record: dict[str, Any], field: str) -> Any:
+        values_obj = record.get(field)
+        values = values_obj if isinstance(values_obj, list) else []
+        return next((value for value in values if value not in (None, "")), "")
+
+    @classmethod
+    def _build_path_evidence(cls, record: dict[str, Any]) -> dict[str, Any]:
+        path_obj = record.get("path")
+        path = path_obj if isinstance(path_obj, list) else []
+        if not path:
+            raise ValueError("kg_path_record_missing_path")
+        parts = [str(path[0].get("source_name") or "").strip()]
+        for edge in path:
+            if not isinstance(edge, dict):
+                continue
+            relation_type = str(edge.get("relation_type") or "RELATED_TO").strip()
+            target_name = str(edge.get("target_name") or "").strip()
+            parts.append(f"-[{relation_type}]-> {target_name}")
+        path_key = " ".join(parts)
+        item = {
+            "id": hashlib.sha256(path_key.encode("utf-8")).hexdigest(),
+            "content": f"知识图谱路径：{path_key}。",
+            "path": path,
+            "hops": int(record.get("hops") or len(path)),
+            "origin_guideline_id": cls._first_path_value(
+                record, "origin_guideline_ids"
+            ),
+            "origin_document_id": cls._first_path_value(record, "origin_document_ids"),
+            "source_hash": cls._first_path_value(record, "source_hashes"),
+            "source_page": cls._first_path_value(record, "source_pages"),
+            "source_chunk_id": str(cls._first_path_value(record, "source_chunk_ids")),
+        }
+        return build_kg_evidence(
+            item,
+            tool_name="kg_query",
+            evidence_kind="path",
+            retrieval_method="neo4j_structured_path",
+        )
+
+    async def _query_paths(
+        self,
+        *,
+        path_start: str,
+        path_end: str,
+        min_hops: int,
+        max_hops: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        cypher = f"""
+        MATCH p=(start)-[*{min_hops}..{max_hops}]->(end)
+        WHERE (
+            start.name = $path_start
+            OR start.canonical_name = $path_start
+            OR $path_start IN coalesce(start.aliases, [])
+        ) AND (
+            end.name = $path_end
+            OR end.canonical_name = $path_end
+            OR $path_end IN coalesce(end.aliases, [])
+        )
+        WITH p, relationships(p) AS rels, nodes(p) AS path_nodes
+        RETURN [index IN range(0, size(rels) - 1) | {{
+                   source_name: coalesce(path_nodes[index].name, ''),
+                   source_labels: labels(path_nodes[index]),
+                   relation_type: type(rels[index]),
+                   target_name: coalesce(path_nodes[index + 1].name, ''),
+                   target_labels: labels(path_nodes[index + 1])
+               }}] AS path,
+               size(rels) AS hops,
+               [rel IN rels | coalesce(rel.origin_guideline_id, '')]
+                   AS origin_guideline_ids,
+               [rel IN rels | coalesce(rel.source_name, '')]
+                   AS origin_document_ids,
+               [rel IN rels | coalesce(rel.source_hash, '')] AS source_hashes,
+               [rel IN rels | coalesce(rel.source_page, 0)] AS source_pages,
+               [rel IN rels | coalesce(rel.source_chunk_index, '')]
+                   AS source_chunk_ids
+        LIMIT $limit
+        """
+        records = await self.client.run_cypher(
+            cypher,
+            {"path_start": path_start, "path_end": path_end, "limit": limit},
+        )
+        return {
+            "evidence": [
+                self._build_path_evidence(record)
+                for record in records
+                if isinstance(record, dict) and isinstance(record.get("path"), list)
+            ],
+            "blocked": False,
+            "mode": "structured_path",
+        }
+
     async def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         """执行知识图谱查询。
 
@@ -143,6 +237,8 @@ class KnowledgeGraphTool:
         """
         cypher = (payload.get("cypher") or "").strip()
         keyword = (payload.get("keyword") or payload.get("question") or "").strip()
+        path_start = str(payload.get("path_start") or "").strip()
+        path_end = str(payload.get("path_end") or "").strip()
         list_all_nodes = bool(payload.get("list_all_nodes"))
         limit = int(payload.get("limit") or 10)
         limit = max(1, min(limit, 20))
@@ -172,6 +268,25 @@ class KnowledgeGraphTool:
                     "blocked": False,
                     "mode": "cypher",
                 }
+
+            if path_start or path_end:
+                if not path_start or not path_end:
+                    return {
+                        "evidence": [],
+                        "blocked": True,
+                        "reason": "path_endpoints_required",
+                    }
+                min_hops = max(1, min(int(payload.get("min_hops") or 1), 3))
+                max_hops = max(
+                    min_hops, min(int(payload.get("max_hops") or min_hops), 3)
+                )
+                return await self._query_paths(
+                    path_start=path_start,
+                    path_end=path_end,
+                    min_hops=min_hops,
+                    max_hops=max_hops,
+                    limit=limit,
+                )
 
             if list_all_nodes:
                 records = await self.client.run_cypher(
@@ -783,11 +898,15 @@ def build_mcp_server() -> MCPServer:
     # 先构建内置工具目录，再由 ToolManager 按 YAML 动态注册。
     builtin_registry: dict[str, dict[str, Any]] = {
         "kg_query": {
-            "description": "查询高血压知识图谱，支持 keyword、list_all_nodes 或只读 cypher",
+            "description": "查询高血压知识图谱，支持结构化路径、keyword、list_all_nodes 或只读 cypher",
             "input_schema": {
                 "keyword": "str?",
                 "list_all_nodes": "bool?",
                 "cypher": "str?",
+                "path_start": "str?",
+                "path_end": "str?",
+                "min_hops": "int?",
+                "max_hops": "int?",
                 "limit": "int?",
             },
             "handler": kg_handler,

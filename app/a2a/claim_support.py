@@ -19,6 +19,7 @@ from app.a2a.numeric_claims import (
     extract_structured_numeric_claims,
     numeric_claim_matches_requirement,
 )
+from app.a2a.relation_claims import relation_endpoints
 from app.a2a.telemetry import empty_token_usage
 
 _INTERVAL_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:-|—|~|～|至|到)\s*\d+(?:\.\d+)?")
@@ -32,9 +33,6 @@ _CLAIM_SUPPORT_STATUSES: set[str] = {
     "irrelevant",
     "uncertain",
 }
-_RELATION_SPLIT_PATTERN = re.compile(
-    r"(?:和|与|及|之间|有什么|有何|的关系|关系|关联|路径|多跳|如何|怎么|[？?，,。])"
-)
 
 
 def _matched_applicability(must_cover: MustCoverItem, evidence: Evidence) -> list[str]:
@@ -74,14 +72,6 @@ def _numeric_shape_reason(question: str, content: str) -> str | None:
     ) and not _LOWER_BOUND_PATTERN.search(content):
         return "numeric_lower_bound_missing"
     return None
-
-
-def _relation_endpoints(question: str) -> list[str]:
-    return [
-        part.strip()
-        for part in _RELATION_SPLIT_PATTERN.split(question)
-        if len(part.strip()) >= 2
-    ][:2]
 
 
 def _assessment(
@@ -196,7 +186,7 @@ def deterministic_claim_support(
             raw_payload.get(field)
             for field in ("relation_type", "rel_type", "target_name", "path")
         )
-        endpoints = _relation_endpoints(must_cover.question)
+        endpoints = relation_endpoints(must_cover.question)
         endpoints_complete = all(endpoint in content for endpoint in endpoints)
         requires_path = any(
             term in must_cover.question for term in ("路径", "多跳", "几跳")
