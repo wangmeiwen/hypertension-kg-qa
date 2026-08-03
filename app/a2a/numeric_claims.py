@@ -287,8 +287,6 @@ def _extract_inline_blood_pressure_logical_pair_claims(
 ) -> list[StructuredNumericClaim]:
     """解析正文中“收缩压和/或舒张压”共用单位的成对阈值。"""
     predicate = _subject_and_predicate(clause, "blood_pressure", predicate_context)[1]
-    if not predicate:
-        return []
     claims: list[StructuredNumericClaim] = []
     for matched in _INLINE_BLOOD_PRESSURE_LOGICAL_PAIR_PATTERN.finditer(clause):
         for subject, value_field, comparator_field in (

@@ -703,6 +703,130 @@ def test_post_validation_accepts_logical_blood_pressure_pairs_from_guide_table()
     assert result.numeric_mismatch_ids == []
 
 
+def test_post_validation_inherits_scope_for_exclusively_cited_numeric_bullets() -> None:
+    plan = build_question_plan(
+        "家庭血压和动态血压分别是多少？", MedicalRiskAssessment()
+    )
+    home_item, ambulatory_item = plan.must_cover
+    home_task = next(
+        item
+        for item in plan.retrieval_tasks
+        if item.must_cover_id == home_item.item_id and item.target_agent == "rag"
+    )
+    ambulatory_task = next(
+        item
+        for item in plan.retrieval_tasks
+        if item.must_cover_id == ambulatory_item.item_id and item.target_agent == "rag"
+    )
+    home_evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=6,
+        content="家庭血压诊断阈值为≥135/85mmHg。",
+    )
+    ambulatory_evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=16,
+        content=(
+            "基于动态血压的高血压诊断标准"
+            "|血压类型|测量方式|收缩压/舒张压(mmHg)|"
+            "|动态血压|24h平均值|≥130和/或≥80|"
+            "|动态血压|白天平均值|≥135和/或≥85|"
+            "|动态血压|夜晚平均值|≥120和/或≥70|"
+        ),
+    )
+    for item, task, evidence, condition in (
+        (home_item, home_task, home_evidence, "家庭血压"),
+        (ambulatory_item, ambulatory_task, ambulatory_evidence, "动态血压"),
+    ):
+        item.support_status = "supported"
+        plan.claim_evidence_assessments.append(
+            ClaimEvidenceAssessment(
+                task_id=task.task_id,
+                must_cover_id=item.item_id,
+                evidence_id=evidence_identity(evidence),
+                support_status="supported",
+                support_excerpt=evidence.content,
+                applicability_conditions=[condition],
+            )
+        )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={
+            home_item.item_id: [("rag", home_evidence)],
+            ambulatory_item.item_id: [("rag", ambulatory_evidence)],
+        },
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "家庭血压诊断阈值为≥135/85mmHg[guide-a p6]。\n"
+        "动态血压诊断阈值如下[guide-a p16]：\n"
+        "- 24h平均值：≥130和/或≥80mmHg[guide-a p16]。\n"
+        "- 白天平均值：≥135和/或≥85mmHg[guide-a p16]。\n"
+        "- 夜晚平均值：≥120和/或≥70mmHg[guide-a p16]。",
+        context,
+    )
+
+    assert result.valid is True
+    assert result.numeric_mismatch_ids == []
+
+
+def test_post_validation_does_not_inherit_scope_from_shared_citation() -> None:
+    plan = build_question_plan(
+        "家庭血压和动态血压分别是多少？", MedicalRiskAssessment()
+    )
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=16,
+        content=(
+            "基于家庭血压和动态血压的高血压诊断标准"
+            "|血压类型|测量方式|收缩压/舒张压(mmHg)|"
+            "|家庭血压|平均值|≥135和/或≥85|"
+            "|动态血压|24h平均值|≥130和/或≥80|"
+        ),
+    )
+    evidence_by_item = {}
+    for item in plan.must_cover:
+        task = next(
+            task
+            for task in plan.retrieval_tasks
+            if task.must_cover_id == item.item_id and task.target_agent == "rag"
+        )
+        item.support_status = "supported"
+        plan.claim_evidence_assessments.append(
+            ClaimEvidenceAssessment(
+                task_id=task.task_id,
+                must_cover_id=item.item_id,
+                evidence_id=evidence_identity(evidence),
+                support_status="supported",
+                support_excerpt=evidence.content,
+                applicability_conditions=item.applicability_conditions,
+            )
+        )
+        evidence_by_item[item.item_id] = [("rag", evidence)]
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item=evidence_by_item,
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "家庭血压诊断阈值为≥135/85mmHg[guide-a p16]。\n"
+        "动态血压诊断阈值如下[guide-a p16]：\n"
+        "- 24h平均值：≥130和/或≥80mmHg[guide-a p16]。",
+        context,
+    )
+
+    assert result.valid is False
+    assert plan.must_cover[1].item_id in result.missing_must_cover_ids
+
+
 def test_citation_must_be_locally_bound_to_answer_claim() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")

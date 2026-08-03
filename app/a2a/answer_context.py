@@ -247,17 +247,16 @@ def _numeric_claims_are_faithful(
         def scoped_claim(
             claim: StructuredNumericClaim, *, allow_inheritance: bool
         ) -> StructuredNumericClaim:
+            updates: dict[str, Any] = {}
             if (
                 allow_inheritance
                 and requirement.measurement_context
                 and not claim.measurement_context
             ):
-                return claim.model_copy(
-                    update={
-                        "measurement_context": list(requirement.measurement_context)
-                    }
-                )
-            return claim
+                updates["measurement_context"] = list(requirement.measurement_context)
+            if allow_inheritance and not claim.predicate:
+                updates["predicate"] = requirement.predicate
+            return claim.model_copy(update=updates) if updates else claim
 
         def evidence_allows_inheritance(evidence_id: str) -> bool:
             evidence = evidence_by_id[evidence_id]
@@ -311,6 +310,22 @@ def _numeric_claims_are_faithful(
     return len(satisfied_requirements) == len(requirements), list(
         dict.fromkeys(mismatched_claim_ids)
     )
+
+
+def _item_citations_are_exclusive(
+    item: AnswerMustCoverContext, context: AnswerGenerationContext
+) -> bool:
+    item_citations = {
+        evidence.citation for evidence in item.supporting_evidence if evidence.citation
+    }
+    other_citations = {
+        evidence.citation
+        for other_item in context.must_cover
+        if other_item.item_id != item.item_id
+        for evidence in other_item.supporting_evidence
+        if evidence.citation
+    }
+    return bool(item_citations) and item_citations.isdisjoint(other_citations)
 
 
 def _recommendation_claims_are_faithful(
@@ -436,7 +451,7 @@ def validate_answer_generation(
             item=item,
             answer_claims=item_answer_claims,
             inherit_measurement_context=(
-                len(context.must_cover) == 1 and not missing_conditions
+                not missing_conditions and _item_citations_are_exclusive(item, context)
             ),
         )
         numeric_mismatch_ids.extend(mismatched_claims)
