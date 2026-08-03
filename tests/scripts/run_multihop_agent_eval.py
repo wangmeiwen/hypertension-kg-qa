@@ -18,6 +18,7 @@ from app.evaluation.agent_metrics import (  # noqa: E402
     evaluate_agent_case,
     summarize_agent_results,
 )
+from app.evaluation.agent_canary import load_agent_canary  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
@@ -33,9 +34,13 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     load_dotenv(PROJECT_ROOT / ".env", override=True)
-    questions = json.loads(args.questions.read_text(encoding="utf-8"))
-    if not isinstance(questions, list):
-        raise ValueError("问题集必须是 JSON 数组")
+    raw_questions = json.loads(args.questions.read_text(encoding="utf-8"))
+    if isinstance(raw_questions, dict):
+        questions = load_agent_canary(args.questions).evaluation_cases()
+    elif isinstance(raw_questions, list):
+        questions = raw_questions
+    else:
+        raise ValueError("问题集必须是 canary 对象或 JSON 数组")
 
     results = []
     with httpx.Client(base_url=args.base_url, timeout=1800) as client:

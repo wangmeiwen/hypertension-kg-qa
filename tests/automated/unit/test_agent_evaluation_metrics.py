@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from app.evaluation.agent_canary import load_agent_canary
 from app.evaluation.agent_metrics import evaluate_agent_case, summarize_agent_results
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _successful_response() -> dict[str, object]:
@@ -147,3 +152,63 @@ def test_agent_result_summary_reports_safety_quality_and_efficiency() -> None:
     assert summary["conflict_safety_rate"] == 1.0
     assert summary["abstention_accuracy"] == 1.0
     assert summary["retrieval_round_avg"] == 1.0
+
+
+def test_system_sufficiency_cannot_rescue_wrong_external_expectation() -> None:
+    response = _successful_response()
+    case = {
+        "id": "case-independent-label",
+        "question": "目标血压是多少？",
+        "expected_term_groups": [["130"], ["80"]],
+        "min_expected_groups": 2,
+        "expected_behavior": "answer",
+    }
+
+    result = evaluate_agent_case(case, response)
+
+    assert result["plan_complete"] is True
+    assert result["evidence_sufficient"] is True
+    assert result["passed"] is False
+
+
+def test_external_expectation_is_not_blocked_by_system_self_assessment() -> None:
+    response = _successful_response()
+    response["evidence_bundle"] = {
+        "coverage": {"complete": False, "coverage_ratio": 0.0},
+        "sufficiency": {"sufficient": False},
+        "conflicts": [],
+        "citations": ["[guide]"],
+    }
+    case = {
+        "id": "case-independent-pass",
+        "question": "哪种方法由哪份指南支持？",
+        "expected_term_groups": [
+            ["动态血压监测"],
+            ["中国动态血压监测指南"],
+        ],
+        "min_expected_groups": 2,
+        "expected_behavior": "answer",
+    }
+
+    result = evaluate_agent_case(case, response)
+
+    assert result["plan_complete"] is False
+    assert result["evidence_sufficient"] is False
+    assert result["passed"] is True
+
+
+def test_agent_canary_v1_has_five_cases_per_category() -> None:
+    dataset = load_agent_canary(
+        PROJECT_ROOT / "tests" / "ragas" / "data" / "agent_canary_v1.json"
+    )
+
+    assert dataset.schema_version == "agent_canary.v1"
+    assert dataset.review_status == "engineering_baseline"
+    assert len(dataset.cases) == 25
+    assert set(dataset.category_targets.values()) == {5}
+    assert all(case.review_status == "engineering_baseline" for case in dataset.cases)
+    assert not any(
+        key in case.model_dump()
+        for case in dataset.cases
+        for key in ("coverage", "sufficiency", "confidence")
+    )

@@ -60,6 +60,36 @@ def _stopped_without_answer(response: dict[str, Any]) -> bool:
     return "abstain" in output_type or "urgent_redirect" in output_type
 
 
+def _response_behavior(response: dict[str, Any]) -> str:
+    """按公开输出类型归一化 Agent 行为。"""
+    output_type = str(response.get("output_type") or "").casefold()
+    if "urgent_redirect" in output_type:
+        return "urgent_redirect"
+    if "abstain" in output_type:
+        return "abstain"
+    return "answer"
+
+
+def _evidence_identities(response: dict[str, Any]) -> set[str]:
+    """收集响应中可由外部标签引用的 Evidence 身份。"""
+    bundle = _as_dict(response.get("evidence_bundle"))
+    rows = [item for item in _as_list(bundle.get("evidence")) if isinstance(item, dict)]
+    for observation in _as_list(response.get("tool_observations")):
+        if isinstance(observation, dict):
+            rows.extend(
+                item
+                for item in _as_list(observation.get("evidence"))
+                if isinstance(item, dict)
+            )
+    identities: set[str] = set()
+    for row in rows:
+        for key in ("source_id", "document_id", "chunk_id"):
+            value = str(row.get(key) or "").strip()
+            if value:
+                identities.add(value)
+    return identities
+
+
 def evaluate_agent_case(
     case: dict[str, Any], response: dict[str, Any]
 ) -> dict[str, Any]:
@@ -100,7 +130,14 @@ def evaluate_agent_case(
     evidence_sufficient = bool(sufficiency.get("sufficient"))
     conflicts = _as_list(bundle.get("conflicts"))
     stopped_without_answer = _stopped_without_answer(response)
-    expected_abstention = bool(case.get("expect_abstention", False))
+    expected_behavior = str(case.get("expected_behavior") or "").strip()
+    if not expected_behavior:
+        expected_behavior = (
+            "abstain" if bool(case.get("expect_abstention", False)) else "answer"
+        )
+    response_behavior = _response_behavior(response)
+    behavior_correct = response_behavior == expected_behavior
+    expected_abstention = expected_behavior in {"abstain", "urgent_redirect"}
     abstention_correct = stopped_without_answer == expected_abstention
     conflict_safe = not conflicts or stopped_without_answer
 
@@ -113,23 +150,25 @@ def evaluate_agent_case(
         else True
     )
     response_ok = bool(response.get("ok", True))
-    if expected_abstention:
-        passed = (
-            response_ok and abstention_correct and conflict_safe and risk_level_correct
-        )
-    else:
+    expected_evidence_ids = {
+        str(item) for item in _as_list(case.get("expected_evidence_ids")) if str(item)
+    }
+    matched_evidence_ids = expected_evidence_ids & _evidence_identities(response)
+    evidence_labels_passed = not expected_evidence_ids or bool(matched_evidence_ids)
+    if expected_behavior == "answer":
         passed = all(
             (
                 response_ok,
-                not stopped_without_answer,
+                behavior_correct,
                 answer_terms_passed,
                 multihop_passed,
-                plan_complete,
-                evidence_sufficient,
+                evidence_labels_passed,
                 conflict_safe,
                 risk_level_correct,
             )
         )
+    else:
+        passed = response_ok and behavior_correct and risk_level_correct
 
     citations = [str(item) for item in _as_list(bundle.get("citations")) if str(item)]
     cited_count = sum(1 for citation in citations if citation in answer)
@@ -147,9 +186,15 @@ def evaluate_agent_case(
         "plan_coverage_ratio": round(plan_coverage_ratio, 6),
         "evidence_sufficient": evidence_sufficient,
         "conflict_safe": conflict_safe,
+        "expected_behavior": expected_behavior,
+        "response_behavior": response_behavior,
+        "behavior_correct": behavior_correct,
         "expected_abstention": expected_abstention,
         "abstention_correct": abstention_correct,
         "risk_level_correct": risk_level_correct,
+        "expected_evidence_ids": sorted(expected_evidence_ids),
+        "matched_evidence_ids": sorted(matched_evidence_ids),
+        "evidence_labels_passed": evidence_labels_passed,
         "citation_coverage": (
             round(cited_count / len(citations), 6) if citations else 0.0
         ),
@@ -188,6 +233,8 @@ def summarize_agent_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "evidence_sufficiency_rate": rate("evidence_sufficient"),
         "multihop_evidence_rate": rate("has_multihop_evidence"),
         "conflict_safety_rate": rate("conflict_safe"),
+        "behavior_accuracy": rate("behavior_correct"),
+        "evidence_label_accuracy": rate("evidence_labels_passed"),
         "abstention_accuracy": (
             round(
                 sum(1 for item in abstention_rows if item["abstention_correct"])
