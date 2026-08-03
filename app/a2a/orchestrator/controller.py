@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from typing import Any, Callable, Literal
 
 from pydantic import ValidationError
@@ -17,6 +16,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
+from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_fusion import EvidenceFusionResult, fuse_evidence
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
@@ -309,16 +309,18 @@ class UnifiedOrchestratorController:
 
     def _detect_numeric_conflicts(self, rows: list[dict[str, Any]]) -> list[str]:
         """检测证据片段中是否存在明显数值冲突。"""
-        percent_values: set[str] = set()
-        for item in rows[:2]:
-            if not isinstance(item, dict):
+        return ["numeric_conflict"] if self._detect_evidence_conflicts(rows) else []
+
+    @staticmethod
+    def _detect_evidence_conflicts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """返回可解释、可追踪的结构化证据冲突。"""
+        evidence: list[Evidence] = []
+        for row in rows:
+            try:
+                evidence.append(Evidence.model_validate(row))
+            except ValidationError:
                 continue
-            content = str(item.get("content") or "")
-            for matched in re.findall(r"\d+(?:\.\d+)?%", content):
-                percent_values.add(matched)
-        if len(percent_values) > 1:
-            return ["numeric_conflict"]
-        return []
+        return [item.model_dump() for item in detect_evidence_conflicts(evidence)]
 
     def _normalize_compressed_tool_observations(
         self, rows: Any
@@ -1192,6 +1194,7 @@ class UnifiedOrchestratorController:
             if citation and citation not in citations:
                 citations.append(citation)
         retrieval_risk_flags = self._detect_numeric_conflicts(evidence)
+        conflicts = self._detect_evidence_conflicts(evidence)
         return {
             "answer_mode": "retrieval_augmented" if evidence else "direct_answer",
             "supported_points": supported_points,
@@ -1204,6 +1207,7 @@ class UnifiedOrchestratorController:
             "corroborated_claim_count": fusion.corroborated_claim_count,
             "fused_evidence": evidence,
             "retrieval_risk_flags": retrieval_risk_flags,
+            "conflicts": conflicts,
         }
 
     @staticmethod
@@ -1241,6 +1245,7 @@ class UnifiedOrchestratorController:
         fusion = self._fuse_tool_evidence(tool_observations)
         evidence = [item.model_dump() for item in fusion.evidence]
         risk_flags = self._detect_numeric_conflicts(evidence)
+        conflicts = self._detect_evidence_conflicts(evidence)
         if not evidence:
             missing_points.append("direct_evidence")
         if risk_flags:
@@ -1270,6 +1275,7 @@ class UnifiedOrchestratorController:
             "distinct_source_count": fusion.distinct_source_count,
             "missing_points": missing_points,
             "unresolved_conflicts": risk_flags,
+            "conflict_details": conflicts,
             "plan_coverage": plan_coverage,
         }
 
@@ -1518,6 +1524,7 @@ class UnifiedOrchestratorController:
                 "answer_mode": "abstained_insufficient_evidence",
                 "missing_points": readiness.get("missing_points") or [],
                 "unresolved_conflicts": readiness.get("unresolved_conflicts") or [],
+                "conflict_details": readiness.get("conflict_details") or [],
                 "plan_coverage": readiness.get("plan_coverage"),
             }
         )

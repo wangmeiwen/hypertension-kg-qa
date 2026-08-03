@@ -145,6 +145,20 @@ class EvidenceBundle(BaseModel):
     citations: list[str] = Field(default_factory=list)
 
 
+class EvidenceConflict(BaseModel):
+    """融合证据中尚未解决的结构化冲突。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    conflict_id: str
+    conflict_type: Literal["numeric"] = "numeric"
+    claim_key: str
+    values: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
+    status: Literal["unresolved", "resolved"] = "unresolved"
+
+
 class OrchestratorDecision(BaseModel):
     """主代理补检索决策。"""
 
