@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Iterable
 
+from app.a2a.answer_context import evidence_citation
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_fusion import (
     evidence_identity,
@@ -12,13 +13,6 @@ from app.a2a.evidence_fusion import (
     publication_identity,
 )
 from app.a2a.models import Evidence, EvidenceBundle
-
-
-def _citation(evidence: Evidence) -> str:
-    """生成 Evidence Bundle 引用标签。"""
-    if evidence.page is not None:
-        return f"[{evidence.source_id} p{evidence.page}]"
-    return f"[{evidence.source_id}]" if evidence.source_id else ""
 
 
 def _supporting_agents(evidence: Evidence) -> set[str]:
@@ -54,7 +48,7 @@ def build_evidence_bundle(
         item for item in evidence if "history" in _supporting_agents(item)
     ]
     citations = list(
-        dict.fromkeys(filter(None, (_citation(item) for item in evidence)))
+        dict.fromkeys(filter(None, (evidence_citation(item) for item in evidence)))
     )
     conflicts = detect_evidence_conflicts(evidence)
     evidence_identity_payload = "|".join(

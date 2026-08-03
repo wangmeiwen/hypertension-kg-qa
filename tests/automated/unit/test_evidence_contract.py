@@ -10,7 +10,7 @@ import pytest
 from app.a2a.evidence import build_kg_evidence, build_rag_evidence
 from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
-from app.a2a.models import Evidence, SubAgentResult
+from app.a2a.models import ClaimEvidenceAssessment, Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 from app.a2a.subagents.kg.nodes import node_normalize_results as normalize_kg_results
@@ -403,6 +403,10 @@ def test_kg_entity_relation_tool_returns_shared_evidence_contract() -> None:
 
 def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("如何监测血压？", MedicalRiskAssessment())
+    planned_task = next(
+        item for item in plan.retrieval_tasks if item.target_agent == "rag"
+    )
     evidence = build_rag_evidence(
         {
             "source": "guide.pdf",
@@ -432,9 +436,26 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
         subagent_result,
         {
             "action": "call_rag",
-            "task_id": "task-rag-1",
-            "must_cover_id": "mc-1",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
         },
+    )
+    normalized_evidence = Evidence.model_validate(evidence)
+    plan.must_cover[0].support_status = "supported"
+    plan.must_cover[0].status = "covered"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=planned_task.task_id,
+            must_cover_id=planned_task.must_cover_id,
+            evidence_id=evidence_identity(normalized_evidence),
+            support_status="supported",
+            support_excerpt=normalized_evidence.content,
+        )
+    )
+    answer_context = controller._build_answer_generation_context(
+        question_plan=plan,
+        tool_observations=[observation],
+        conflict_rows=[],
     )
     assert observation["evidence"] == [evidence]
     evidence_summary = controller._build_evidence_summary([observation])
@@ -442,10 +463,7 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
     assert evidence_summary["citations"] == ["[guide.pdf p12]"]
     prompt = controller._build_final_answer_user_prompt(
         question="如何监测血压？",
-        qa_memory_text="当前暂无问答对",
-        retrieval_index_text="当前暂无历史检索问题",
-        tool_observations=[observation],
-        draft_answer="",
+        answer_context=answer_context,
     )
     assert "[guide.pdf p12]" in prompt
     assert "高血压患者应规律监测血压" in prompt
@@ -453,12 +471,12 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
 
     compact = controller._compact_tool_observations_for_compression([observation])
     assert compact[0]["evidence"] == [evidence]
-    assert compact[0]["task_id"] == "task-rag-1"
-    assert compact[0]["must_cover_id"] == "mc-1"
+    assert compact[0]["task_id"] == planned_task.task_id
+    assert compact[0]["must_cover_id"] == planned_task.must_cover_id
     assert "query_records" not in compact[0]
     normalized_compact = controller._normalize_compressed_tool_observations(compact)
-    assert normalized_compact[0]["task_id"] == "task-rag-1"
-    assert normalized_compact[0]["must_cover_id"] == "mc-1"
+    assert normalized_compact[0]["task_id"] == planned_task.task_id
+    assert normalized_compact[0]["must_cover_id"] == planned_task.must_cover_id
 
     history_observation = controller._build_history_observation(
         {
@@ -559,7 +577,7 @@ def test_orchestrator_history_action_is_reachable() -> None:
         observations = kwargs["tool_observations"]
         assert isinstance(observations, list)
         assert observations[0]["evidence"] == [evidence]
-        return "历史证据支持该回答。", {"total_tokens": 1}
+        return "历史证据支持该回答。[guide.pdf]", {"total_tokens": 1}
 
     gateway = GatewayStub()
     controller = object.__new__(UnifiedOrchestratorController)
@@ -583,7 +601,8 @@ def test_orchestrator_history_action_is_reachable() -> None:
         )
     )
 
-    assert result["output"] == "历史证据支持该回答。"
+    assert result["output"] == "历史证据支持该回答。[guide.pdf]"
+    assert result["answer_validation"]["valid"] is True
     assert result["evidence_summary"]["evidence_count"] == 1
     assert gateway.calls == [
         (

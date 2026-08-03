@@ -15,6 +15,10 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
     jieba = None
 
 from app.a2a.agent.llm_client import LLMClient
+from app.a2a.answer_context import (
+    build_answer_generation_context,
+    validate_answer_generation,
+)
 from app.a2a.client.subagent_client import SubAgentClient
 from app.a2a.claim_support import verify_claim_evidence
 from app.a2a.conflict_detection import detect_evidence_conflicts
@@ -27,6 +31,8 @@ from app.a2a.evidence_fusion import (
 from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
+    AnswerGenerationContext,
+    AnswerValidationResult,
     ClaimEvidenceAssessment,
     ClaimSupportStatus,
     Evidence,
@@ -318,7 +324,9 @@ class UnifiedOrchestratorController:
     def _evidence_citation_label(row: dict[str, Any]) -> str:
         """从 Evidence 构造确定性的引用标签。"""
         source_id = _sanitize_text(row.get("source_id"), 120)
-        page = row.get("page")
+        page = row.get("source_page")
+        if page in (None, ""):
+            page = row.get("page")
         if page not in (None, ""):
             return f"[{source_id} p{page}]" if source_id else f"[p{page}]"
         return f"[{source_id}]" if source_id else ""
@@ -1567,6 +1575,23 @@ class UnifiedOrchestratorController:
         return grouped
 
     @classmethod
+    def _build_answer_generation_context(
+        cls,
+        *,
+        question_plan: QuestionPlan,
+        tool_observations: list[dict[str, Any]],
+        conflict_rows: Any,
+    ) -> AnswerGenerationContext:
+        """构建按 must-cover 组织且只包含已校验支持证据的终答上下文。"""
+        return build_answer_generation_context(
+            question_plan=question_plan,
+            evidence_by_item=cls._evidence_by_must_cover(
+                tool_observations, question_plan
+            ),
+            conflicts=_coerce_list(conflict_rows),
+        )
+
+    @classmethod
     def _fuse_tool_evidence(
         cls, tool_observations: list[dict[str, Any]]
     ) -> EvidenceFusionResult:
@@ -1658,43 +1683,28 @@ class UnifiedOrchestratorController:
         """构建最终答案生成阶段的系统提示词。"""
         return (
             "你是高血压问答系统的最终回答生成器。\n"
-            "请基于用户问题、会话问答记忆、历史检索索引和已有检索证据，输出自然、完整、可直接展示给用户的最终答案。\n"
+            "请严格依据 AnswerGenerationContext 输出自然、完整、可直接展示给用户的最终答案。\n"
             "要求：\n"
             "1. 直接回答问题，不要输出 JSON，不要解释推理过程。\n"
-            "2. 如果证据不足，要明确说明不确定性，但仍基于现有信息给出谨慎回答。\n"
-            "3. 优先使用已有检索证据，不要编造新的事实或来源。\n"
-            "4. 引用来源时只能使用 Evidence 中提供的 source_id 和 page，格式为 [source_id p页码]；没有页码时使用 [source_id]。\n"
-            "5. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
+            "2. 按 must_cover 数组顺序逐项回答，不得遗漏或合并问题点。\n"
+            "3. 每项结论只能使用该项 supporting_evidence，并至少附带其中一个 citation。\n"
+            "4. 明确写出 evidence_policy.required_applicability_fields 中的适用条件。\n"
+            "5. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
+            "6. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
         )
 
     def _build_final_answer_user_prompt(
         self,
         *,
         question: str,
-        qa_memory_text: str,
-        retrieval_index_text: str,
-        tool_observations: list[dict[str, Any]],
-        draft_answer: str,
+        answer_context: AnswerGenerationContext,
     ) -> str:
         """构建最终答案生成阶段的用户提示词。"""
-        fused_evidence = self._fuse_tool_evidence(tool_observations).evidence
-        evidence_lines = [
-            self._format_evidence_excerpt(item.model_dump()) for item in fused_evidence
-        ]
-        evidence_lines = [item for item in evidence_lines if item]
-        draft_text = _sanitize_text(draft_answer, 1600)
         return (
             f"用户问题：{question}\n\n"
-            f"会话问答记忆：\n{qa_memory_text}\n\n"
-            f"历史检索问题索引：\n{retrieval_index_text}\n\n"
-            "当前已融合的 Evidence：\n"
-            + ("\n".join(evidence_lines) if evidence_lines else "当前没有有效 Evidence")
+            "AnswerGenerationContext：\n"
+            + answer_context.model_dump_json(indent=2)
             + "\n\n"
-            + (
-                f"主控草稿答案（可参考但不要机械复述）：\n{draft_text}\n\n"
-                if draft_text
-                else ""
-            )
             + "请输出最终回答。"
         )
 
@@ -1702,10 +1712,8 @@ class UnifiedOrchestratorController:
         self,
         *,
         question: str,
-        qa_memory_text: str,
-        retrieval_index_text: str,
         tool_observations: list[dict[str, Any]],
-        draft_answer: str,
+        answer_context: AnswerGenerationContext,
         image_data: str,
         file_id: str,
         progress_callback: Callable[[dict[str, Any]], None] | None,
@@ -1717,10 +1725,7 @@ class UnifiedOrchestratorController:
                 "role": "user",
                 "content": self._build_final_answer_user_prompt(
                     question=question,
-                    qa_memory_text=qa_memory_text,
-                    retrieval_index_text=retrieval_index_text,
-                    tool_observations=tool_observations,
-                    draft_answer=draft_answer,
+                    answer_context=answer_context,
                 ),
             },
         ]
@@ -1781,8 +1786,6 @@ class UnifiedOrchestratorController:
                 }
 
         answer = "".join(chunks).strip()
-        if not answer:
-            answer = str(draft_answer or "").strip()
         return answer, tokens
 
     def _build_over_budget_result(
@@ -2054,6 +2057,8 @@ class UnifiedOrchestratorController:
         )
         stop_reason = ""
         accepted_readiness: dict[str, Any] | None = None
+        accepted_answer_context: AnswerGenerationContext | None = None
+        answer_validation: AnswerValidationResult | None = None
         compression_state: dict[str, Any] = {
             "compression_count": 0,
             "prompt_budget_limit": self._PROMPT_TOKEN_LIMIT,
@@ -2153,17 +2158,30 @@ class UnifiedOrchestratorController:
                     )
                     continue
                 accepted_readiness = readiness
+                accepted_answer_context = self._build_answer_generation_context(
+                    question_plan=question_plan,
+                    tool_observations=tool_observations,
+                    conflict_rows=readiness.get("conflict_details"),
+                )
                 final_answer, answer_tokens = await self._stream_final_answer(
                     question=safe_question,
-                    qa_memory_text=qa_memory_text,
-                    retrieval_index_text=retrieval_index_text,
                     tool_observations=tool_observations,
-                    draft_answer=str(action.get("answer") or "").strip(),
+                    answer_context=accepted_answer_context,
                     image_data=str(image_data or "").strip(),
                     file_id=str(file_id or "").strip(),
                     progress_callback=progress_callback,
                 )
                 merge_token_usage(token_usage, answer_tokens)
+                answer_validation = validate_answer_generation(
+                    final_answer, accepted_answer_context
+                )
+                if not answer_validation.valid:
+                    final_answer = ""
+                    stop_reason = "answer_validation_failed"
+                    processing_steps.append(
+                        "终答未通过 must-cover、引用、适用条件或冲突后置校验"
+                    )
+                    break
                 confidence = 0.9 if tool_observations else 0.7
                 stop_reason = "answer_ready"
                 break
@@ -2327,6 +2345,8 @@ class UnifiedOrchestratorController:
             result_telemetry = _coerce_dict(insufficient_result.get("telemetry"))
             result_telemetry["stop_reason"] = stop_reason
             result_telemetry["no_progress_rounds"] = no_progress_rounds
+            if answer_validation is not None:
+                result_telemetry["answer_validation"] = answer_validation.model_dump()
             insufficient_result["telemetry"] = result_telemetry
             return insufficient_result
 
@@ -2355,6 +2375,16 @@ class UnifiedOrchestratorController:
                 **self._build_budget_telemetry(compression_state),
             },
             "evidence_summary": evidence_summary,
+            "answer_context": (
+                accepted_answer_context.model_dump()
+                if accepted_answer_context is not None
+                else None
+            ),
+            "answer_validation": (
+                answer_validation.model_dump()
+                if answer_validation is not None
+                else None
+            ),
         }
         return self._attach_evidence_bundle(
             self._attach_question_plan(

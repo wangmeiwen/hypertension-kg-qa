@@ -7,8 +7,10 @@ from app.a2a.evidence_fusion import (
     fuse_evidence,
     publication_identity,
 )
-from app.a2a.models import Evidence
+from app.a2a.medical_risk import MedicalRiskAssessment
+from app.a2a.models import ClaimEvidenceAssessment, Evidence
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
+from app.a2a.question_planner import build_question_plan
 
 
 def _evidence(
@@ -131,22 +133,51 @@ def test_unknown_kg_origin_does_not_increase_publication_count() -> None:
 
 def test_controller_summary_and_final_prompt_use_fused_evidence() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("如何监测血压？", MedicalRiskAssessment())
+    planned_task = next(
+        item for item in plan.retrieval_tasks if item.target_agent == "rag"
+    )
     evidence = _evidence(
         source_id="guide.pdf",
         content="高血压患者应规律监测血压。",
     ).model_dump()
     observations = [
-        {"agent": "rag", "subquery": "如何监测", "evidence": [evidence]},
-        {"agent": "history", "subquery": "如何监测", "evidence": [evidence]},
+        {
+            "agent": "rag",
+            "subquery": "如何监测",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
+            "evidence": [evidence],
+        },
+        {
+            "agent": "history",
+            "subquery": "如何监测",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
+            "evidence": [evidence],
+        },
     ]
+    normalized_evidence = Evidence.model_validate(evidence)
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=planned_task.task_id,
+            must_cover_id=planned_task.must_cover_id,
+            evidence_id=evidence_identity(normalized_evidence),
+            support_status="supported",
+            support_excerpt=normalized_evidence.content,
+        )
+    )
+    answer_context = controller._build_answer_generation_context(
+        question_plan=plan,
+        tool_observations=observations,
+        conflict_rows=[],
+    )
 
     summary = controller._build_evidence_summary(observations)
     prompt = controller._build_final_answer_user_prompt(
         question="如何监测血压？",
-        qa_memory_text="无",
-        retrieval_index_text="无",
-        tool_observations=observations,
-        draft_answer="",
+        answer_context=answer_context,
     )
 
     assert summary["raw_evidence_count"] == 2

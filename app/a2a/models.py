@@ -265,6 +265,62 @@ class EvidenceConflict(BaseModel):
     status: Literal["unresolved", "resolved"] = "unresolved"
 
 
+class AnswerEvidenceContext(BaseModel):
+    """最终答案中一条已校验的支持证据。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    must_cover_id: str
+    evidence_id: str
+    citation: str
+    publication_id: str = ""
+    source_type: str = ""
+    support_status: ClaimSupportStatus
+    support_excerpt: str = Field(max_length=2000)
+    applicability_conditions: list[str] = Field(default_factory=list)
+
+
+class AnswerMustCoverContext(BaseModel):
+    """按问题点组织的最终答案约束。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    question: str
+    claim_type: str
+    support_status: ClaimSupportStatus
+    evidence_policy: MinimumEvidencePolicy
+    applicability_conditions: list[str] = Field(default_factory=list)
+    supporting_evidence: list[AnswerEvidenceContext] = Field(default_factory=list)
+
+
+class AnswerGenerationContext(BaseModel):
+    """最终回答生成器唯一可使用的结构化证据上下文。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["answer_context.v1"] = "answer_context.v1"
+    question: str
+    plan_id: str
+    must_cover: list[AnswerMustCoverContext] = Field(default_factory=list)
+    conflicts: list[EvidenceConflict] = Field(default_factory=list)
+    answer_constraints: list[str] = Field(default_factory=list)
+
+
+class AnswerValidationResult(BaseModel):
+    """终答与结构化证据上下文的一致性校验结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    covered_must_cover_ids: list[str] = Field(default_factory=list)
+    missing_must_cover_ids: list[str] = Field(default_factory=list)
+    missing_citation_ids: list[str] = Field(default_factory=list)
+    missing_applicability: dict[str, list[str]] = Field(default_factory=dict)
+    unresolved_conflict_ids: list[str] = Field(default_factory=list)
+
+
 class EvidenceBundle(BaseModel):
     """主控终止时输出的统一证据包。"""
 
