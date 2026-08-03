@@ -14,17 +14,16 @@ from app.a2a.models import (
     MustCoverItem,
     RetrievalTask,
 )
+from app.a2a.numeric_claims import (
+    extract_numeric_requirements,
+    extract_structured_numeric_claims,
+    numeric_claim_matches_requirement,
+)
 from app.a2a.telemetry import empty_token_usage
 
-_NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9])\d+(?:\.\d+)?")
-_UNIT_PATTERN = re.compile(
-    r"(?:mm\s*hg|毫米汞柱|mg|μg|ug|g|ml|mmol/l|%|岁|年|次/日|次\/天)",
-    re.IGNORECASE,
-)
 _INTERVAL_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:-|—|~|～|至|到)\s*\d+(?:\.\d+)?")
 _UPPER_BOUND_PATTERN = re.compile(r"(?:≤|<=|＜|<|低于|小于|不超过|以下)")
 _LOWER_BOUND_PATTERN = re.compile(r"(?:≥|>=|＞|>|高于|大于|至少|不低于|以上)")
-_NUMERIC_TOPIC_TERMS = ("血压", "收缩压", "舒张压", "目标", "阈值", "剂量")
 _RELATION_KINDS = {"relationship", "relation", "path", "multi_hop"}
 _CLAIM_SUPPORT_STATUSES: set[str] = {
     "supported",
@@ -120,28 +119,48 @@ def deterministic_claim_support(
     applicability_complete = required_applicability.issubset(matched_applicability)
 
     if must_cover.claim_type == "numeric":
-        has_number = bool(_NUMBER_PATTERN.search(content))
-        has_unit = bool(_UNIT_PATTERN.search(content))
-        has_topic = any(term in content for term in _NUMERIC_TOPIC_TERMS)
-        if not has_number or not has_topic:
+        requirements = extract_numeric_requirements(must_cover.question)
+        claims = extract_structured_numeric_claims(content)
+        if not requirements:
+            return _assessment(
+                task=task,
+                must_cover=must_cover,
+                evidence=evidence,
+                support_status="partially_supported",
+                reason="numeric_requirement_unresolved",
+                applicability_conditions=matched_applicability,
+            )
+        matched_requirements = [
+            requirement
+            for requirement in requirements
+            if any(
+                numeric_claim_matches_requirement(claim, requirement)
+                for claim in claims
+            )
+        ]
+        if not matched_requirements:
             return _assessment(
                 task=task,
                 must_cover=must_cover,
                 evidence=evidence,
                 support_status="irrelevant",
-                reason="numeric_value_or_topic_missing",
+                reason="numeric_claim_value_missing",
                 applicability_conditions=matched_applicability,
             )
         shape_reason = _numeric_shape_reason(must_cover.question, content)
-        if not has_unit or shape_reason is not None or not applicability_complete:
+        if (
+            len(matched_requirements) != len(requirements)
+            or shape_reason is not None
+            or not applicability_complete
+        ):
             return _assessment(
                 task=task,
                 must_cover=must_cover,
                 evidence=evidence,
                 support_status="partially_supported",
                 reason=(
-                    "numeric_unit_missing"
-                    if not has_unit
+                    "numeric_semantic_slot_missing"
+                    if len(matched_requirements) != len(requirements)
                     else shape_reason or "applicability_condition_missing"
                 ),
                 applicability_conditions=matched_applicability,
@@ -151,7 +170,7 @@ def deterministic_claim_support(
             must_cover=must_cover,
             evidence=evidence,
             support_status="supported",
-            reason="numeric_value_unit_and_applicability_matched",
+            reason="numeric_semantic_slots_and_applicability_matched",
             applicability_conditions=matched_applicability,
         )
 

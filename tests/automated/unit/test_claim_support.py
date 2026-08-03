@@ -14,6 +14,10 @@ from app.a2a.claim_support import (
 from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import Evidence, SubAgentResult
+from app.a2a.numeric_claims import (
+    extract_numeric_requirements,
+    extract_structured_numeric_claims,
+)
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -93,6 +97,158 @@ def test_numeric_validator_checks_age_and_requested_interval() -> None:
     assert "80岁以上" in item.applicability_conditions
     assert partial is not None and partial.reason == "numeric_interval_missing"
     assert supported is not None and supported.support_status == "supported"
+
+
+def test_age_number_cannot_satisfy_blood_pressure_target() -> None:
+    plan = build_question_plan(
+        "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    assessment = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="age-only",
+            content="80岁以上老年人应定期监测血压。",
+        ),
+    )
+
+    claims = extract_structured_numeric_claims("80岁以上老年人应定期监测血压。")
+    assert [claim.role for claim in claims] == ["applicability"]
+    assert assessment is not None
+    assert assessment.support_status == "irrelevant"
+    assert assessment.reason == "numeric_claim_value_missing"
+
+
+def test_blood_pressure_target_requires_matching_semantic_slot() -> None:
+    plan = build_question_plan(
+        "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    assessment = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="target",
+            content="80岁以上老年人的收缩压目标为140 mmHg。",
+        ),
+    )
+
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+
+
+def test_percentage_claim_is_not_confused_with_other_numbers() -> None:
+    plan = build_question_plan("高血压患病率是多少？", MedicalRiskAssessment())
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    assessment = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="prevalence",
+            content="调查显示高血压患病率为27.5%。",
+        ),
+    )
+
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+
+
+def test_monitoring_frequency_only_supports_frequency_requirement() -> None:
+    frequency_plan = build_question_plan(
+        "家庭测血压每天测几次？", MedicalRiskAssessment()
+    )
+    target_plan = build_question_plan("家庭血压目标是多少？", MedicalRiskAssessment())
+    evidence = Evidence(
+        source_type="document",
+        source_id="frequency",
+        content="家庭测血压每天测2次/天。",
+    )
+
+    frequency = deterministic_claim_support(
+        task=_task(frequency_plan, "rag"),
+        must_cover=frequency_plan.must_cover[0],
+        evidence=evidence,
+    )
+    target = deterministic_claim_support(
+        task=_task(target_plan, "rag"),
+        must_cover=target_plan.must_cover[0],
+        evidence=evidence,
+    )
+
+    assert frequency is not None and frequency.support_status == "supported"
+    assert target is not None and target.support_status == "irrelevant"
+
+
+def test_multi_slot_monitoring_question_requires_duration_and_frequency() -> None:
+    plan = build_question_plan(
+        "家庭测血压一般连续几天、每天测几次？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+    requirements = extract_numeric_requirements(item.question)
+
+    partial = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="frequency-only",
+            content="家庭测血压每天测2次/天。",
+        ),
+    )
+    supported = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="duration-frequency",
+            content="家庭测血压连续7天，每天测2次/天。",
+        ),
+    )
+
+    assert [item.role for item in requirements] == ["temporal", "frequency"]
+    assert partial is not None and partial.support_status == "partially_supported"
+    assert partial.reason == "numeric_semantic_slot_missing"
+    assert supported is not None and supported.support_status == "supported"
+
+
+def test_dose_claim_requires_matching_intervention() -> None:
+    plan = build_question_plan("氨氯地平剂量是多少？", MedicalRiskAssessment())
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    missing_intervention = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="dose-generic",
+            content="推荐剂量为5 mg。",
+        ),
+    )
+    matched = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="dose-drug",
+            content="氨氯地平剂量为5 mg。",
+        ),
+    )
+
+    assert missing_intervention is not None
+    assert missing_intervention.support_status == "irrelevant"
+    assert matched is not None and matched.support_status == "supported"
 
 
 def test_relation_validator_requires_relationship_shape() -> None:

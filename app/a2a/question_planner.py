@@ -56,7 +56,20 @@ def _claim_type(question: str) -> str:
         return "comparison"
     if any(term in text for term in ("关系", "路径", "关联", "连接")):
         return "relation"
-    if any(term in text for term in ("多少", "阈值", "目标", "剂量")):
+    if any(
+        term in text
+        for term in (
+            "多少",
+            "阈值",
+            "目标",
+            "剂量",
+            "几天",
+            "几次",
+            "多久",
+            "频次",
+            "频率",
+        )
+    ):
         return "numeric"
     if any(term in text for term in ("指南", "来源", "依据", "出处")):
         return "source"

@@ -16,6 +16,13 @@ ClaimSupportStatus = Literal[
 ]
 ConflictPolicy = Literal["block_unresolved", "allow_with_disclosure"]
 ConfidenceLevel = Literal["low", "medium", "high"]
+NumericMentionRole = Literal[
+    "claim_value",
+    "applicability",
+    "temporal",
+    "frequency",
+    "unknown",
+]
 
 
 def _default_required_support_statuses() -> list[ClaimSupportStatus]:
@@ -131,6 +138,38 @@ class ClaimEvidenceAssessment(BaseModel):
     applicability_conditions: list[str] = Field(default_factory=list)
     reason: str = Field(default="", max_length=1000)
     verifier_version: str = Field(default="claim_support.v1", max_length=64)
+
+
+class StructuredNumericClaim(BaseModel):
+    """从局部文本中提取出的带语义角色数值结论。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    predicate: str
+    raw_value: str
+    normalized_value: str
+    comparator: Literal["eq", "lt", "lte", "gt", "gte", "range"] = "eq"
+    unit: str
+    unit_family: str
+    population: list[str] = Field(default_factory=list)
+    measurement_context: list[str] = Field(default_factory=list)
+    intervention: str = ""
+    role: NumericMentionRole = "unknown"
+    local_text: str
+
+
+class NumericClaimRequirement(BaseModel):
+    """问题中需要由 Evidence 满足的数值语义槽位。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    predicate: str
+    unit_family: str
+    role: NumericMentionRole
+    measurement_context: list[str] = Field(default_factory=list)
+    intervention: str = ""
 
 
 class RetrievalTask(BaseModel):
