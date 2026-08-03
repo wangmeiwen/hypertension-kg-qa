@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -22,6 +23,16 @@ from app.a2a.models import (
     Evidence,
     EvidenceConflict,
     QuestionPlan,
+    StructuredAnswerClaim,
+)
+from app.a2a.numeric_claims import (
+    extract_numeric_requirements,
+    extract_structured_numeric_claims,
+    numeric_claim_matches_requirement,
+)
+
+_ANSWER_SEGMENT_PATTERN = re.compile(
+    r"[^。！？!?\n]+(?:[。！？!?](?:[ \t]*\[[^\]\n]+\])*)?"
 )
 
 
@@ -29,8 +40,15 @@ def evidence_citation(evidence: Evidence) -> str:
     """为已校验 Evidence 生成稳定引用标签。"""
     source_id = evidence.source_id.replace("\n", " ").strip()
     page = evidence.source_page if evidence.source_page is not None else evidence.page
+    chunk_id = evidence.source_chunk_id or evidence.chunk_id
+    locators = []
     if page is not None:
-        return f"[{source_id} p{page}]" if source_id else f"[p{page}]"
+        locators.append(f"p{page}")
+    if chunk_id:
+        locators.append(f"chunk:{chunk_id}")
+    if locators:
+        locator = " ".join(locators)
+        return f"[{source_id} {locator}]" if source_id else f"[{locator}]"
     return f"[{source_id}]" if source_id else ""
 
 
@@ -106,27 +124,117 @@ def build_answer_generation_context(
     )
 
 
+def extract_structured_answer_claims(
+    answer: str, context: AnswerGenerationContext
+) -> list[StructuredAnswerClaim]:
+    """把终答拆成与 must-cover 和具体 Evidence 局部绑定的结论。"""
+    claims: list[StructuredAnswerClaim] = []
+    for segment in _ANSWER_SEGMENT_PATTERN.findall(str(answer or "")):
+        text = segment.strip()
+        if not text:
+            continue
+        for item in context.must_cover:
+            cited_evidence = [
+                evidence
+                for evidence in item.supporting_evidence
+                if evidence.citation and evidence.citation in text
+            ]
+            if not cited_evidence:
+                continue
+            conclusion_text = text
+            for evidence in cited_evidence:
+                conclusion_text = conclusion_text.replace(evidence.citation, "")
+            if not conclusion_text.strip(" \t-*#：:。！？!?"):
+                continue
+            payload = f"{item.item_id}|{text}"
+            digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+            claims.append(
+                StructuredAnswerClaim(
+                    claim_id=f"answer-claim-{digest}",
+                    must_cover_id=item.item_id,
+                    text=text,
+                    citations=list(
+                        dict.fromkeys(row.citation for row in cited_evidence)
+                    ),
+                    evidence_ids=list(
+                        dict.fromkeys(row.evidence_id for row in cited_evidence)
+                    ),
+                    numeric_claims=extract_structured_numeric_claims(text),
+                )
+            )
+    return claims
+
+
+def _numeric_claims_are_faithful(
+    *,
+    item: AnswerMustCoverContext,
+    answer_claims: list[StructuredAnswerClaim],
+) -> tuple[bool, list[str]]:
+    requirements = extract_numeric_requirements(item.question)
+    if not requirements:
+        return True, []
+    evidence_by_id = {row.evidence_id: row for row in item.supporting_evidence}
+    mismatched_claim_ids: list[str] = []
+    satisfied_requirements: set[int] = set()
+    for index, requirement in enumerate(requirements):
+        for answer_claim in answer_claims:
+            candidates = [
+                claim
+                for claim in answer_claim.numeric_claims
+                if numeric_claim_matches_requirement(claim, requirement)
+            ]
+            if not candidates:
+                continue
+            cited_numeric_claims = [
+                claim
+                for evidence_id in answer_claim.evidence_ids
+                if evidence_id in evidence_by_id
+                for claim in extract_structured_numeric_claims(
+                    evidence_by_id[evidence_id].support_excerpt
+                )
+                if numeric_claim_matches_requirement(claim, requirement)
+            ]
+            faithful = all(
+                any(
+                    candidate.normalized_value == evidence_claim.normalized_value
+                    and candidate.comparator == evidence_claim.comparator
+                    for evidence_claim in cited_numeric_claims
+                )
+                for candidate in candidates
+            )
+            if faithful and cited_numeric_claims:
+                satisfied_requirements.add(index)
+            else:
+                mismatched_claim_ids.append(answer_claim.claim_id)
+    return len(satisfied_requirements) == len(requirements), list(
+        dict.fromkeys(mismatched_claim_ids)
+    )
+
+
 def validate_answer_generation(
     answer: str, context: AnswerGenerationContext
 ) -> AnswerValidationResult:
-    """检查终答逐项覆盖、引用、适用条件和冲突约束。"""
-    normalized_answer = re.sub(r"\s+", "", answer.casefold())
+    """检查终答逐项覆盖、引用、数值忠实度、适用条件和冲突。"""
+    answer_claims = extract_structured_answer_claims(answer, context)
     covered_ids: list[str] = []
     missing_ids: list[str] = []
     missing_citation_ids: list[str] = []
     missing_applicability: dict[str, list[str]] = {}
+    unsupported_claim_ids: list[str] = []
+    numeric_mismatch_ids: list[str] = []
 
     for item in context.must_cover:
-        citations = [
-            evidence.citation
-            for evidence in item.supporting_evidence
-            if evidence.citation
+        item_answer_claims = [
+            claim for claim in answer_claims if claim.must_cover_id == item.item_id
         ]
-        has_citation = any(citation in answer for citation in citations)
+        has_citation = bool(item_answer_claims)
+        normalized_claim_text = re.sub(
+            r"\s+", "", " ".join(row.text for row in item_answer_claims).casefold()
+        )
         missing_conditions = [
             condition
             for condition in item.evidence_policy.required_applicability_fields
-            if re.sub(r"\s+", "", condition.casefold()) not in normalized_answer
+            if re.sub(r"\s+", "", condition.casefold()) not in normalized_claim_text
         ]
         evidence_conditions = {
             condition
@@ -153,7 +261,12 @@ def validate_answer_generation(
             and bool(item.supporting_evidence)
             and policy_satisfied
         )
-        if supported and has_citation and not missing_conditions:
+        numeric_faithful, mismatched_claims = _numeric_claims_are_faithful(
+            item=item,
+            answer_claims=item_answer_claims,
+        )
+        numeric_mismatch_ids.extend(mismatched_claims)
+        if supported and has_citation and not missing_conditions and numeric_faithful:
             covered_ids.append(item.item_id)
             continue
         missing_ids.append(item.item_id)
@@ -161,6 +274,8 @@ def validate_answer_generation(
             missing_citation_ids.append(item.item_id)
         if missing_conditions:
             missing_applicability[item.item_id] = missing_conditions
+        if has_citation and not numeric_faithful:
+            unsupported_claim_ids.extend(row.claim_id for row in item_answer_claims)
 
     unresolved_conflict_ids = [
         conflict.conflict_id
@@ -168,10 +283,18 @@ def validate_answer_generation(
         if conflict.status == "unresolved"
     ]
     return AnswerValidationResult(
-        valid=not missing_ids and not unresolved_conflict_ids,
+        valid=(
+            not missing_ids
+            and not unresolved_conflict_ids
+            and not unsupported_claim_ids
+            and not numeric_mismatch_ids
+        ),
         covered_must_cover_ids=covered_ids,
         missing_must_cover_ids=missing_ids,
         missing_citation_ids=missing_citation_ids,
         missing_applicability=missing_applicability,
         unresolved_conflict_ids=unresolved_conflict_ids,
+        unsupported_claim_ids=list(dict.fromkeys(unsupported_claim_ids)),
+        numeric_mismatch_ids=list(dict.fromkeys(numeric_mismatch_ids)),
+        answer_claims=answer_claims,
     )

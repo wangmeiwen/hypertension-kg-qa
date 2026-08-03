@@ -403,6 +403,19 @@ class AnswerGenerationContext(BaseModel):
     answer_constraints: list[str] = Field(default_factory=list)
 
 
+class StructuredAnswerClaim(BaseModel):
+    """终答中与 must-cover 和具体 Evidence 引用绑定的结论。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str
+    must_cover_id: str
+    text: str
+    citations: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    numeric_claims: list[StructuredNumericClaim] = Field(default_factory=list)
+
+
 class AnswerValidationResult(BaseModel):
     """终答与结构化证据上下文的一致性校验结果。"""
 
@@ -414,6 +427,9 @@ class AnswerValidationResult(BaseModel):
     missing_citation_ids: list[str] = Field(default_factory=list)
     missing_applicability: dict[str, list[str]] = Field(default_factory=dict)
     unresolved_conflict_ids: list[str] = Field(default_factory=list)
+    unsupported_claim_ids: list[str] = Field(default_factory=list)
+    numeric_mismatch_ids: list[str] = Field(default_factory=list)
+    answer_claims: list[StructuredAnswerClaim] = Field(default_factory=list)
 
 
 class ConfidenceBreakdown(BaseModel):

@@ -460,12 +460,12 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
     assert observation["evidence"] == [evidence]
     evidence_summary = controller._build_evidence_summary([observation])
     assert evidence_summary["evidence_count"] == 1
-    assert evidence_summary["citations"] == ["[guide.pdf p12]"]
+    assert evidence_summary["citations"] == ["[guide.pdf p12 chunk:chunk-1]"]
     prompt = controller._build_final_answer_user_prompt(
         question="如何监测血压？",
         answer_context=answer_context,
     )
-    assert "[guide.pdf p12]" in prompt
+    assert "[guide.pdf p12 chunk:chunk-1]" in prompt
     assert "高血压患者应规律监测血压" in prompt
     assert "不应成为终答证据来源" not in prompt
 

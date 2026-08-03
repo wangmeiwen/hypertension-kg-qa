@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.answer_context import (
     build_answer_generation_context,
+    evidence_citation,
     validate_answer_generation,
 )
 from app.a2a.client.subagent_client import SubAgentClient
@@ -348,13 +349,10 @@ class UnifiedOrchestratorController:
     @staticmethod
     def _evidence_citation_label(row: dict[str, Any]) -> str:
         """从 Evidence 构造确定性的引用标签。"""
-        source_id = _sanitize_text(row.get("source_id"), 120)
-        page = row.get("source_page")
-        if page in (None, ""):
-            page = row.get("page")
-        if page not in (None, ""):
-            return f"[{source_id} p{page}]" if source_id else f"[p{page}]"
-        return f"[{source_id}]" if source_id else ""
+        try:
+            return evidence_citation(Evidence.model_validate(row))
+        except ValidationError:
+            return ""
 
     @classmethod
     def _format_evidence_excerpt(cls, row: dict[str, Any]) -> str:
@@ -1827,10 +1825,11 @@ class UnifiedOrchestratorController:
             "要求：\n"
             "1. 直接回答问题，不要输出 JSON，不要解释推理过程。\n"
             "2. 按 must_cover 数组顺序逐项回答，不得遗漏或合并问题点。\n"
-            "3. 每项结论只能使用该项 supporting_evidence，并至少附带其中一个 citation。\n"
+            "3. 每项结论只能使用该项 supporting_evidence，并在同一句末尾附带对应 citation。\n"
             "4. 明确写出 evidence_policy.required_applicability_fields 中的适用条件。\n"
-            "5. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
-            "6. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
+            "5. 数值、比较符、单位和测量场景必须与所引 Evidence 完全一致。\n"
+            "6. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
+            "7. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
         )
 
     def _build_final_answer_user_prompt(
