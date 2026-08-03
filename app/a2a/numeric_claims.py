@@ -14,6 +14,20 @@ from app.a2a.models import (
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?]+")
 _LOCAL_CLAUSE_SPLIT_PATTERN = re.compile(r"[，,；;]+")
+_BLOOD_PRESSURE_TABLE_HEADER_PATTERN = re.compile(
+    r"收缩压\s*[/／]\s*舒张压\s*[（(]\s*mm\s*hg\s*[）)]",
+    flags=re.IGNORECASE,
+)
+_BLOOD_PRESSURE_TABLE_ROW_PATTERN = re.compile(
+    r"\|(?P<context>诊室血压|诊所血压|家庭血压|居家血压|动态血压|24小时血压)"
+    r"\|(?P<description>[^|]{0,180})\|"
+    r"(?P<systolic_comparator>≤|>=|≥|<=|＜|<|＞|>)?\s*"
+    r"(?P<systolic>\d{2,3})\s*"
+    r"(?:和?\s*[/／]\s*或|[/／])\s*"
+    r"(?P<diastolic_comparator>≤|>=|≥|<=|＜|<|＞|>)?\s*"
+    r"(?P<diastolic>\d{2,3})(?:\s*mm\s*hg)?(?=\||$)",
+    flags=re.IGNORECASE,
+)
 _NUMERIC_PATTERN = re.compile(
     r"(?P<comparator>≤|>=|≥|<=|＜|<|＞|>|低于|小于|不超过|以下|"
     r"高于|大于|至少|不低于|不少于|以上)?\s*"
@@ -210,10 +224,57 @@ def _role(unit_family: str, subject: str, predicate: str) -> NumericMentionRole:
     return "unknown"
 
 
+def _extract_blood_pressure_table_claims(text: str) -> list[StructuredNumericClaim]:
+    """解析单位位于表头、收缩压和舒张压分列书写的指南表格。"""
+    if _BLOOD_PRESSURE_TABLE_HEADER_PATTERN.search(text) is None:
+        return []
+    predicate = _subject_and_predicate("血压", "blood_pressure", text)[1]
+    if not predicate:
+        return []
+    population = _canonical_terms(text, _POPULATION_ALIASES)
+    claims: list[StructuredNumericClaim] = []
+    for matched in _BLOOD_PRESSURE_TABLE_ROW_PATTERN.finditer(text):
+        measurement_context = _canonical_terms(
+            matched.group("context"), _MEASUREMENT_ALIASES
+        )
+        local_text = matched.group(0)
+        for subject, value_field, comparator_field in (
+            (
+                "systolic_blood_pressure",
+                "systolic",
+                "systolic_comparator",
+            ),
+            (
+                "diastolic_blood_pressure",
+                "diastolic",
+                "diastolic_comparator",
+            ),
+        ):
+            raw_value = matched.group(value_field)
+            raw_comparator = matched.group(comparator_field) or ""
+            claims.append(
+                StructuredNumericClaim(
+                    subject=subject,
+                    predicate=predicate,
+                    raw_value=raw_value,
+                    normalized_value=raw_value,
+                    comparator=_comparator(raw_comparator, raw_value),
+                    unit="mmhg",
+                    unit_family="blood_pressure",
+                    population=population,
+                    measurement_context=measurement_context,
+                    intervention="",
+                    role="claim_value",
+                    local_text=local_text,
+                )
+            )
+    return claims
+
+
 def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]:
     """按局部子句提取数值，避免把年龄、年份和频次当作目标值。"""
-    claims: list[StructuredNumericClaim] = []
     normalized_text = normalize_numeric_ocr_text(text)
+    claims = _extract_blood_pressure_table_claims(normalized_text)
     pending_predicate_context = ""
     for sentence in _SENTENCE_SPLIT_PATTERN.split(normalized_text):
         sentence = sentence.strip()

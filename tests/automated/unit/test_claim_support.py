@@ -199,6 +199,31 @@ def test_numeric_table_rows_inherit_diagnostic_predicate_from_heading() -> None:
     assert assessment.support_status == "supported"
 
 
+def test_blood_pressure_table_uses_unit_from_header_for_pair_values() -> None:
+    plan = build_question_plan("动态血压诊断阈值是多少？", MedicalRiskAssessment())
+    item = plan.must_cover[0]
+
+    assessment = deterministic_claim_support(
+        task=_task(plan, "rag"),
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="guide-table-header-unit",
+            content=(
+                "基于诊室血压、家庭血压和动态血压的高血压诊断标准"
+                "|血压类型|测量方式|收缩压/舒张压(mmHg)|"
+                "|家庭血压|所有测量血压读数的平均值|≥135和/或≥85|"
+                "|动态血压|24h平均值|≥130和/或≥80|"
+                "|动态血压|白天平均值|≥135和/或≥85|"
+                "|动态血压|夜晚平均值|≥120和/或≥70|"
+            ),
+        ),
+    )
+
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+
+
 def test_ocr_spaced_target_and_equivalent_age_condition_are_supported() -> None:
     plan = build_question_plan(
         "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
