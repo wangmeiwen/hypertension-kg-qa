@@ -392,6 +392,44 @@ def test_post_validation_inherits_single_item_scope_and_rejects_added_number() -
     ]
 
 
+def test_post_validation_accepts_definition_thresholds_across_ocr_linebreaks() -> None:
+    plan = build_question_plan("高血压急症的定义是什么？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=35,
+        content=(
+            "高血压急症是指原发性或继发\n性高血压患者，血压突然和显著升\n"
+            "高，通常收缩压>180mmHg和/或舒张压>120mmHg。"
+        ),
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "高血压急症通常收缩压>180mmHg和/或舒张压>120mmHg" "[guide-a p35]。",
+        context,
+    )
+
+    assert result.valid is True
+    assert result.numeric_mismatch_ids == []
+
+
 def test_citation_must_be_locally_bound_to_answer_claim() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")

@@ -12,7 +12,7 @@ from app.a2a.models import (
     StructuredNumericClaim,
 )
 
-_SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?\n]+")
+_SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?]+")
 _LOCAL_CLAUSE_SPLIT_PATTERN = re.compile(r"[，,；;]+")
 _NUMERIC_PATTERN = re.compile(
     r"(?P<comparator>≤|>=|≥|<=|＜|<|＞|>|低于|小于|不超过|以下|"
@@ -65,6 +65,7 @@ _UNIT_DEFINITIONS = {
 def normalize_numeric_ocr_text(text: str) -> str:
     """仅归一化数值和单位内部的 OCR 空格，不改写普通自然语言。"""
     normalized = str(text or "")
+    normalized = re.sub(r"[\r\n]+", "", normalized)
     normalized = re.sub(r"(?<=\d)\s+(?=\d)", "", normalized)
     normalized = re.sub(r"(?<=\d)\s*([/／])\s*(?=\d)", r"\1", normalized)
     normalized = re.sub(r"m\s*m\s*h\s*g", "mmHg", normalized, flags=re.IGNORECASE)
@@ -179,6 +180,18 @@ def _subject_and_predicate(
     return subject, predicate
 
 
+def _nearest_blood_pressure_subject(
+    clause: str, numeric_start: int, fallback: str
+) -> str:
+    prefix = clause[:numeric_start]
+    markers = [
+        (prefix.rfind("收缩压"), "systolic_blood_pressure"),
+        (prefix.rfind("舒张压"), "diastolic_blood_pressure"),
+    ]
+    position, subject = max(markers, key=lambda item: item[0])
+    return subject if position >= 0 else fallback
+
+
 def _intervention(text: str) -> str:
     matched = _INTERVENTION_PATTERN.search(text)
     if matched is None:
@@ -226,6 +239,10 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                 subject, predicate = _subject_and_predicate(
                     clause, unit_family, sentence
                 )
+                if unit_family == "blood_pressure":
+                    subject = _nearest_blood_pressure_subject(
+                        clause, matched.start(), subject
+                    )
                 role = _role(unit_family, subject, predicate)
                 claim = StructuredNumericClaim(
                     subject=subject,

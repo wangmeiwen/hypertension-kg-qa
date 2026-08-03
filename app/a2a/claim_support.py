@@ -33,6 +33,20 @@ _CLAIM_SUPPORT_STATUSES: set[str] = {
     "irrelevant",
     "uncertain",
 }
+_GROUNDING_CHAR_MAP = str.maketrans(
+    {
+        "，": ",",
+        "。": ".",
+        "：": ":",
+        "；": ";",
+        "（": "(",
+        "）": ")",
+        "＞": ">",
+        "＜": "<",
+        "～": "~",
+        "—": "-",
+    }
+)
 
 
 def _matched_applicability(must_cover: MustCoverItem, evidence: Evidence) -> list[str]:
@@ -288,6 +302,35 @@ def _uncertain_assessment(
     )
 
 
+def _normalized_grounding_text(text: str) -> tuple[str, list[int]]:
+    normalized: list[str] = []
+    positions: list[int] = []
+    for index, char in enumerate(text):
+        if char.isspace():
+            continue
+        mapped = char.translate(_GROUNDING_CHAR_MAP).casefold()
+        normalized.extend(mapped)
+        positions.extend([index] * len(mapped))
+    return "".join(normalized), positions
+
+
+def _ground_support_excerpt(excerpt: str, content: str) -> str | None:
+    """容忍 OCR 空白和等价标点，并返回证据中的原始连续片段。"""
+    if not excerpt:
+        return None
+    if excerpt in content:
+        return excerpt
+    normalized_excerpt, _ = _normalized_grounding_text(excerpt)
+    normalized_content, positions = _normalized_grounding_text(content)
+    if len(normalized_excerpt) < 8:
+        return None
+    start = normalized_content.find(normalized_excerpt)
+    if start < 0:
+        return None
+    end = start + len(normalized_excerpt) - 1
+    return content[positions[start] : positions[end] + 1]
+
+
 async def verify_claim_evidence(
     *,
     task: RetrievalTask,
@@ -392,13 +435,17 @@ async def verify_claim_evidence(
                 "supported",
                 "partially_supported",
                 "contradicted",
-            } and (
-                not support_excerpt
-                or support_excerpt not in evidence_by_id[evidence_id].content
-            ):
-                support_status = "uncertain"
-                support_excerpt = ""
-                reason = "semantic_verifier_excerpt_not_grounded"
+            }:
+                grounded_excerpt = _ground_support_excerpt(
+                    support_excerpt, evidence_by_id[evidence_id].content
+                )
+                if grounded_excerpt is None:
+                    support_status = "uncertain"
+                    support_excerpt = ""
+                    reason = "semantic_verifier_excerpt_not_grounded"
+                else:
+                    support_excerpt = grounded_excerpt
+                    reason = str(row.get("reason") or "semantic_verifier")[:1000]
             else:
                 reason = str(row.get("reason") or "semantic_verifier")[:1000]
             candidate = ClaimEvidenceAssessment(

@@ -177,6 +177,20 @@ def test_ocr_spaced_target_and_equivalent_age_condition_are_supported() -> None:
     assert assessment.applicability_conditions == ["老年人", "80岁以上"]
 
 
+def test_separate_systolic_and_diastolic_values_bind_to_nearest_subject() -> None:
+    claims = extract_structured_numeric_claims(
+        "高血压急症是指原发性或继发\n性高血压患者，血压突然和显著升\n"
+        "高，通常收缩压>180mmHg和/或舒张压>120mmHg。"
+    )
+
+    assert [
+        (claim.subject, claim.predicate, claim.normalized_value) for claim in claims
+    ] == [
+        ("systolic_blood_pressure", "definition_threshold", "180"),
+        ("diastolic_blood_pressure", "definition_threshold", "120"),
+    ]
+
+
 def test_percentage_claim_is_not_confused_with_other_numbers() -> None:
     plan = build_question_plan("高血压患病率是多少？", MedicalRiskAssessment())
     item = plan.must_cover[0]
@@ -614,6 +628,39 @@ def test_semantic_verifier_rejects_ungrounded_excerpt() -> None:
     assert assessments[0].support_status == "uncertain"
     assert assessments[0].support_excerpt == ""
     assert assessments[0].reason == "semantic_verifier_excerpt_not_grounded"
+
+
+def test_semantic_verifier_grounds_ocr_whitespace_and_equivalent_punctuation() -> None:
+    plan = build_question_plan("高血压急症的定义是什么？", MedicalRiskAssessment())
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+    content = (
+        "高血压急症是指原发性或继发\n性高血压患者,在某些诱因作用下,"
+        "血压突然和显著升\n高(通常收缩压>180mmHg)。"
+    )
+    excerpt = (
+        "高血压急症是指原发性或继发性高血压患者，在某些诱因作用下，"
+        "血压突然和显著升高（通常收缩压＞180mmHg）。"
+    )
+
+    assessments, _ = asyncio.run(
+        verify_claim_evidence(
+            task=task,
+            must_cover=item,
+            evidence=[
+                Evidence(
+                    source_type="document",
+                    source_id="guide.pdf",
+                    content=content,
+                )
+            ],
+            llm_client=_SemanticVerifierClient(support_excerpt=excerpt),
+            timeout=5,
+        )
+    )
+
+    assert assessments[0].support_status == "supported"
+    assert assessments[0].support_excerpt == content
 
 
 def test_controller_records_verifier_output_before_support_transition() -> None:
