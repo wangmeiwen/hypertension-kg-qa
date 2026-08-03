@@ -144,7 +144,29 @@ def test_fusion_links_document_id_to_hash_when_only_kg_carries_both() -> None:
 
     assert result.distinct_publication_count == 1
     assert {item.provenance["publication_identity"] for item in result.evidence} == {
-        f"publication:hash:{source_hash}"
+        "publication:registry:china_hypertension_guideline_2024"
+    }
+
+
+def test_registry_unifies_configured_single_guide_aliases_without_bridge() -> None:
+    rag = Evidence(
+        source_type="document",
+        source_id="rag-1",
+        origin_guideline_id="中国指南2024",
+        content="指南原文证据",
+    )
+    kg = Evidence(
+        source_type="knowledge_graph",
+        source_id="kg-1",
+        origin_document_id="guideline_pdf_2024",
+        content="图谱关系证据",
+    )
+
+    result = fuse_evidence([("rag", rag), ("kg", kg)])
+
+    assert result.distinct_publication_count == 1
+    assert {item.provenance["publication_identity"] for item in result.evidence} == {
+        "publication:registry:china_hypertension_guideline_2024"
     }
 
 

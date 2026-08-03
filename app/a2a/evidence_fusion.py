@@ -11,6 +11,22 @@ from pydantic import ValidationError
 
 from app.a2a.models import Evidence
 
+_PUBLICATION_REGISTRY: tuple[tuple[str, frozenset[str]], ...] = (
+    (
+        "china_hypertension_guideline_2024",
+        frozenset(
+            {
+                "中国高血压防治指南2024pdf",
+                "中国高血压防治指南2024",
+                "中国指南2024",
+                "guidelinepdf2024",
+                "guideline_pdf_2024",
+                "669d02309aec874e5f707ff3a2c23399619d8d041e1608f19d8dd81ae6819f93",
+            }
+        ),
+    ),
+)
+
 
 @dataclass(frozen=True)
 class EvidenceFusionResult:
@@ -85,6 +101,9 @@ def evidence_identity_index(
 
 def _publication_aliases(evidence: Evidence) -> set[str]:
     aliases: set[str] = set()
+    registry_identity = _registry_publication_identity(evidence)
+    if registry_identity:
+        aliases.add(registry_identity)
     normalized_hash = _normalized_text(evidence.source_hash)
     if normalized_hash:
         aliases.add(f"publication:hash:{normalized_hash}")
@@ -95,13 +114,39 @@ def _publication_aliases(evidence: Evidence) -> set[str]:
     return aliases
 
 
+def _registry_publication_identity(evidence: Evidence) -> str | None:
+    raw_obj = evidence.provenance.get("raw")
+    raw = raw_obj if isinstance(raw_obj, dict) else {}
+    candidates = {
+        _normalized_text(value)
+        for value in (
+            evidence.document_id,
+            evidence.origin_guideline_id,
+            evidence.origin_document_id,
+            evidence.source_hash,
+            str(raw.get("source_name") or ""),
+        )
+        if str(value or "").strip()
+    }
+    for registry_id, aliases in _PUBLICATION_REGISTRY:
+        normalized_aliases = {_normalized_text(alias) for alias in aliases}
+        if candidates.intersection(normalized_aliases):
+            return f"publication:registry:{registry_id}"
+    return None
+
+
 def publication_identity(evidence: Evidence) -> str | None:
     """仅使用可信来源字段生成出版物身份。"""
     canonical = str(
         evidence.provenance.get("canonical_publication_identity") or ""
     ).strip()
-    if canonical.startswith(("publication:hash:", "publication:id:")):
+    if canonical.startswith(
+        ("publication:registry:", "publication:hash:", "publication:id:")
+    ):
         return canonical
+    registry_identity = _registry_publication_identity(evidence)
+    if registry_identity:
+        return registry_identity
     candidates = (
         ("hash", evidence.source_hash),
         ("id", evidence.origin_guideline_id),
@@ -150,7 +195,14 @@ def _canonicalize_publications(
     for aliases in components.values():
         canonical = min(
             aliases,
-            key=lambda value: (not value.startswith("publication:hash:"), value),
+            key=lambda value: (
+                (
+                    0
+                    if value.startswith("publication:registry:")
+                    else 1 if value.startswith("publication:hash:") else 2
+                ),
+                value,
+            ),
         )
         canonical_by_alias.update({alias: canonical for alias in aliases})
 
