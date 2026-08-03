@@ -9,11 +9,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import OrchestratorAction
 from app.a2a.orchestrator.controller import (
     OrchestratorActionValidationError,
     UnifiedOrchestratorController,
 )
+from app.a2a.question_planner import build_question_plan
 
 
 class _FakeLlmClient:
@@ -79,13 +81,25 @@ def test_orchestrator_action_rejects_missing_required_fields() -> None:
         OrchestratorAction.model_validate({"action": "final_answer"})
     with pytest.raises(ValidationError, match="history_read_requires_locator"):
         OrchestratorAction.model_validate({"action": "call_history_read"})
+    with pytest.raises(ValidationError, match="retrieval_action_requires_task_id"):
+        OrchestratorAction.model_validate(
+            {"action": "call_kg", "must_cover_id": "mc-1"}
+        )
+    with pytest.raises(
+        ValidationError, match="retrieval_action_requires_must_cover_id"
+    ):
+        OrchestratorAction.model_validate({"action": "call_rag", "task_id": "task-1"})
+    with pytest.raises(ValidationError, match="history_read_requires_must_cover_id"):
+        OrchestratorAction.model_validate(
+            {"action": "call_history_read", "history_id": "history-1"}
+        )
 
 
 def test_decide_action_retries_once_and_uses_structured_output() -> None:
     controller = _build_controller(
         [
             '{"action":"final_answer"}',
-            '{"action":"call_kg","question":"高血压监测","reason":"需要图谱"}',
+            '{"action":"call_kg","task_id":"task-1","must_cover_id":"mc-1","question":"高血压监测","reason":"需要图谱"}',
         ]
     )
 
@@ -106,7 +120,7 @@ def test_decide_action_retries_once_and_uses_structured_output() -> None:
 def test_decide_action_rejects_markdown_wrapped_json_after_one_retry() -> None:
     controller = _build_controller(
         [
-            '```json\n{"action":"call_rag","question":"监测"}\n```',
+            '```json\n{"action":"call_rag","task_id":"task-1","must_cover_id":"mc-1","question":"监测"}\n```',
             '{"action":"unknown"}',
         ]
     )
@@ -115,6 +129,50 @@ def test_decide_action_rejects_markdown_wrapped_json_after_one_retry() -> None:
         _decide(controller)
 
     assert len(controller._client.calls) == 2
+
+
+def test_decide_action_retries_when_task_binding_is_invalid() -> None:
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    kg_task = plan.retrieval_tasks[0]
+    controller = _build_controller(
+        [
+            (
+                '{"action":"call_rag","task_id":"'
+                f'{kg_task.task_id}","must_cover_id":"{kg_task.must_cover_id}"'
+                "}"
+            ),
+            (
+                '{"action":"call_kg","task_id":"'
+                f'{kg_task.task_id}","must_cover_id":"{kg_task.must_cover_id}"'
+                "}"
+            ),
+        ]
+    )
+
+    action, _ = asyncio.run(
+        controller._decide_action(
+            question=plan.original_question,
+            session_id="session-1",
+            qa_memory_text="无",
+            retrieval_index_text="无",
+            question_plan_text=plan.model_dump_json(),
+            question_plan=plan,
+            tool_observations=[],
+            turn_index=1,
+            max_turns=3,
+            compression_state={},
+            processing_steps=[],
+            progress_callback=None,
+        )
+    )
+
+    assert action["action"] == "call_kg"
+    assert action["task_id"] == kg_task.task_id
+    assert len(controller._client.calls) == 2
+    assert (
+        "action_task_agent_mismatch"
+        in controller._client.calls[1]["messages"][-1]["content"]
+    )
 
 
 def test_run_safely_abstains_when_structured_action_is_invalid() -> None:

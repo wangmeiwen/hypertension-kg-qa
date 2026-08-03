@@ -104,6 +104,8 @@ class SubAgentClient:
                     queries_used.append(query)
 
         return SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
             subtask_id=task.subtask_id,
             target_agent=task.target_agent,
             question=task.question,
@@ -144,6 +146,8 @@ class SubAgentClient:
             子代理标准化执行结果。
         """
         request = {
+            "task_id": task.task_id,
+            "must_cover_id": task.must_cover_id,
             "subquery_id": task.subtask_id,
             "subquery": task.question,
             "tool_name": task.tool_name,

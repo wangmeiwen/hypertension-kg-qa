@@ -24,7 +24,13 @@ def _evidence() -> dict[str, Any]:
 def test_answer_readiness_requires_all_must_cover_items() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
     plan = build_question_plan("如何监测血压？", MedicalRiskAssessment())
-    observations = [{"agent": "rag", "evidence": [_evidence()]}]
+    observations = [
+        {
+            "agent": "rag",
+            "must_cover_id": plan.must_cover[0].item_id,
+            "evidence": [_evidence()],
+        }
+    ]
 
     pending = controller._assess_answer_readiness(
         observations, MedicalRiskAssessment(), plan
@@ -45,7 +51,11 @@ def test_history_evidence_covers_only_unambiguous_plan_item() -> None:
     single = build_question_plan("如何监测血压？", MedicalRiskAssessment())
     UnifiedOrchestratorController._update_question_plan_from_history(
         single,
-        {"action": "call_history_read", "history_id": "history-1"},
+        {
+            "action": "call_history_read",
+            "history_id": "history-1",
+            "must_cover_id": single.must_cover[0].item_id,
+        },
         {"result": {"matched": True, "evidence": [_evidence()]}},
     )
     assert single.must_cover[0].status == "covered"
@@ -55,15 +65,55 @@ def test_history_evidence_covers_only_unambiguous_plan_item() -> None:
     )
     UnifiedOrchestratorController._update_question_plan_from_history(
         multiple,
-        {"action": "call_history_read", "history_id": "history-2"},
+        {
+            "action": "call_history_read",
+            "history_id": "history-2",
+            "must_cover_id": "mc-not-found",
+        },
         {"result": {"matched": True, "evidence": [_evidence()]}},
     )
     assert {item.status for item in multiple.must_cover} == {"pending"}
 
 
+def test_insufficient_must_cover_reopens_only_its_tasks_for_supplement() -> None:
+    plan = build_question_plan("如何监测血压，并说明指南来源", MedicalRiskAssessment())
+    for item in plan.must_cover:
+        item.status = "covered"
+    for task in plan.retrieval_tasks:
+        task.status = "completed"
+    target_item = plan.must_cover[1]
+
+    UnifiedOrchestratorController._mark_supplement_tasks(
+        plan,
+        {
+            "evidence_sufficiency": {
+                "items": [
+                    {"item_id": plan.must_cover[0].item_id, "sufficient": True},
+                    {"item_id": target_item.item_id, "sufficient": False},
+                ]
+            }
+        },
+    )
+
+    assert plan.must_cover[0].status == "covered"
+    assert target_item.status == "pending"
+    assert {
+        task.status
+        for task in plan.retrieval_tasks
+        if task.must_cover_id == target_item.item_id
+    } == {"needs_supplement"}
+    assert {
+        task.status
+        for task in plan.retrieval_tasks
+        if task.must_cover_id != target_item.item_id
+    } == {"completed"}
+
+
 class _NoEvidenceSubagentClient:
     async def send_task(self, task: SubTask) -> SubAgentResult:
         return SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
             subtask_id=task.subtask_id,
             target_agent=task.target_agent,
             question=task.question,
@@ -81,6 +131,8 @@ def test_run_stops_after_two_retrieval_rounds_without_progress() -> None:
         A2A_SUBAGENT_MAX_TOOL_CALLS_DEFAULT=3,
         A2A_SUBAGENT_MAX_TOOL_CALLS_MAX=3,
     )
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    planned_task = plan.retrieval_tasks[0]
     decision_count = 0
 
     async def decide_action(
@@ -89,7 +141,14 @@ def test_run_stops_after_two_retrieval_rounds_without_progress() -> None:
         nonlocal decision_count
         _ = kwargs
         decision_count += 1
-        return {"action": "call_kg", "reason": "继续检索"}, {"total_tokens": 1}
+        if decision_count == 2:
+            return {"action": "final_answer", "answer": "证据不足"}, {"total_tokens": 1}
+        return {
+            "action": "call_kg",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
+            "reason": "继续检索",
+        }, {"total_tokens": 1}
 
     controller._decide_action = decide_action
 
@@ -101,7 +160,7 @@ def test_run_stops_after_two_retrieval_rounds_without_progress() -> None:
         )
     )
 
-    assert decision_count == 2
+    assert decision_count == 3
     assert result["output_type"] == "orchestrator_abstained_insufficient_evidence"
     assert result["telemetry"]["stop_reason"] == "no_retrieval_progress"
     assert result["telemetry"]["no_progress_rounds"] == 2

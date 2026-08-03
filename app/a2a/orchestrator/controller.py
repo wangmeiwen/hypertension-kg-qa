@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
@@ -23,8 +23,10 @@ from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
     Evidence,
+    MustCoverItem,
     OrchestratorAction,
     QuestionPlan,
+    RetrievalTask,
     SubAgentConstraints,
     SubAgentResult,
     SubTask,
@@ -125,11 +127,15 @@ class UnifiedOrchestratorController:
             "如果会话记忆已经可以回答此问题，直接回答。"
             "如果历史检索里有高度相关的问题，先使用 call_history_read 读取 Evidence，再决定回答或补检索。\n"
             "必须遵循结构化问题计划，优先处理 status=pending 的 must-cover，且子问题不得偏离其要求。\n"
+            "call_kg 和 call_rag 必须从问题计划中选择一个状态为 pending 或 needs_supplement 的 retrieval_task，"
+            "原样返回其 task_id 和 must_cover_id；call_history_read 必须返回目标 must_cover_id。\n"
             "主控只负责拆分问题和选择子agent，不允许指定 MCP 工具名、Cypher、检索 payload 或底层工具参数。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
             "{"
             '"action":"final_answer|call_kg|call_rag|call_history_read",'
+            '"task_id":"仅 call_kg/call_rag 时填写计划中的 task_id",'
+            '"must_cover_id":"检索或历史读取动作对应的问题点 ID",'
             '"reason":"简短原因",'
             '"question":"当需要子agent处理时拆分出的子问题，可为空",'
             '"history_id":"仅 call_history_read 时填写索引中的 history_id",'
@@ -139,6 +145,58 @@ class UnifiedOrchestratorController:
             f"输出必须满足以下 JSON Schema：{action_schema}\n"
             "若信息不足，必须选择检索动作；不要在缺少直接证据时输出 final_answer。"
         )
+
+    @staticmethod
+    def _validate_plan_action(
+        action: dict[str, Any], question_plan: QuestionPlan
+    ) -> tuple[RetrievalTask | None, MustCoverItem | None]:
+        """校验动作引用的计划任务、问题点、代理类型和依赖。"""
+        action_name = str(action.get("action") or "").strip()
+        if action_name == "final_answer":
+            return None, None
+
+        must_cover_id = _sanitize_text(action.get("must_cover_id"), 64)
+        must_cover_item = next(
+            (
+                item
+                for item in question_plan.must_cover
+                if item.item_id == must_cover_id
+            ),
+            None,
+        )
+        if must_cover_item is None:
+            raise ValueError("action_must_cover_not_found")
+        if must_cover_item.status == "missing":
+            raise ValueError("action_must_cover_is_missing")
+        if action_name == "call_history_read":
+            if must_cover_item.status != "pending":
+                raise ValueError("history_must_cover_not_actionable")
+            return None, must_cover_item
+
+        task_id = _sanitize_text(action.get("task_id"), 64)
+        retrieval_task = next(
+            (item for item in question_plan.retrieval_tasks if item.task_id == task_id),
+            None,
+        )
+        if retrieval_task is None:
+            raise ValueError("action_task_not_found")
+        if retrieval_task.must_cover_id != must_cover_id:
+            raise ValueError("action_task_must_cover_mismatch")
+        expected_agent = "kg" if action_name == "call_kg" else "rag"
+        if retrieval_task.target_agent != expected_agent:
+            raise ValueError("action_task_agent_mismatch")
+        if retrieval_task.status not in {"pending", "needs_supplement"}:
+            raise ValueError("action_task_not_actionable")
+        covered_ids = {
+            item.item_id
+            for item in question_plan.must_cover
+            if item.status == "covered"
+        }
+        if any(
+            dependency not in covered_ids for dependency in retrieval_task.dependency_on
+        ):
+            raise ValueError("action_task_dependency_unmet")
+        return retrieval_task, must_cover_item
 
     def _build_compression_system_prompt(self) -> str:
         """构建主控提示词压缩器系统提示词。"""
@@ -711,6 +769,7 @@ class UnifiedOrchestratorController:
         qa_memory_text: str,
         retrieval_index_text: str,
         question_plan_text: str = "",
+        question_plan: QuestionPlan | None = None,
         tool_observations: list[dict[str, Any]],
         turn_index: int,
         max_turns: int,
@@ -775,7 +834,10 @@ class UnifiedOrchestratorController:
             raw_content = str(getattr(response, "content", "") or "").strip()
             try:
                 action = OrchestratorAction.model_validate_json(raw_content)
-                return action.model_dump(), tokens
+                action_payload = action.model_dump()
+                if question_plan is not None:
+                    self._validate_plan_action(action_payload, question_plan)
+                return action_payload, tokens
             except (ValidationError, ValueError, TypeError) as exc:
                 last_error = f"{type(exc).__name__}:{_sanitize_text(exc, 240)}"
                 if attempt >= 2:
@@ -787,7 +849,8 @@ class UnifiedOrchestratorController:
                         "role": "user",
                         "content": (
                             "上一次输出未通过 JSON Schema 校验。"
-                            "请修正并只返回一个完整 JSON 对象，不要使用 Markdown。"
+                            f"错误：{last_error}。"
+                            "请按问题计划修正，并只返回一个完整 JSON 对象，不要使用 Markdown。"
                         ),
                     },
                 ]
@@ -874,6 +937,7 @@ class UnifiedOrchestratorController:
         return {
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
+            "task_id": _sanitize_text(action.get("task_id"), 64),
             "must_cover_id": _sanitize_text(action.get("must_cover_id"), 64),
             "tool_name": f"{result.target_agent}_subagent",
             "requested_tool_name": "",
@@ -906,77 +970,45 @@ class UnifiedOrchestratorController:
         self,
         *,
         action: dict[str, Any],
-        default_question: str,
         max_tool_calls: int,
-        question_plan: QuestionPlan | None = None,
-        planned_task_id: str = "",
+        question_plan: QuestionPlan,
     ) -> SubTask:
-        """根据主控动作构建子代理任务对象。"""
-        target_agent: Literal["kg", "rag"] = (
-            "kg" if str(action.get("action") or "") == "call_kg" else "rag"
-        )
-        planned_task = None
-        planned_item = None
-        if question_plan is not None:
-            planned_task = next(
-                (
-                    item
-                    for item in question_plan.retrieval_tasks
-                    if item.target_agent == target_agent
-                    and item.status == "pending"
-                    and (not planned_task_id or item.task_id == planned_task_id)
-                ),
-                None,
-            )
-            if planned_task is not None:
-                planned_item = next(
-                    (
-                        item
-                        for item in question_plan.must_cover
-                        if item.item_id == planned_task.must_cover_id
-                    ),
-                    None,
-                )
-        question = (
-            planned_task.question
-            if planned_task is not None
-            else _sanitize_text(action.get("question"), 300) or default_question
-        )
-        subtask_id = 1
-        dependencies: list[int] = []
-        if planned_item is not None and question_plan is not None:
-            subtask_id = question_plan.must_cover.index(planned_item) + 1
-            item_indexes = {
-                item.item_id: index
-                for index, item in enumerate(question_plan.must_cover, start=1)
-            }
-            dependencies = [
-                item_indexes[item_id]
-                for item_id in planned_item.dependency_on
-                if item_id in item_indexes
-            ]
+        """根据动作中的精确计划 ID 构建子代理任务对象。"""
+        planned_task, planned_item = self._validate_plan_action(action, question_plan)
+        if planned_task is None or planned_item is None:
+            raise ValueError("retrieval_action_required")
+        subtask_id = question_plan.must_cover.index(planned_item) + 1
+        item_indexes = {
+            item.item_id: index
+            for index, item in enumerate(question_plan.must_cover, start=1)
+        }
+        dependencies = [
+            item_indexes[item_id]
+            for item_id in planned_item.dependency_on
+            if item_id in item_indexes
+        ]
         return SubTask(
+            task_id=planned_task.task_id,
+            must_cover_id=planned_item.item_id,
             subtask_id=subtask_id,
-            target_agent=target_agent,
-            question=question,
+            target_agent=planned_task.target_agent,
+            question=planned_task.question,
             intent="retrieve_for_answer",
             entities=[],
             dependency_on=dependencies,
-            evidence_type_required=(
-                list(planned_item.required_evidence_types) if planned_item else []
-            ),
-            must_cover=[planned_item.question] if planned_item else [],
+            evidence_type_required=(list(planned_item.required_evidence_types)),
+            must_cover=[planned_item.question],
             priority=50,
-            coverage_status=planned_item.status if planned_item else "unknown",
-            query_focus=planned_item.claim_type if planned_item else "",
-            query_directions=(
-                list(planned_item.applicability_conditions) if planned_item else []
-            ),
+            coverage_status=planned_item.status,
+            query_focus=planned_item.claim_type,
+            query_directions=list(planned_item.applicability_conditions),
             constraints=SubAgentConstraints(
                 allow_extra_retrieval=False,
                 max_tool_calls=max_tool_calls,
             ),
-            tool_name="kg_auto" if target_agent == "kg" else "rag_search",
+            tool_name=(
+                "kg_auto" if planned_task.target_agent == "kg" else "rag_search"
+            ),
             arguments={},
             reason=_sanitize_text(action.get("reason"), 200),
         )
@@ -985,21 +1017,20 @@ class UnifiedOrchestratorController:
         self,
         *,
         action: dict[str, Any],
-        default_question: str,
         max_tool_calls: int,
         question_plan: QuestionPlan,
     ) -> list[SubTask]:
         """构建同一 must-cover 下可并行执行的无依赖任务。"""
         primary = self._build_subtask(
             action=action,
-            default_question=default_question,
             max_tool_calls=max_tool_calls,
             question_plan=question_plan,
         )
-        if not primary.must_cover:
-            return [primary]
-
-        must_cover_item = question_plan.must_cover[primary.subtask_id - 1]
+        must_cover_item = next(
+            item
+            for item in question_plan.must_cover
+            if item.item_id == primary.must_cover_id
+        )
         covered_ids = {
             item.item_id
             for item in question_plan.must_cover
@@ -1009,7 +1040,7 @@ class UnifiedOrchestratorController:
             item
             for item in question_plan.retrieval_tasks
             if item.must_cover_id == must_cover_item.item_id
-            and item.status == "pending"
+            and item.status in {"pending", "needs_supplement"}
             and all(dependency in covered_ids for dependency in item.dependency_on)
         ]
         primary_target = primary.target_agent
@@ -1018,13 +1049,13 @@ class UnifiedOrchestratorController:
             self._build_subtask(
                 action={
                     "action": f"call_{retrieval_task.target_agent}",
+                    "task_id": retrieval_task.task_id,
+                    "must_cover_id": retrieval_task.must_cover_id,
                     "question": retrieval_task.question,
                     "reason": action.get("reason"),
                 },
-                default_question=default_question,
                 max_tool_calls=max_tool_calls,
                 question_plan=question_plan,
-                planned_task_id=retrieval_task.task_id,
             )
             for retrieval_task in ready_tasks
         ] or [primary]
@@ -1038,6 +1069,8 @@ class UnifiedOrchestratorController:
             except Exception as exc:
                 logger.exception("子代理任务执行失败: %s", task.target_agent)
                 return SubAgentResult(
+                    task_id=task.task_id,
+                    must_cover_id=task.must_cover_id,
                     subtask_id=task.subtask_id,
                     target_agent=task.target_agent,
                     question=task.question,
@@ -1061,20 +1094,30 @@ class UnifiedOrchestratorController:
         question_plan: QuestionPlan, task: SubTask, result: Any
     ) -> None:
         """根据一次子代理结果更新检索任务与 must-cover 状态。"""
-        if task.subtask_id < 1 or task.subtask_id > len(question_plan.must_cover):
+        must_cover_item = next(
+            (
+                item
+                for item in question_plan.must_cover
+                if item.item_id == task.must_cover_id
+            ),
+            None,
+        )
+        retrieval_task = next(
+            (
+                item
+                for item in question_plan.retrieval_tasks
+                if item.task_id == task.task_id
+                and item.must_cover_id == task.must_cover_id
+                and item.target_agent == task.target_agent
+            ),
+            None,
+        )
+        if must_cover_item is None or retrieval_task is None:
             return
-        must_cover_item = question_plan.must_cover[task.subtask_id - 1]
-        matching_tasks = [
-            item
-            for item in question_plan.retrieval_tasks
-            if item.must_cover_id == must_cover_item.item_id
-            and item.target_agent == task.target_agent
-        ]
         succeeded = bool(getattr(result, "direct_support", False)) or bool(
             getattr(result, "evidence", [])
         )
-        for retrieval_task in matching_tasks:
-            retrieval_task.status = "completed" if succeeded else "failed"
+        retrieval_task.status = "completed" if succeeded else "failed"
 
         required_tasks = [
             item
@@ -1084,7 +1127,9 @@ class UnifiedOrchestratorController:
         statuses = {item.status for item in required_tasks}
         if statuses == {"completed"}:
             must_cover_item.status = "covered"
-        elif "pending" not in statuses and "failed" in statuses:
+        elif not statuses.intersection({"pending", "needs_supplement"}) and (
+            "failed" in statuses
+        ):
             must_cover_item.status = "missing"
         else:
             must_cover_item.status = "pending"
@@ -1101,30 +1146,44 @@ class UnifiedOrchestratorController:
             payload.get("evidence")
         ):
             return
-        pending_items = [
-            item for item in question_plan.must_cover if item.status == "pending"
-        ]
-        requested_question = _sanitize_text(action.get("user_question"), 300)
+        must_cover_id = _sanitize_text(action.get("must_cover_id"), 64)
         matched_item = next(
             (
                 item
-                for item in pending_items
-                if requested_question
-                and (
-                    requested_question in item.question
-                    or item.question in requested_question
-                )
+                for item in question_plan.must_cover
+                if item.item_id == must_cover_id and item.status == "pending"
             ),
             None,
         )
-        if matched_item is None and len(pending_items) == 1:
-            matched_item = pending_items[0]
         if matched_item is None:
             return
         matched_item.status = "covered"
         for retrieval_task in question_plan.retrieval_tasks:
             if retrieval_task.must_cover_id == matched_item.item_id:
                 retrieval_task.status = "completed"
+
+    @staticmethod
+    def _mark_supplement_tasks(
+        question_plan: QuestionPlan, readiness: dict[str, Any]
+    ) -> None:
+        """把证据不足的问题点及其已执行任务标为可补检索。"""
+        sufficiency = _coerce_dict(readiness.get("evidence_sufficiency"))
+        insufficient_ids = {
+            _sanitize_text(item.get("item_id"), 64)
+            for item in _coerce_list(sufficiency.get("items"))
+            if isinstance(item, dict) and not bool(item.get("sufficient"))
+        }
+        insufficient_ids.discard("")
+        for must_cover_item in question_plan.must_cover:
+            if must_cover_item.item_id not in insufficient_ids:
+                continue
+            must_cover_item.status = "pending"
+            for retrieval_task in question_plan.retrieval_tasks:
+                if (
+                    retrieval_task.must_cover_id == must_cover_item.item_id
+                    and retrieval_task.status in {"completed", "failed"}
+                ):
+                    retrieval_task.status = "needs_supplement"
 
     @staticmethod
     def _question_plan_coverage(question_plan: QuestionPlan) -> dict[str, Any]:
@@ -1244,19 +1303,7 @@ class UnifiedOrchestratorController:
                 continue
             item_id = _sanitize_text(observation.get("must_cover_id"), 64)
             if item_id not in grouped:
-                subquery = _sanitize_text(observation.get("subquery"), 300)
-                matched = [
-                    item
-                    for item in question_plan.must_cover
-                    if subquery
-                    and (subquery in item.question or item.question in subquery)
-                ]
-                if len(matched) == 1:
-                    item_id = matched[0].item_id
-                elif len(question_plan.must_cover) == 1:
-                    item_id = question_plan.must_cover[0].item_id
-                else:
-                    continue
+                continue
             agent = _sanitize_text(observation.get("agent"), 32) or "unknown"
             for evidence in _coerce_list(observation.get("evidence")):
                 if isinstance(evidence, dict):
@@ -1789,6 +1836,7 @@ class UnifiedOrchestratorController:
                     question_plan_text=_safe_json(
                         question_plan.model_dump(), max_len=12000
                     ),
+                    question_plan=question_plan,
                     tool_observations=tool_observations,
                     turn_index=turn_index,
                     max_turns=safe_max_turns,
@@ -1853,6 +1901,7 @@ class UnifiedOrchestratorController:
                     tool_observations, medical_risk, question_plan
                 )
                 if not bool(readiness.get("ready")):
+                    self._mark_supplement_tasks(question_plan, readiness)
                     processing_steps.append(
                         "主控请求终答，但证据覆盖未达标或仍有冲突，继续检索决策"
                     )
@@ -1901,27 +1950,11 @@ class UnifiedOrchestratorController:
                     token_usage,
                     _coerce_dict(history_result.get("meta")).get("token_usage"),
                 )
-                covered_before = {
-                    item.item_id
-                    for item in question_plan.must_cover
-                    if item.status == "covered"
-                }
                 self._update_question_plan_from_history(
                     question_plan, action, history_result
                 )
-                newly_covered = [
-                    item.item_id
-                    for item in question_plan.must_cover
-                    if item.status == "covered" and item.item_id not in covered_before
-                ]
-                history_action = {
-                    **action,
-                    "must_cover_id": (
-                        newly_covered[0] if len(newly_covered) == 1 else ""
-                    ),
-                }
                 tool_observations.append(
-                    self._build_history_observation(history_action, history_result)
+                    self._build_history_observation(action, history_result)
                 )
                 previous_progress_state, no_progress_rounds = (
                     self._advance_retrieval_progress(
@@ -1942,7 +1975,6 @@ class UnifiedOrchestratorController:
             if action_name in {"call_kg", "call_rag"}:
                 tasks = self._build_ready_subtasks(
                     action=action,
-                    default_question=safe_question,
                     max_tool_calls=safe_tool_calls,
                     question_plan=question_plan,
                 )
@@ -1966,10 +1998,9 @@ class UnifiedOrchestratorController:
                     result_action = {
                         **action,
                         "action": f"call_{task.target_agent}",
+                        "task_id": task.task_id,
                         "question": task.question,
-                        "must_cover_id": question_plan.must_cover[
-                            task.subtask_id - 1
-                        ].item_id,
+                        "must_cover_id": task.must_cover_id,
                     }
                     tool_observations.append(
                         self._build_subagent_observation(result, result_action)

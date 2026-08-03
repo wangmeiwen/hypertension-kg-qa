@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
@@ -38,13 +40,20 @@ def test_question_plan_routes_relation_questions_to_kg() -> None:
 def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    planned_kg_task = plan.retrieval_tasks[0]
     kg_task = controller._build_subtask(
-        action={"action": "call_kg", "question": "偏离计划的问题"},
-        default_question="默认问题",
+        action={
+            "action": "call_kg",
+            "task_id": planned_kg_task.task_id,
+            "must_cover_id": planned_kg_task.must_cover_id,
+            "question": "偏离计划的问题",
+        },
         max_tool_calls=3,
         question_plan=plan,
     )
 
+    assert kg_task.task_id == planned_kg_task.task_id
+    assert kg_task.must_cover_id == planned_kg_task.must_cover_id
     assert kg_task.question == plan.must_cover[0].question
     assert kg_task.evidence_type_required == ["kg", "rag"]
     assert kg_task.must_cover == [plan.must_cover[0].question]
@@ -61,9 +70,13 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     )
     assert plan.must_cover[0].status == "pending"
 
+    planned_rag_task = plan.retrieval_tasks[1]
     rag_task = controller._build_subtask(
-        action={"action": "call_rag"},
-        default_question="默认问题",
+        action={
+            "action": "call_rag",
+            "task_id": planned_rag_task.task_id,
+            "must_cover_id": planned_rag_task.must_cover_id,
+        },
         max_tool_calls=3,
         question_plan=plan,
     )
@@ -79,6 +92,91 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
 
     assert plan.must_cover[0].status == "covered"
     assert {task.status for task in plan.retrieval_tasks} == {"completed"}
+
+
+def test_plan_action_requires_exact_task_binding() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    kg_task, rag_task = plan.retrieval_tasks
+
+    controller._validate_plan_action(
+        {
+            "action": "call_kg",
+            "task_id": kg_task.task_id,
+            "must_cover_id": kg_task.must_cover_id,
+        },
+        plan,
+    )
+
+    with pytest.raises(ValueError, match="action_task_agent_mismatch"):
+        controller._validate_plan_action(
+            {
+                "action": "call_rag",
+                "task_id": kg_task.task_id,
+                "must_cover_id": kg_task.must_cover_id,
+            },
+            plan,
+        )
+    multi_plan = build_question_plan(
+        "如何监测血压，并说明指南来源", MedicalRiskAssessment()
+    )
+    first_task = multi_plan.retrieval_tasks[0]
+    second_item = multi_plan.must_cover[1]
+    with pytest.raises(ValueError, match="action_task_must_cover_mismatch"):
+        controller._validate_plan_action(
+            {
+                "action": f"call_{first_task.target_agent}",
+                "task_id": first_task.task_id,
+                "must_cover_id": second_item.item_id,
+            },
+            multi_plan,
+        )
+
+    rag_task.status = "completed"
+    with pytest.raises(ValueError, match="action_task_not_actionable"):
+        controller._validate_plan_action(
+            {
+                "action": "call_rag",
+                "task_id": rag_task.task_id,
+                "must_cover_id": rag_task.must_cover_id,
+            },
+            plan,
+        )
+
+
+def test_question_plan_updates_only_the_selected_task() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("如何监测血压，并说明指南来源", MedicalRiskAssessment())
+    selected = plan.retrieval_tasks[1]
+    task = controller._build_subtask(
+        action={
+            "action": f"call_{selected.target_agent}",
+            "task_id": selected.task_id,
+            "must_cover_id": selected.must_cover_id,
+        },
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+
+    controller._update_question_plan(
+        plan,
+        task,
+        SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            target_agent=task.target_agent,
+            direct_support=True,
+            evidence=[Evidence(source_id="evidence-1", content="直接证据")],
+        ),
+    )
+
+    statuses = {item.task_id: item.status for item in plan.retrieval_tasks}
+    assert statuses[selected.task_id] == "completed"
+    assert all(
+        status == "pending"
+        for task_id, status in statuses.items()
+        if task_id != selected.task_id
+    )
 
 
 def test_controller_prompt_exposes_question_plan() -> None:

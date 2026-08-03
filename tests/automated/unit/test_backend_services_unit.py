@@ -1278,7 +1278,9 @@ async def test_kg_subagent_selects_mcp_tool_internally() -> None:
 
 async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
     from app.a2a.client.subagent_client import SubAgentClient
+    from app.a2a.medical_risk import MedicalRiskAssessment
     from app.a2a.orchestrator.controller import UnifiedOrchestratorController
+    from app.a2a.question_planner import build_question_plan
 
     class FakeLlmClient:
         async def aclose(self) -> None:
@@ -1293,15 +1295,21 @@ async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
     assert "kg_entity_relation_search" not in prompt
     assert "call_history_read" in prompt
     assert '"arguments"' not in prompt
+    plan = build_question_plan(
+        "高血压合并 CKD 和蛋白尿怎么用药？", MedicalRiskAssessment()
+    )
+    planned_task = plan.retrieval_tasks[0]
     task = controller._build_subtask(
         action={
             "action": "call_kg",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
             "question": "高血压合并 CKD 和蛋白尿怎么用药？",
             "tool_name": "kg_query",
             "arguments": {"cypher": "MATCH (n) RETURN n"},
         },
-        default_question="默认问题",
         max_tool_calls=3,
+        question_plan=plan,
     )
     assert task.tool_name == "kg_auto"
     assert task.arguments == {}

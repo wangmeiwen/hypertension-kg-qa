@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from app.a2a.medical_risk import MedicalRiskAssessment
-from app.a2a.models import Evidence, SubAgentResult, SubTask
+from app.a2a.models import Evidence, QuestionPlan, SubAgentResult, SubTask
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -44,13 +44,24 @@ def _controller(client: _ConcurrentSubagentClient) -> UnifiedOrchestratorControl
     return controller
 
 
+def _action(plan: QuestionPlan, target_agent: str = "kg") -> dict[str, str]:
+    task = next(
+        item for item in plan.retrieval_tasks if item.target_agent == target_agent
+    )
+    return {
+        "action": f"call_{target_agent}",
+        "task_id": task.task_id,
+        "must_cover_id": task.must_cover_id,
+        "reason": "补全证据",
+    }
+
+
 def test_builds_independent_kg_and_rag_tasks_for_same_must_cover() -> None:
     controller = _controller(_ConcurrentSubagentClient())
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
 
     tasks = controller._build_ready_subtasks(
-        action={"action": "call_kg", "reason": "补全证据"},
-        default_question=plan.original_question,
+        action=_action(plan),
         max_tool_calls=3,
         question_plan=plan,
     )
@@ -66,8 +77,7 @@ def test_dependency_blocks_task_from_parallel_batch() -> None:
     plan.retrieval_tasks[1].dependency_on = ["uncovered-item"]
 
     tasks = controller._build_ready_subtasks(
-        action={"action": "call_kg"},
-        default_question=plan.original_question,
+        action=_action(plan),
         max_tool_calls=3,
         question_plan=plan,
     )
@@ -80,8 +90,7 @@ def test_executes_tasks_concurrently_and_isolates_single_failure() -> None:
     controller = _controller(client)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     tasks = controller._build_ready_subtasks(
-        action={"action": "call_kg"},
-        default_question=plan.original_question,
+        action=_action(plan),
         max_tool_calls=3,
         question_plan=plan,
     )

@@ -95,7 +95,7 @@ class RetrievalTask(BaseModel):
     target_agent: AgentType
     question: str
     dependency_on: list[str] = Field(default_factory=list)
-    status: Literal["pending", "completed", "failed"] = "pending"
+    status: Literal["pending", "completed", "failed", "needs_supplement"] = "pending"
 
 
 class QuestionPlan(BaseModel):
@@ -140,7 +140,9 @@ class EvidenceSufficiencyAssessment(BaseModel):
 class SubTask(BaseModel):
     """主代理派发给子代理的任务单元。"""
 
-    subtask_id: int = Field(default=1)
+    task_id: str
+    must_cover_id: str
+    subtask_id: int
     target_agent: AgentType = Field(default="kg")
     question: str = Field(default="")
     intent: str = Field(default="")
@@ -165,6 +167,8 @@ class SubTask(BaseModel):
 class SubAgentResult(BaseModel):
     """子代理标准输出。"""
 
+    task_id: str = Field(default="")
+    must_cover_id: str = Field(default="")
     subtask_id: int = Field(default=1)
     target_agent: AgentType = Field(default="kg")
     question: str = Field(default="")
@@ -239,6 +243,8 @@ class OrchestratorAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["final_answer", "call_kg", "call_rag", "call_history_read"]
+    task_id: str = Field(default="", max_length=64)
+    must_cover_id: str = Field(default="", max_length=64)
     reason: str = Field(default="", max_length=400)
     question: str = Field(default="", max_length=1000)
     history_id: str = Field(default="", max_length=128)
@@ -250,12 +256,19 @@ class OrchestratorAction(BaseModel):
         """校验不同动作所需的字段。"""
         if self.action == "final_answer" and not self.answer.strip():
             raise ValueError("final_answer_requires_answer")
+        if self.action in {"call_kg", "call_rag"}:
+            if not self.task_id.strip():
+                raise ValueError("retrieval_action_requires_task_id")
+            if not self.must_cover_id.strip():
+                raise ValueError("retrieval_action_requires_must_cover_id")
         if (
             self.action == "call_history_read"
             and not self.history_id.strip()
             and not self.user_question.strip()
         ):
             raise ValueError("history_read_requires_locator")
+        if self.action == "call_history_read" and not self.must_cover_id.strip():
+            raise ValueError("history_read_requires_must_cover_id")
         return self
 
 

@@ -8,8 +8,10 @@ from pydantic import ValidationError
 import pytest
 
 from app.a2a.evidence import build_kg_evidence, build_rag_evidence
+from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
+from app.a2a.question_planner import build_question_plan
 from app.a2a.subagents.kg.nodes import node_normalize_results as normalize_kg_results
 from app.a2a.subagents.rag.nodes import (
     node_normalize_results as normalize_rag_results,
@@ -473,6 +475,7 @@ def test_orchestrator_history_action_is_reachable() -> None:
             "retrieval_method": "dense",
         }
     )
+    plan = build_question_plan("复用历史问题", MedicalRiskAssessment())
 
     class GatewayStub:
         def __init__(self) -> None:
@@ -499,6 +502,7 @@ def test_orchestrator_history_action_is_reachable() -> None:
             (
                 {
                     "action": "call_history_read",
+                    "must_cover_id": plan.must_cover[0].item_id,
                     "history_id": "h-1-2",
                     "reason": "复用历史证据",
                 },
