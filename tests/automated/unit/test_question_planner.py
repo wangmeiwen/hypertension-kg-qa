@@ -84,6 +84,20 @@ def test_question_plan_preserves_high_risk_publication_minimum() -> None:
     } == {2}
 
 
+def test_question_plan_scopes_applicability_to_each_clause() -> None:
+    question = "妊娠期降压药注意事项，以及普通成人血压目标是多少？"
+
+    plan = build_question_plan(question, assess_medical_risk(question))
+
+    assert [item.applicability_conditions for item in plan.must_cover] == [
+        ["妊娠"],
+        [],
+    ]
+    assert [
+        item.evidence_policy.required_applicability_fields for item in plan.must_cover
+    ] == [["妊娠"], []]
+
+
 def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())

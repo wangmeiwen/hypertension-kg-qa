@@ -149,7 +149,7 @@ def build_question_plan(
     for index, clause in enumerate(_split_question(original_question), start=1):
         item_id = _stable_id("mc", original_question, str(index), clause)
         claim_type = _claim_type(clause)
-        applicability_conditions = _applicability_conditions(original_question)
+        applicability_conditions = _applicability_conditions(clause)
         evidence_policy = _evidence_policy(
             claim_type=claim_type,
             applicability_conditions=applicability_conditions,
