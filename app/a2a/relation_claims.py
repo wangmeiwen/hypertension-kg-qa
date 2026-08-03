@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 _RELATION_ENDPOINT_PATTERN = re.compile(
     r"^\s*(?P<start>.+?)(?:与|和|到)(?P<end>.+?)(?:之间)?"
@@ -13,6 +14,10 @@ _RELATION_SPLIT_PATTERN = re.compile(
     r"(?:和|与|到|之间|有什么|有何|的关系|关系|关联|路径|多跳|如何|怎么|[？?，,。])"
 )
 _HOP_PATTERN = re.compile(r"(?P<count>\d+)\s*跳")
+_DIRECTIONAL_VERB = r"(?:导致|引起|造成|诱发|促进|增加|降低|升高|减少|->|→)"
+_FORWARD_ROLE = r"(?:病因|危险因素|风险因素|并发症|结果|结局|后果)"
+
+RelationClaimDirection = Literal["forward", "reverse", "unknown"]
 
 
 def relation_endpoints(question: str) -> list[str]:
@@ -63,3 +68,52 @@ def relation_direction(raw: dict[str, object]) -> tuple[str, str, str]:
         str(raw.get("relation_type") or raw.get("rel_type") or "").strip(),
         str(raw.get("target_name") or "").strip(),
     )
+
+
+def relation_claim_direction(
+    text: str, *, source: str, target: str
+) -> RelationClaimDirection:
+    """识别答案陈述相对于 KG 有向边的方向，无法确认时返回 unknown。"""
+    normalized = re.sub(r"\s+", "", str(text or ""))
+    escaped_source = re.escape(source.strip())
+    escaped_target = re.escape(target.strip())
+    if not escaped_source or not escaped_target:
+        return "unknown"
+    if re.search(
+        rf"{escaped_source}.{{0,30}}(?:由|被){escaped_target}.{{0,20}}{_DIRECTIONAL_VERB}",
+        normalized,
+    ):
+        return "reverse"
+    if re.search(
+        rf"{escaped_target}.{{0,30}}(?:由|被){escaped_source}.{{0,20}}{_DIRECTIONAL_VERB}",
+        normalized,
+    ):
+        return "forward"
+    if re.search(
+        rf"{escaped_source}.{{0,20}}是{escaped_target}的{_FORWARD_ROLE}", normalized
+    ):
+        return "reverse"
+    if re.search(
+        rf"{escaped_target}.{{0,20}}是{escaped_source}的(?:并发症|结果|结局|后果)",
+        normalized,
+    ):
+        return "forward"
+    if re.search(
+        rf"{escaped_target}.{{0,20}}是{escaped_source}的(?:病因|危险因素|风险因素)",
+        normalized,
+    ):
+        return "reverse"
+    if re.search(
+        rf"{escaped_source}.{{0,20}}是{escaped_target}的(?:病因|危险因素|风险因素)",
+        normalized,
+    ):
+        return "forward"
+    source_position = normalized.find(source.strip())
+    target_position = normalized.find(target.strip())
+    if source_position < 0 or target_position < 0:
+        return "unknown"
+    if source_position < target_position:
+        between = normalized[source_position + len(source.strip()) : target_position]
+        return "forward" if re.search(_DIRECTIONAL_VERB, between) else "unknown"
+    between = normalized[target_position + len(target.strip()) : source_position]
+    return "reverse" if re.search(_DIRECTIONAL_VERB, between) else "unknown"

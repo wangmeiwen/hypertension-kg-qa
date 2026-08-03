@@ -35,7 +35,7 @@ from app.a2a.recommendation_claims import (
     recommendation_polarities_conflict,
     recommendation_polarity,
 )
-from app.a2a.relation_claims import relation_direction
+from app.a2a.relation_claims import relation_claim_direction, relation_direction
 
 _ANSWER_SEGMENT_PATTERN = re.compile(
     r"[^。！？!?\n]+(?:[。！？!?](?:[ \t]*\[[^\]\n]+\])*)?"
@@ -45,9 +45,6 @@ _MEASUREMENT_CONTEXT_APPLICABILITY = {
     "clinic": "诊室血压",
     "ambulatory": "动态血压",
 }
-_DIRECTIONAL_RELATION_PATTERN = re.compile(
-    r"(?:导致|引起|造成|诱发|促进|增加|降低|升高|减少|->|→)"
-)
 _MEDICAL_ASSERTION_PATTERN = re.compile(
     r"(?:推荐|建议|不推荐|不建议|禁忌|应当|应该|需要|可以|可考虑|"
     r"导致|引起|造成|诱发|促进|增加|降低|升高|减少|风险|目标|阈值|"
@@ -345,17 +342,16 @@ def _relation_claims_are_faithful(
             if evidence is None or not (
                 evidence.relation_source and evidence.relation_target
             ):
-                continue
-            source_position = answer_claim.text.find(evidence.relation_source)
-            target_position = answer_claim.text.find(evidence.relation_target)
-            if source_position < 0 or target_position < 0:
-                continue
-            if target_position >= source_position:
-                continue
-            between = answer_claim.text[
-                target_position + len(evidence.relation_target) : source_position
-            ]
-            if _DIRECTIONAL_RELATION_PATTERN.search(between):
+                mismatched_claim_ids.append(answer_claim.claim_id)
+                break
+            if (
+                relation_claim_direction(
+                    answer_claim.text,
+                    source=evidence.relation_source,
+                    target=evidence.relation_target,
+                )
+                != "forward"
+            ):
                 mismatched_claim_ids.append(answer_claim.claim_id)
                 break
     return not mismatched_claim_ids, list(dict.fromkeys(mismatched_claim_ids))
