@@ -145,6 +145,36 @@ def test_blood_pressure_target_requires_matching_semantic_slot() -> None:
     assert assessment.support_status == "supported"
 
 
+def test_generic_blood_pressure_threshold_requires_both_dimensions() -> None:
+    plan = build_question_plan("家庭血压诊断阈值是多少？", MedicalRiskAssessment())
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    partial = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="systolic-only",
+            content="家庭血压诊断阈值为收缩压 ≥135 mmHg。",
+        ),
+    )
+    supported = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="paired-threshold",
+            content="家庭血压诊断阈值为 ≥135/85 mmHg。",
+        ),
+    )
+
+    assert partial is not None
+    assert partial.support_status == "partially_supported"
+    assert partial.reason == "numeric_semantic_slot_missing"
+    assert supported is not None and supported.support_status == "supported"
+
+
 def test_ocr_spaced_target_and_equivalent_age_condition_are_supported() -> None:
     plan = build_question_plan(
         "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()

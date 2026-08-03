@@ -350,7 +350,7 @@ def extract_numeric_requirements(question: str) -> list[NumericClaimRequirement]
             if "舒张压" in text:
                 subjects.append("diastolic_blood_pressure")
             if not subjects:
-                subjects.append("blood_pressure")
+                subjects.extend(["systolic_blood_pressure", "diastolic_blood_pressure"])
             requirements.extend(
                 NumericClaimRequirement(
                     subject=subject,
@@ -368,19 +368,10 @@ def numeric_claim_matches_requirement(
     claim: StructuredNumericClaim, requirement: NumericClaimRequirement
 ) -> bool:
     """判断局部数值 Claim 是否完整满足问题槽位。"""
-    subject_matches = claim.subject == requirement.subject or (
-        requirement.subject == "blood_pressure"
-        and claim.subject
-        in {
-            "blood_pressure",
-            "systolic_blood_pressure",
-            "diastolic_blood_pressure",
-        }
-    )
     return (
         claim.role == requirement.role
         and claim.unit_family == requirement.unit_family
-        and subject_matches
+        and claim.subject == requirement.subject
         and claim.predicate == requirement.predicate
         and set(requirement.measurement_context).issubset(claim.measurement_context)
         and (
