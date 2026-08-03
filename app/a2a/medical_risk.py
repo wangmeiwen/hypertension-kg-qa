@@ -63,6 +63,7 @@ _MEDICATION_ADJUSTMENT_SIGNALS = (
 
 _SPECIAL_POPULATION_SIGNALS = (
     "孕妇",
+    "孕期",
     "妊娠",
     "怀孕",
     "哺乳",

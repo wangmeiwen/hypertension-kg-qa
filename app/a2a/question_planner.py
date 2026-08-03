@@ -107,6 +107,11 @@ def _claim_type(question: str) -> str:
 def _applicability_conditions(question: str) -> list[str]:
     """提取问题中明确出现的适用条件。"""
     lowered = str(question or "").lower()
+    lowered = lowered.replace("怀孕期间", "妊娠期")
+    lowered = lowered.replace("怀孕期", "妊娠期")
+    lowered = lowered.replace("怀孕", "妊娠")
+    lowered = lowered.replace("孕期", "妊娠期")
+    lowered = lowered.replace("孕妇", "妊娠人群")
     lowered = lowered.replace("家庭测血压", "家庭血压")
     lowered = lowered.replace("居家血压", "家庭血压")
     lowered = lowered.replace("hbpm", "家庭血压")

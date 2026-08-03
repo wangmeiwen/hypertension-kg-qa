@@ -98,6 +98,23 @@ def test_question_plan_scopes_applicability_to_each_clause() -> None:
     ] == [["妊娠"], []]
 
 
+@pytest.mark.parametrize("pregnancy_term", ["怀孕期间", "怀孕期", "孕期", "孕妇"])
+def test_question_plan_normalizes_pregnancy_applicability_synonyms(
+    pregnancy_term: str,
+) -> None:
+    question = f"{pregnancy_term}降压药注意事项，以及普通成人血压目标是多少？"
+
+    plan = build_question_plan(question, assess_medical_risk(question))
+
+    assert [item.applicability_conditions for item in plan.must_cover] == [
+        ["妊娠"],
+        [],
+    ]
+    assert [
+        item.evidence_policy.required_applicability_fields for item in plan.must_cover
+    ] == [["妊娠"], []]
+
+
 def test_question_plan_splits_parallel_measurement_targets() -> None:
     plan = build_question_plan(
         "家庭血压和动态血压目标分别是多少？", MedicalRiskAssessment()
