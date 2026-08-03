@@ -207,11 +207,15 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
         if not sentence:
             continue
         population = _canonical_terms(sentence, _POPULATION_ALIASES)
-        measurement_context = _canonical_terms(sentence, _MEASUREMENT_ALIASES)
+        sentence_measurement_context = _canonical_terms(sentence, _MEASUREMENT_ALIASES)
         for clause in _LOCAL_CLAUSE_SPLIT_PATTERN.split(sentence):
             clause = clause.strip()
             if not clause:
                 continue
+            measurement_context = (
+                _canonical_terms(clause, _MEASUREMENT_ALIASES)
+                or sentence_measurement_context
+            )
             for matched in _NUMERIC_PATTERN.finditer(clause):
                 unit_family, factor, unit = _canonical_unit(matched.group("unit"))
                 raw_value = re.sub(r"\s+", "", matched.group("value"))

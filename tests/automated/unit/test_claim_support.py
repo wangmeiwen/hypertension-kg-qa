@@ -303,6 +303,33 @@ def test_hbpm_duration_and_per_session_readings_support_monitoring_slots() -> No
     assert assessment.applicability_conditions == ["家庭血压"]
 
 
+def test_clinic_frequency_does_not_fill_home_monitoring_frequency_slot() -> None:
+    plan = build_question_plan(
+        "家庭测血压一般连续几天、每天测几次？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    evidence_text = (
+        "用于诊断高血压时，诊室血压需非同日3次测量；" "家庭血压需连续5~7d测量。"
+    )
+
+    assessment = deterministic_claim_support(
+        task=_task(plan, "rag"),
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="mixed-measurement-contexts",
+            content=evidence_text,
+        ),
+    )
+    claims = extract_structured_numeric_claims(evidence_text)
+    frequency_claim = next(claim for claim in claims if claim.role == "frequency")
+
+    assert frequency_claim.measurement_context == ["clinic"]
+    assert assessment is not None
+    assert assessment.support_status == "partially_supported"
+    assert assessment.reason == "numeric_semantic_slot_missing"
+
+
 def test_comparison_claim_requires_each_numeric_subject() -> None:
     plan = build_question_plan(
         "收缩压和舒张压目标分别是多少？", MedicalRiskAssessment()
