@@ -9,6 +9,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.a2a.applicability import (
+    applicability_condition_present,
+    canonical_applicability_conditions,
+)
 from app.a2a.evidence_fusion import (
     evidence_identity,
     evidence_identity_index,
@@ -394,16 +398,23 @@ def validate_answer_generation(
         missing_conditions = [
             condition
             for condition in item.evidence_policy.required_applicability_fields
-            if re.sub(r"\s+", "", condition.casefold()) not in applicability_scope_text
+            if not applicability_condition_present(condition, applicability_scope_text)
         ]
-        evidence_conditions = {
-            condition
-            for evidence in item.supporting_evidence
-            for condition in evidence.applicability_conditions
-        }
-        evidence_applicability_complete = set(
-            item.evidence_policy.required_applicability_fields
-        ).issubset(evidence_conditions)
+        evidence_conditions = set(
+            canonical_applicability_conditions(
+                condition
+                for evidence in item.supporting_evidence
+                for condition in evidence.applicability_conditions
+            )
+        )
+        required_evidence_applicability = set(
+            canonical_applicability_conditions(
+                item.evidence_policy.required_applicability_fields
+            )
+        )
+        evidence_applicability_complete = required_evidence_applicability.issubset(
+            evidence_conditions
+        )
         supported_evidence_count = len(item.supporting_evidence)
         distinct_publications = {
             evidence.publication_id

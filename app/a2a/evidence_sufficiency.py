@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 from pydantic import ValidationError
 
+from app.a2a.applicability import canonical_applicability_conditions
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_fusion import (
     evidence_identity,
@@ -98,14 +99,17 @@ def assess_evidence_sufficiency(
             supported_rows, supported_fusion.evidence
         )
         conflicts = detect_evidence_conflicts(supported_fusion.evidence)
-        observed_applicability = {
-            condition
-            for assessment in accepted_assessments
-            for condition in assessment.applicability_conditions
-        }
-        applicability_complete = set(policy.required_applicability_fields).issubset(
-            observed_applicability
+        observed_applicability = set(
+            canonical_applicability_conditions(
+                condition
+                for assessment in accepted_assessments
+                for condition in assessment.applicability_conditions
+            )
         )
+        required_applicability = set(
+            canonical_applicability_conditions(policy.required_applicability_fields)
+        )
+        applicability_complete = required_applicability.issubset(observed_applicability)
         missing_reasons: list[str] = []
         if item.support_status not in policy.required_support_statuses:
             missing_reasons.append("claim_not_supported")

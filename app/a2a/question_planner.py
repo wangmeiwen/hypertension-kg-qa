@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 
+from app.a2a.applicability import canonical_applicability_conditions
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import (
     AgentType,
@@ -134,7 +135,7 @@ def _applicability_conditions(question: str) -> list[str]:
         re.sub(r"\s+", "", matched.group())
         for matched in _AGE_CONDITION_PATTERN.finditer(lowered)
     )
-    return list(dict.fromkeys(conditions))
+    return canonical_applicability_conditions(conditions)
 
 
 def _evidence_policy(
