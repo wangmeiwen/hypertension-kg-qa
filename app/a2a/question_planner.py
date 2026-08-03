@@ -15,6 +15,11 @@ from app.a2a.models import (
 )
 
 _CLAUSE_SPLIT_PATTERN = re.compile(r"[；;]|(?:，|,)(?:并且|并|同时|以及|还要|还需)")
+_PARALLEL_SLOT_PATTERN = re.compile(
+    r"^(?P<left>.+?)(?:和|与)(?P<right>.+?)"
+    r"(?P<topic>诊断标准|诊断界值|目标|阈值|剂量|频次|频率)"
+    r"分别(?P<suffix>.+)$"
+)
 
 _CONDITION_TERMS = (
     "孕妇",
@@ -43,7 +48,19 @@ def _stable_id(prefix: str, *parts: str) -> str:
 
 def _split_question(question: str) -> list[str]:
     """按明确的并列连接符拆分问题。"""
-    text = str(question or "").strip()
+    text = str(question or "").strip().strip("。？?")
+    parallel = _PARALLEL_SLOT_PATTERN.match(text)
+    if parallel is not None:
+        topic = parallel.group("topic")
+        left = parallel.group("left").strip(" ，,")
+        right = parallel.group("right").strip(" ，,")
+        if left.endswith(topic):
+            left = left[: -len(topic)]
+        suffix = parallel.group("suffix").strip(" ，,")
+        left_conditions = set(_applicability_conditions(left))
+        right_conditions = set(_applicability_conditions(right))
+        if left_conditions and right_conditions and left_conditions != right_conditions:
+            return [f"{left}{topic}{suffix}", f"{right}{topic}{suffix}"]
     clauses = [item.strip(" ，,。？?") for item in _CLAUSE_SPLIT_PATTERN.split(text)]
     clauses = [item for item in clauses if item]
     return clauses or [text]
