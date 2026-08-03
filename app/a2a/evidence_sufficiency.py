@@ -6,7 +6,11 @@ from typing import Any, Sequence
 from pydantic import ValidationError
 
 from app.a2a.conflict_detection import detect_evidence_conflicts
-from app.a2a.evidence_fusion import evidence_identity, fuse_evidence
+from app.a2a.evidence_fusion import (
+    evidence_identity,
+    evidence_identity_index,
+    fuse_evidence,
+)
 from app.a2a.models import (
     AgentType,
     Evidence,
@@ -41,7 +45,7 @@ def _supported_rows(
     supported_evidence_ids: set[str],
 ) -> list[tuple[str, Evidence]]:
     """仅保留有显式支持判定且通过 Evidence 契约的记录。"""
-    supported: list[tuple[str, Evidence]] = []
+    validated: list[tuple[str, Evidence]] = []
     for agent, raw_evidence in rows:
         try:
             evidence = (
@@ -51,9 +55,18 @@ def _supported_rows(
             )
         except (ValidationError, ValueError, TypeError):
             continue
-        if evidence_identity(evidence) in supported_evidence_ids:
-            supported.append((agent, evidence))
-    return supported
+        validated.append((agent, evidence))
+    identity_index = evidence_identity_index([item for _, item in validated])
+    selected_canonical_ids = {
+        evidence_identity(identity_index[identity])
+        for identity in supported_evidence_ids
+        if identity in identity_index
+    }
+    return [
+        (agent, evidence)
+        for agent, evidence in validated
+        if evidence_identity(evidence) in selected_canonical_ids
+    ]
 
 
 def assess_evidence_sufficiency(

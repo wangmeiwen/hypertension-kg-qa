@@ -6,7 +6,7 @@ from app.a2a.answer_context import (
     build_answer_generation_context,
     validate_answer_generation,
 )
-from app.a2a.evidence_fusion import evidence_identity
+from app.a2a.evidence_fusion import evidence_identity, legacy_evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import ClaimEvidenceAssessment, Evidence, EvidenceConflict
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
@@ -63,6 +63,79 @@ def test_context_only_contains_verified_support_for_its_must_cover() -> None:
     assert evidence_contexts[0].evidence_id == evidence_identity(supported)
     assert evidence_contexts[0].citation == "[guide-a p8]"
     assert "均衡饮食" not in context.model_dump_json()
+
+
+def test_context_reads_unique_legacy_identity_and_emits_canonical_identity() -> None:
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide.pdf",
+        origin_document_id="guide-a",
+        source_page=8,
+        source_chunk_id="chunk-8-1",
+        content="高血压患者应规律监测血压。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=legacy_evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    assert len(context.must_cover[0].supporting_evidence) == 1
+    assert context.must_cover[0].supporting_evidence[
+        0
+    ].evidence_id == evidence_identity(evidence)
+
+
+def test_context_rejects_ambiguous_legacy_identity() -> None:
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    first = Evidence(
+        source_type="document",
+        source_id="guide.pdf",
+        origin_document_id="guide-a",
+        source_page=8,
+        source_chunk_id="chunk-8-1",
+        content="高血压患者应规律监测血压。",
+    )
+    second = Evidence(
+        source_type="document",
+        source_id="guide.pdf",
+        origin_document_id="guide-a",
+        source_page=9,
+        source_chunk_id="chunk-9-1",
+        content="监测血压时应记录测量时间。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=legacy_evidence_identity(first),
+            support_status="supported",
+            support_excerpt=first.content,
+        )
+    )
+
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", first), ("rag", second)]},
+        conflicts=[],
+    )
+
+    assert context.must_cover[0].supporting_evidence == []
 
 
 def test_post_validation_requires_bound_citation_and_applicability() -> None:

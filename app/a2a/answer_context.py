@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.a2a.evidence_fusion import (
     evidence_identity,
+    evidence_identity_index,
     fuse_evidence,
     publication_identity,
 )
@@ -43,7 +44,7 @@ def build_answer_generation_context(
     must_cover_contexts: list[AnswerMustCoverContext] = []
     for must_cover in question_plan.must_cover:
         fused = fuse_evidence(evidence_by_item.get(must_cover.item_id, [])).evidence
-        evidence_by_id = {evidence_identity(item): item for item in fused}
+        evidence_by_id = evidence_identity_index(fused)
         supporting_evidence: list[AnswerEvidenceContext] = []
         seen_evidence_ids: set[str] = set()
         for assessment in question_plan.claim_evidence_assessments:
@@ -51,11 +52,13 @@ def build_answer_generation_context(
                 assessment.must_cover_id != must_cover.item_id
                 or assessment.support_status
                 not in must_cover.evidence_policy.required_support_statuses
-                or assessment.evidence_id in seen_evidence_ids
             ):
                 continue
             evidence = evidence_by_id.get(assessment.evidence_id)
             if evidence is None:
+                continue
+            canonical_evidence_id = evidence_identity(evidence)
+            if canonical_evidence_id in seen_evidence_ids:
                 continue
             if (
                 not assessment.support_excerpt
@@ -66,7 +69,7 @@ def build_answer_generation_context(
                 AnswerEvidenceContext(
                     task_id=assessment.task_id,
                     must_cover_id=must_cover.item_id,
-                    evidence_id=assessment.evidence_id,
+                    evidence_id=canonical_evidence_id,
                     citation=evidence_citation(evidence),
                     publication_id=publication_identity(evidence) or "",
                     source_type=evidence.source_type,
@@ -75,7 +78,7 @@ def build_answer_generation_context(
                     applicability_conditions=assessment.applicability_conditions,
                 )
             )
-            seen_evidence_ids.add(assessment.evidence_id)
+            seen_evidence_ids.add(canonical_evidence_id)
         must_cover_contexts.append(
             AnswerMustCoverContext(
                 item_id=must_cover.item_id,

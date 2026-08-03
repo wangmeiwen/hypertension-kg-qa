@@ -27,6 +27,7 @@ from app.a2a.evidence_confidence import assess_evidence_confidence
 from app.a2a.evidence_fusion import (
     EvidenceFusionResult,
     evidence_identity,
+    evidence_identity_index,
     fuse_evidence,
 )
 from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
@@ -106,7 +107,7 @@ def _coerce_list(value: Any) -> list[Any]:
 
 def _evidence_ids(rows: Any) -> set[str]:
     """提取可通过 Evidence 契约校验的对象身份。"""
-    identities: set[str] = set()
+    evidence_rows: list[Evidence] = []
     for row in _coerce_list(rows):
         try:
             evidence = (
@@ -114,8 +115,8 @@ def _evidence_ids(rows: Any) -> set[str]:
             )
         except (ValidationError, ValueError, TypeError):
             continue
-        identities.add(evidence_identity(evidence))
-    return identities
+        evidence_rows.append(evidence)
+    return set(evidence_identity_index(evidence_rows))
 
 
 class PromptBudgetExceededError(RuntimeError):

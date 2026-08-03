@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from app.a2a.evidence_fusion import (
     evidence_identity,
+    evidence_identity_index,
     fuse_evidence,
+    legacy_evidence_identity,
     publication_identity,
 )
 from app.a2a.medical_risk import MedicalRiskAssessment
@@ -20,6 +22,8 @@ def _evidence(
     document_id: str = "",
     source_hash: str = "",
     score: float | None = None,
+    page: int = 12,
+    chunk_id: str = "",
 ) -> Evidence:
     return Evidence(
         source_type="document",
@@ -27,7 +31,8 @@ def _evidence(
         document_id=document_id,
         origin_document_id=document_id,
         source_hash=source_hash,
-        page=12,
+        page=page,
+        chunk_id=chunk_id,
         content=content,
         score=score,
         retrieval_method="dense",
@@ -94,6 +99,81 @@ def test_publication_identity_is_shared_across_kg_and_rag() -> None:
     assert publication_identity(rag) == publication_identity(kg)
     result = fuse_evidence([("rag", rag), ("kg", kg)])
     assert result.distinct_publication_count == 1
+
+
+def test_evidence_identity_distinguishes_chunks_from_the_same_document() -> None:
+    page_three = _evidence(
+        source_id="guide.pdf",
+        document_id="Guide-2024",
+        page=3,
+        chunk_id="chunk-3-1",
+        content="80 岁以上老年人应定期监测血压。",
+    )
+    page_eighteen = _evidence(
+        source_id="guide.pdf",
+        document_id="Guide-2024",
+        page=18,
+        chunk_id="chunk-18-1",
+        content="老年人收缩压目标应低于 140 mmHg。",
+    )
+
+    assert evidence_identity(page_three) != evidence_identity(page_eighteen)
+    result = fuse_evidence([("rag", page_three), ("rag", page_eighteen)])
+    assert len(result.evidence) == 2
+    assert result.duplicate_count == 0
+    assert result.distinct_publication_count == 1
+
+
+def test_evidence_identity_distinguishes_chunks_on_the_same_page() -> None:
+    first = _evidence(
+        source_id="guide.pdf",
+        document_id="Guide-2024",
+        page=12,
+        chunk_id="chunk-12-1",
+        content="诊室血压用于高血压诊断。",
+    )
+    second = _evidence(
+        source_id="guide.pdf",
+        document_id="Guide-2024",
+        page=12,
+        chunk_id="chunk-12-2",
+        content="家庭血压用于长期监测。",
+    )
+
+    assert evidence_identity(first) != evidence_identity(second)
+
+
+def test_legacy_identity_is_only_accepted_when_it_maps_to_one_chunk() -> None:
+    unique = _evidence(
+        source_id="unique.pdf",
+        document_id="Guide-2024",
+        page=3,
+        chunk_id="chunk-3-1",
+        content="唯一片段。",
+    )
+    unique_index = evidence_identity_index([unique])
+    assert unique_index[legacy_evidence_identity(unique)] == unique
+
+    first = _evidence(
+        source_id="guide.pdf",
+        document_id="Guide-2024",
+        page=3,
+        chunk_id="chunk-3-1",
+        content="第一个片段。",
+    )
+    second = _evidence(
+        source_id="guide.pdf",
+        document_id="Guide-2024",
+        page=18,
+        chunk_id="chunk-18-1",
+        content="第二个片段。",
+    )
+    ambiguous_index = evidence_identity_index([first, second])
+
+    assert legacy_evidence_identity(first) == legacy_evidence_identity(second)
+    assert legacy_evidence_identity(first) not in ambiguous_index
+    assert evidence_identity(first) in ambiguous_index
+    assert evidence_identity(second) in ambiguous_index
 
 
 def test_multiple_kg_objects_from_same_document_count_as_one_publication() -> None:

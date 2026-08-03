@@ -34,13 +34,53 @@ def _content_fingerprint(evidence: Evidence) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
-def evidence_identity(evidence: Evidence) -> str:
-    """生成单条 Evidence 的稳定对象身份。"""
+def legacy_evidence_identity(evidence: Evidence) -> str:
+    """生成 evidence.v2 使用的对象身份，仅用于兼容读取。"""
     source_type = _normalized_text(evidence.source_type) or "unknown"
     source_id = _normalized_text(evidence.source_id)
     if source_id:
         return f"evidence:{source_type}:{source_id}"
     return f"evidence:{source_type}:content:{_content_fingerprint(evidence)}"
+
+
+def evidence_identity(evidence: Evidence) -> str:
+    """生成包含出版物、locator 与内容指纹的 chunk 级稳定身份。"""
+    source_type = _normalized_text(evidence.source_type) or "unknown"
+    publication = publication_identity(evidence) or "publication:unknown"
+    page = evidence.source_page if evidence.source_page is not None else evidence.page
+    chunk = _normalized_text(evidence.source_chunk_id or evidence.chunk_id) or "none"
+    object_id = _normalized_text(evidence.source_id) or "none"
+    fingerprint = _content_fingerprint(evidence)
+    return (
+        f"evidence:v3:{source_type}:{publication}:page:{page if page is not None else 'none'}:"
+        f"chunk:{chunk}:object:{object_id}:content:{fingerprint}"
+    )
+
+
+def evidence_identity_index(
+    evidence_rows: Iterable[Evidence],
+) -> dict[str, Evidence]:
+    """构建身份索引；旧身份只有在唯一指向一个 chunk 时才可兼容读取。"""
+    evidence = list(evidence_rows)
+    indexed: dict[str, Evidence] = {}
+    for item in evidence:
+        identity = evidence_identity(item)
+        existing = indexed.get(identity)
+        if existing is not None and _content_fingerprint(
+            existing
+        ) != _content_fingerprint(item):
+            raise ValueError(f"evidence_identity_collision:{identity}")
+        indexed[identity] = item
+
+    legacy_targets: dict[str, set[str]] = {}
+    for item in evidence:
+        legacy_targets.setdefault(legacy_evidence_identity(item), set()).add(
+            evidence_identity(item)
+        )
+    for legacy_identity, targets in legacy_targets.items():
+        if len(targets) == 1:
+            indexed[legacy_identity] = indexed[next(iter(targets))]
+    return indexed
 
 
 def publication_identity(evidence: Evidence) -> str | None:

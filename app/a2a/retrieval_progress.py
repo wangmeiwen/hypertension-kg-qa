@@ -7,6 +7,7 @@ from typing import Any
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_fusion import (
     evidence_identity,
+    evidence_identity_index,
     fuse_evidence,
     publication_identity,
 )
@@ -30,24 +31,26 @@ def build_retrieval_progress(
     states: dict[str, MustCoverProgressState] = {}
     for must_cover in question_plan.must_cover:
         fused = fuse_evidence(evidence_by_item.get(must_cover.item_id, [])).evidence
-        evidence_by_id = {evidence_identity(item): item for item in fused}
+        evidence_by_id = evidence_identity_index(fused)
         assessments = [
             assessment
             for assessment in question_plan.claim_evidence_assessments
             if assessment.must_cover_id == must_cover.item_id
             and assessment.evidence_id in evidence_by_id
         ]
-        supported_ids = {
-            assessment.evidence_id
+        supported_assessments = [
+            assessment
             for assessment in assessments
             if assessment.support_status
             in must_cover.evidence_policy.required_support_statuses
-        }
-        supported_evidence = [
-            evidence_by_id[evidence_id]
-            for evidence_id in supported_ids
-            if evidence_id in evidence_by_id
         ]
+        supported_evidence_by_id = {
+            evidence_identity(evidence_by_id[assessment.evidence_id]): evidence_by_id[
+                assessment.evidence_id
+            ]
+            for assessment in supported_assessments
+        }
+        supported_evidence = list(supported_evidence_by_id.values())
         publications = {
             publication
             for evidence in supported_evidence
@@ -55,8 +58,7 @@ def build_retrieval_progress(
         }
         matched_conditions = {
             condition
-            for assessment in assessments
-            if assessment.evidence_id in supported_ids
+            for assessment in supported_assessments
             for condition in assessment.applicability_conditions
         }
         required_conditions = set(

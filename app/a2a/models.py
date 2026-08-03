@@ -44,7 +44,7 @@ class Evidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["evidence.v2"] = "evidence.v2"
+    schema_version: Literal["evidence.v2", "evidence.v3"] = "evidence.v3"
     source_type: str = Field(default="")
     source_id: str = Field(default="")
     document_id: str = Field(default="")
