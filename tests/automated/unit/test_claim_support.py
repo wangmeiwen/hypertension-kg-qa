@@ -770,6 +770,13 @@ def test_relation_question_parses_path_endpoints_and_exact_hops() -> None:
     assert relation_hop_bounds("高血压与家庭之间有什么两跳路径？") == (2, 2)
 
 
+def test_relation_question_parses_combined_relation_path_suffix() -> None:
+    assert relation_endpoints("高血压和慢性肾病有什么关系路径？") == [
+        "高血压",
+        "慢性肾病",
+    ]
+
+
 def test_relation_question_does_not_split_age_phrase_on_and_character() -> None:
     assert relation_endpoints("80岁及以上人群与诊室血压的关系是什么？") == [
         "80岁及以上人群",
