@@ -52,10 +52,21 @@ def _split_question(question: str) -> list[str]:
 def _claim_type(question: str) -> str:
     """推断 must-cover 的结论类型。"""
     text = str(question or "")
+    if any(
+        term in text
+        for term in (
+            "关系",
+            "路径",
+            "关联",
+            "连接",
+            "两跳",
+            "多跳",
+            "知识图谱",
+        )
+    ):
+        return "relation"
     if any(term in text for term in ("比较", "分别", "差异")):
         return "comparison"
-    if any(term in text for term in ("关系", "路径", "关联", "连接")):
-        return "relation"
     if any(
         term in text
         for term in (

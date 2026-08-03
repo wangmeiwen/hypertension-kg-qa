@@ -118,7 +118,7 @@ def deterministic_claim_support(
     )
     applicability_complete = required_applicability.issubset(matched_applicability)
 
-    if must_cover.claim_type == "numeric":
+    if must_cover.claim_type in {"numeric", "comparison"}:
         requirements = extract_numeric_requirements(must_cover.question)
         claims = extract_structured_numeric_claims(content)
         if not requirements:

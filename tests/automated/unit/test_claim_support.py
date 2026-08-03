@@ -222,6 +222,38 @@ def test_multi_slot_monitoring_question_requires_duration_and_frequency() -> Non
     assert supported is not None and supported.support_status == "supported"
 
 
+def test_comparison_claim_requires_each_numeric_subject() -> None:
+    plan = build_question_plan(
+        "收缩压和舒张压目标分别是多少？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    partial = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="systolic-only",
+            content="收缩压目标为130 mmHg。",
+        ),
+    )
+    supported = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="both-targets",
+            content="收缩压目标为130 mmHg，舒张压目标为80 mmHg。",
+        ),
+    )
+
+    assert item.claim_type == "comparison"
+    assert partial is not None and partial.support_status == "partially_supported"
+    assert partial.reason == "numeric_semantic_slot_missing"
+    assert supported is not None and supported.support_status == "supported"
+
+
 def test_dose_claim_requires_matching_intervention() -> None:
     plan = build_question_plan("氨氯地平剂量是多少？", MedicalRiskAssessment())
     item = plan.must_cover[0]

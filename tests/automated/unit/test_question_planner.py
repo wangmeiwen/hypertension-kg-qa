@@ -44,6 +44,18 @@ def test_question_plan_routes_relation_questions_to_kg() -> None:
     ]
 
 
+def test_question_plan_routes_explicit_multihop_graph_reasoning_to_kg() -> None:
+    plan = build_question_plan(
+        "请仅根据知识图谱进行两跳推理：家庭血压阈值是多少？",
+        MedicalRiskAssessment(),
+    )
+
+    assert plan.must_cover[0].claim_type == "relation"
+    assert plan.must_cover[0].evidence_policy.required_retrievers == ["kg"]
+    assert plan.retrieval_tasks[0].target_agent == "kg"
+    assert plan.retrieval_tasks[0].status == "pending"
+
+
 def test_question_plan_separates_optional_retrievers_from_evidence_minimums() -> None:
     fact = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     fact_policy = fact.must_cover[0].evidence_policy
