@@ -10,7 +10,7 @@ from app.mcp.tools import get_mcp_server
 _AGENT_TOOL_WHITELIST: dict[str, set[str]] = {
     "kg": {"kg_query", "kg_entity_relation_search"},
     "rag": {"rag_search"},
-    "orchestrator": set(),
+    "orchestrator": {"history_read"},
 }
 
 
@@ -36,7 +36,7 @@ class MCPToolGateway:
     def ensure_allowed_tools(self, tool_name: str) -> None:
         """校验当前子代理是否允许调用指定工具。
 
-        当代理类型配置了白名单且请求工具不在白名单中时，抛出 PermissionError。
+        仅显式白名单中的工具允许调用，未知代理类型和空工具名均拒绝。
 
         Args:
             tool_name: 待调用工具名。
@@ -45,10 +45,8 @@ class MCPToolGateway:
             None: 校验通过时无返回值。
         """
         name = str(tool_name or "").strip()
-        allowed = _AGENT_TOOL_WHITELIST.get(self.agent_type, set())
-        if not allowed:
-            return
-        if name not in allowed:
+        allowed = _AGENT_TOOL_WHITELIST.get(self.agent_type)
+        if allowed is None or name not in allowed:
             raise PermissionError(f"tool_not_allowed:{self.agent_type}:{name}")
 
     @staticmethod
