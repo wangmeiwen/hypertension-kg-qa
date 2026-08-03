@@ -214,7 +214,6 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                 if (
                     unit_family == "blood_pressure"
                     and "/" in normalized_value
-                    and subject == "blood_pressure"
                 ):
                     systolic, diastolic = normalized_value.split("/", maxsplit=1)
                     claims.extend(

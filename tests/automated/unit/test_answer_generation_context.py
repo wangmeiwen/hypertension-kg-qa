@@ -239,6 +239,50 @@ def test_post_validation_rejects_wrong_number_with_valid_citation() -> None:
     assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
 
 
+def test_post_validation_accepts_explicit_systolic_explanation_of_bp_pair() -> None:
+    plan = build_question_plan(
+        "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
+    )
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="中国高血压防治指南2024.pdf",
+        origin_document_id="中国高血压防治指南2024.pdf",
+        source_page=20,
+        source_chunk_id="2",
+        content=(
+            "80岁及以上高龄老年人降压目标<150/90mmHg，"
+            "如能耐受，可降至<140/90mmHg。"
+        ),
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+            applicability_conditions=["老年人", "80岁以上"],
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "对于80岁以上的老年人，降压目标为<150/90mmHg（即收缩压目标"
+        "<150mmHg），如能耐受，可降至<140/90mmHg（即收缩压目标"
+        "<140mmHg）[中国高血压防治指南2024.pdf p20 chunk:2]。",
+        context,
+    )
+
+    assert result.valid is True
+    assert result.numeric_mismatch_ids == []
+
+
 def test_post_validation_binds_number_to_the_cited_evidence() -> None:
     plan = build_question_plan("收缩压目标是多少？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
