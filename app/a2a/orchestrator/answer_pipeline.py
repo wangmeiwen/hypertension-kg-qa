@@ -25,8 +25,9 @@ class AnswerPipeline:
             "3. 每项结论只能使用该项 supporting_evidence，并在同一句末尾附带对应 citation。\n"
             "4. 明确写出 evidence_policy.required_applicability_fields 中的适用条件。\n"
             "5. 数值、比较符、单位和测量场景必须与所引 Evidence 完全一致。\n"
-            "6. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
-            "7. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
+            "6. 不得增加 Evidence 未明示的次数、总数、换算值或推导值。\n"
+            "7. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
+            "8. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
         )
 
     @staticmethod

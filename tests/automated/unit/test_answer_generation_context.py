@@ -251,8 +251,7 @@ def test_post_validation_accepts_explicit_systolic_explanation_of_bp_pair() -> N
         source_page=20,
         source_chunk_id="2",
         content=(
-            "80岁及以上高龄老年人降压目标<150/90mmHg，"
-            "如能耐受，可降至<140/90mmHg。"
+            "80岁及以上高龄老年人降压目标<150/90mmHg，" "如能耐受，可降至<140/90mmHg。"
         ),
     )
     plan.must_cover[0].support_status = "supported"
@@ -329,6 +328,50 @@ def test_post_validation_binds_number_to_the_cited_evidence() -> None:
     assert wrong_citation.valid is False
     assert wrong_citation.numeric_mismatch_ids
     assert correct_citation.valid is True
+
+
+def test_post_validation_inherits_single_item_scope_and_rejects_added_number() -> None:
+    plan = build_question_plan(
+        "家庭测血压一般连续几天、每天测几次？", MedicalRiskAssessment()
+    )
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=7,
+        content="建议进行5~7d的HBPM，早晚各测量2~3个读数。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+            applicability_conditions=["家庭血压"],
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    valid = validate_answer_generation(
+        "针对家庭血压，建议连续测量5~7天，早晚各测量2~3个读数" "[guide-a p7]。",
+        context,
+    )
+    added_number = validate_answer_generation(
+        "针对家庭血压，建议连续测量5~7天，每天早晚各测量1次，"
+        "每次测量2~3个读数[guide-a p7]。",
+        context,
+    )
+
+    assert valid.valid is True
+    assert added_number.valid is False
+    assert added_number.numeric_mismatch_ids == [added_number.answer_claims[0].claim_id]
 
 
 def test_citation_must_be_locally_bound_to_answer_claim() -> None:

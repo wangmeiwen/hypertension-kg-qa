@@ -24,6 +24,7 @@ from app.a2a.models import (
     EvidenceConflict,
     QuestionPlan,
     StructuredAnswerClaim,
+    StructuredNumericClaim,
 )
 from app.a2a.numeric_claims import (
     extract_numeric_requirements,
@@ -169,6 +170,7 @@ def _numeric_claims_are_faithful(
     *,
     item: AnswerMustCoverContext,
     answer_claims: list[StructuredAnswerClaim],
+    inherit_measurement_context: bool = False,
 ) -> tuple[bool, list[str]]:
     requirements = extract_numeric_requirements(item.question)
     if not requirements:
@@ -177,11 +179,25 @@ def _numeric_claims_are_faithful(
     mismatched_claim_ids: list[str] = []
     satisfied_requirements: set[int] = set()
     for index, requirement in enumerate(requirements):
+
+        def scoped_claim(claim: StructuredNumericClaim) -> StructuredNumericClaim:
+            if (
+                inherit_measurement_context
+                and requirement.measurement_context
+                and not claim.measurement_context
+            ):
+                return claim.model_copy(
+                    update={
+                        "measurement_context": list(requirement.measurement_context)
+                    }
+                )
+            return claim
+
         for answer_claim in answer_claims:
             candidates = [
-                claim
+                scoped_claim(claim)
                 for claim in answer_claim.numeric_claims
-                if numeric_claim_matches_requirement(claim, requirement)
+                if numeric_claim_matches_requirement(scoped_claim(claim), requirement)
             ]
             if not candidates:
                 continue
@@ -222,6 +238,7 @@ def validate_answer_generation(
     missing_applicability: dict[str, list[str]] = {}
     unsupported_claim_ids: list[str] = []
     numeric_mismatch_ids: list[str] = []
+    normalized_answer_text = re.sub(r"\s+", "", str(answer or "").casefold())
 
     for item in context.must_cover:
         item_answer_claims = [
@@ -231,10 +248,13 @@ def validate_answer_generation(
         normalized_claim_text = re.sub(
             r"\s+", "", " ".join(row.text for row in item_answer_claims).casefold()
         )
+        applicability_scope_text = normalized_claim_text
+        if len(context.must_cover) == 1:
+            applicability_scope_text += normalized_answer_text
         missing_conditions = [
             condition
             for condition in item.evidence_policy.required_applicability_fields
-            if re.sub(r"\s+", "", condition.casefold()) not in normalized_claim_text
+            if re.sub(r"\s+", "", condition.casefold()) not in applicability_scope_text
         ]
         evidence_conditions = {
             condition
@@ -264,6 +284,9 @@ def validate_answer_generation(
         numeric_faithful, mismatched_claims = _numeric_claims_are_faithful(
             item=item,
             answer_claims=item_answer_claims,
+            inherit_measurement_context=(
+                len(context.must_cover) == 1 and not missing_conditions
+            ),
         )
         numeric_mismatch_ids.extend(mismatched_claims)
         if supported and has_citation and not missing_conditions and numeric_faithful:
