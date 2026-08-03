@@ -127,7 +127,7 @@ class UnifiedOrchestratorController:
             '"answer":"仅 final_answer 时填写"'
             "}\n"
             f"输出必须满足以下 JSON Schema：{action_schema}\n"
-            "若信息仍不足且已拿到一些证据，也要基于现有证据给出谨慎回答，不要卡住。"
+            "若信息不足，必须选择检索动作；不要在缺少直接证据时输出 final_answer。"
         )
 
     def _build_compression_system_prompt(self) -> str:
@@ -870,6 +870,8 @@ class UnifiedOrchestratorController:
                     or f"signal={result.signal}; evidence_count={len(evidence)}; queries={len(result.queries_used)}",
                     "signal": result.signal,
                     "coverage": result.coverage,
+                    "missing_points": result.missing_points,
+                    "direct_support": result.direct_support,
                     "reason": result.reason,
                     "queries_used": result.queries_used,
                     "query_records": query_records,
@@ -939,6 +941,37 @@ class UnifiedOrchestratorController:
             "covered_topics": covered_topics[:5],
             "evidence_count": len(evidence),
             "retrieval_risk_flags": retrieval_risk_flags,
+        }
+
+    def _assess_answer_readiness(
+        self, tool_observations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """根据现有直接证据和冲突标记判断是否允许生成答案。"""
+        evidence: list[dict[str, Any]] = []
+        missing_points: list[str] = []
+        for row in tool_observations:
+            if not isinstance(row, dict):
+                continue
+            for item in _coerce_list(row.get("evidence")):
+                normalized = self._normalize_evidence(item)
+                if normalized is not None:
+                    evidence.append(normalized)
+            result_payload = _coerce_dict(_coerce_dict(row.get("result")).get("result"))
+            for item in _coerce_list(result_payload.get("missing_points")):
+                point = _sanitize_text(item, 160)
+                if point and point not in missing_points:
+                    missing_points.append(point)
+
+        risk_flags = self._detect_numeric_conflicts(evidence)
+        if not evidence:
+            missing_points.append("direct_evidence")
+        if risk_flags:
+            missing_points.append("unresolved_conflict")
+        return {
+            "ready": bool(evidence) and not missing_points,
+            "evidence_count": len(evidence),
+            "missing_points": missing_points,
+            "unresolved_conflicts": risk_flags,
         }
 
     def _build_budget_telemetry(
@@ -1163,6 +1196,49 @@ class UnifiedOrchestratorController:
             "evidence_summary": evidence_summary,
         }
 
+    def _build_insufficient_evidence_result(
+        self,
+        *,
+        tool_observations: list[dict[str, Any]],
+        processing_steps: list[str],
+        retrieval_round: int,
+        max_turns: int,
+        token_usage: dict[str, int],
+        trace_id: str,
+        compression_state: dict[str, Any],
+        readiness: dict[str, Any],
+    ) -> dict[str, Any]:
+        """构建证据不足或冲突未解决时的安全拒答。"""
+        evidence_summary = self._build_evidence_summary(tool_observations)
+        evidence_summary.update(
+            {
+                "answer_mode": "abstained_insufficient_evidence",
+                "missing_points": readiness.get("missing_points") or [],
+                "unresolved_conflicts": readiness.get("unresolved_conflicts") or [],
+            }
+        )
+        return {
+            "output": "当前证据不足或存在未解决冲突，无法给出可靠回答。",
+            "output_type": "orchestrator_abstained_insufficient_evidence",
+            "confidence": 0.0,
+            "tool_observations": tool_observations,
+            "reflection_events": [],
+            "processing_steps": [
+                *processing_steps,
+                "未达到回答条件，已停止生成答案",
+            ],
+            "telemetry": {
+                "controller_mode": "explicit_memory_with_subagents",
+                "retrieval_round": retrieval_round,
+                "max_turns": max_turns,
+                "trace_id": trace_id,
+                **token_usage,
+                "final_source": "insufficient_evidence_policy",
+                **self._build_budget_telemetry(compression_state),
+            },
+            "evidence_summary": evidence_summary,
+        }
+
     async def run(
         self,
         *,
@@ -1265,6 +1341,12 @@ class UnifiedOrchestratorController:
             )
 
             if action_name == "final_answer":
+                readiness = self._assess_answer_readiness(tool_observations)
+                if not bool(readiness.get("ready")):
+                    processing_steps.append(
+                        "主控请求终答，但证据覆盖未达标或仍有冲突，继续检索决策"
+                    )
+                    continue
                 final_answer, answer_tokens = await self._stream_final_answer(
                     question=safe_question,
                     qa_memory_text=qa_memory_text,
@@ -1334,65 +1416,21 @@ class UnifiedOrchestratorController:
                 )
                 continue
 
-            processing_steps.append("主控返回了未知动作，转入强制终答")
+            processing_steps.append("主控返回了未知动作，停止生成答案")
             break
 
         if not final_answer:
-            try:
-                forced_action, tokens = await self._decide_action(
-                    question=safe_question,
-                    session_id=safe_session_id,
-                    qa_memory_text=qa_memory_text,
-                    retrieval_index_text=retrieval_index_text,
-                    tool_observations=tool_observations,
-                    turn_index=safe_max_turns,
-                    max_turns=safe_max_turns,
-                    force_final=True,
-                    image_data=str(image_data or "").strip(),
-                    file_id=str(file_id or "").strip(),
-                    compression_state=compression_state,
-                    processing_steps=processing_steps,
-                    progress_callback=progress_callback,
-                )
-            except PromptBudgetExceededError:
-                return self._build_over_budget_result(
-                    tool_observations=tool_observations,
-                    processing_steps=processing_steps,
-                    retrieval_round=retrieval_round,
-                    max_turns=safe_max_turns,
-                    token_usage=token_usage,
-                    trace_id=safe_trace_id,
-                    compression_state=compression_state,
-                )
-            except OrchestratorActionValidationError as exc:
-                return self._build_invalid_decision_result(
-                    tool_observations=tool_observations,
-                    processing_steps=processing_steps,
-                    retrieval_round=retrieval_round,
-                    max_turns=safe_max_turns,
-                    token_usage=token_usage,
-                    trace_id=safe_trace_id,
-                    compression_state=compression_state,
-                    error=str(exc),
-                )
-            merge_token_usage(token_usage, tokens)
-            final_answer, answer_tokens = await self._stream_final_answer(
-                question=safe_question,
-                qa_memory_text=qa_memory_text,
-                retrieval_index_text=retrieval_index_text,
+            readiness = self._assess_answer_readiness(tool_observations)
+            return self._build_insufficient_evidence_result(
                 tool_observations=tool_observations,
-                draft_answer=str(forced_action.get("answer") or "").strip(),
-                image_data=str(image_data or "").strip(),
-                file_id=str(file_id or "").strip(),
-                progress_callback=progress_callback,
+                processing_steps=processing_steps,
+                retrieval_round=retrieval_round,
+                max_turns=safe_max_turns,
+                token_usage=token_usage,
+                trace_id=safe_trace_id,
+                compression_state=compression_state,
+                readiness=readiness,
             )
-            merge_token_usage(token_usage, answer_tokens)
-            if not final_answer:
-                final_answer = (
-                    "当前基于已有问答记忆和检索记录，仍缺少足够证据给出更确定的回答。"
-                )
-            processing_steps.append("已执行强制终答")
-            confidence = 0.6 if tool_observations else 0.3
 
         evidence_summary = self._build_evidence_summary(tool_observations)
         return {
