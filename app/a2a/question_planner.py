@@ -73,7 +73,12 @@ def _split_question(question: str) -> list[str]:
         left_conditions = set(_applicability_conditions(left))
         right_conditions = set(_applicability_conditions(right))
         if left_conditions and right_conditions and left_conditions != right_conditions:
-            return [f"{left}{suffix}", f"{right}{suffix}"]
+            measurement_pair = left_conditions.union(right_conditions) == {
+                "家庭血压",
+                "动态血压",
+            }
+            topic = "诊断阈值" if measurement_pair else ""
+            return [f"{left}{topic}{suffix}", f"{right}{topic}{suffix}"]
     clauses = [item.strip(" ，,。？?") for item in _CLAUSE_SPLIT_PATTERN.split(text)]
     clauses = [item for item in clauses if item]
     return clauses or [text]

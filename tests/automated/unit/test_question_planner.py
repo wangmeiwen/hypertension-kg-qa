@@ -7,6 +7,7 @@ import pytest
 from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import ClaimEvidenceAssessment, Evidence, SubAgentResult
+from app.a2a.numeric_claims import extract_numeric_requirements
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -137,14 +138,24 @@ def test_question_plan_splits_parallel_measurements_without_explicit_topic() -> 
     )
 
     assert [item.question for item in plan.must_cover] == [
-        "家庭血压是多少",
-        "动态血压是多少",
+        "家庭血压诊断阈值是多少",
+        "动态血压诊断阈值是多少",
     ]
     assert [item.applicability_conditions for item in plan.must_cover] == [
         ["家庭血压"],
         ["动态血压"],
     ]
     assert [item.claim_type for item in plan.must_cover] == ["numeric", "numeric"]
+    assert [
+        [
+            requirement.subject
+            for requirement in extract_numeric_requirements(item.question)
+        ]
+        for item in plan.must_cover
+    ] == [
+        ["systolic_blood_pressure", "diastolic_blood_pressure"],
+        ["systolic_blood_pressure", "diastolic_blood_pressure"],
+    ]
 
 
 def test_question_plan_keeps_systolic_diastolic_pair_in_one_must_cover() -> None:
