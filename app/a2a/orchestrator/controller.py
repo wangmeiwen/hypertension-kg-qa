@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ from app.a2a.models import (
     OrchestratorAction,
     QuestionPlan,
     SubAgentConstraints,
+    SubAgentResult,
     SubTask,
 )
 from app.a2a.question_planner import build_question_plan
@@ -899,6 +901,7 @@ class UnifiedOrchestratorController:
         default_question: str,
         max_tool_calls: int,
         question_plan: QuestionPlan | None = None,
+        planned_task_id: str = "",
     ) -> SubTask:
         """根据主控动作构建子代理任务对象。"""
         target_agent: Literal["kg", "rag"] = (
@@ -911,7 +914,9 @@ class UnifiedOrchestratorController:
                 (
                     item
                     for item in question_plan.retrieval_tasks
-                    if item.target_agent == target_agent and item.status == "pending"
+                    if item.target_agent == target_agent
+                    and item.status == "pending"
+                    and (not planned_task_id or item.task_id == planned_task_id)
                 ),
                 None,
             )
@@ -967,6 +972,81 @@ class UnifiedOrchestratorController:
             arguments={},
             reason=_sanitize_text(action.get("reason"), 200),
         )
+
+    def _build_ready_subtasks(
+        self,
+        *,
+        action: dict[str, Any],
+        default_question: str,
+        max_tool_calls: int,
+        question_plan: QuestionPlan,
+    ) -> list[SubTask]:
+        """构建同一 must-cover 下可并行执行的无依赖任务。"""
+        primary = self._build_subtask(
+            action=action,
+            default_question=default_question,
+            max_tool_calls=max_tool_calls,
+            question_plan=question_plan,
+        )
+        if not primary.must_cover:
+            return [primary]
+
+        must_cover_item = question_plan.must_cover[primary.subtask_id - 1]
+        covered_ids = {
+            item.item_id
+            for item in question_plan.must_cover
+            if item.status == "covered"
+        }
+        ready_tasks = [
+            item
+            for item in question_plan.retrieval_tasks
+            if item.must_cover_id == must_cover_item.item_id
+            and item.status == "pending"
+            and all(dependency in covered_ids for dependency in item.dependency_on)
+        ]
+        primary_target = primary.target_agent
+        ready_tasks.sort(key=lambda item: item.target_agent != primary_target)
+        return [
+            self._build_subtask(
+                action={
+                    "action": f"call_{retrieval_task.target_agent}",
+                    "question": retrieval_task.question,
+                    "reason": action.get("reason"),
+                },
+                default_question=default_question,
+                max_tool_calls=max_tool_calls,
+                question_plan=question_plan,
+                planned_task_id=retrieval_task.task_id,
+            )
+            for retrieval_task in ready_tasks
+        ] or [primary]
+
+    async def _execute_subtasks(self, tasks: list[SubTask]) -> list[SubAgentResult]:
+        """并发执行独立子任务，并将单个失败转换为标准结果。"""
+
+        async def execute(task: SubTask) -> SubAgentResult:
+            try:
+                return await self._subagent_client.send_task(task)
+            except Exception as exc:
+                logger.exception("子代理任务执行失败: %s", task.target_agent)
+                return SubAgentResult(
+                    subtask_id=task.subtask_id,
+                    target_agent=task.target_agent,
+                    question=task.question,
+                    signal="none",
+                    coverage={
+                        "coverage_status": "none",
+                        "coverage_ratio": 0.0,
+                        "evidence_count": 0,
+                    },
+                    missing_points=list(task.must_cover),
+                    direct_support=False,
+                    no_signal=True,
+                    reason=f"subagent_error:{type(exc).__name__}",
+                    telemetry={"error": _sanitize_text(exc, 240)},
+                )
+
+        return list(await asyncio.gather(*(execute(task) for task in tasks)))
 
     @staticmethod
     def _update_question_plan(
@@ -1591,27 +1671,37 @@ class UnifiedOrchestratorController:
                 continue
 
             if action_name in {"call_kg", "call_rag"}:
-                retrieval_round += 1
-                if progress_callback is not None:
-                    progress_callback(
-                        {
-                            "event": "subagent_call",
-                            "detail": f"调用 {action_name[5:]} 子agent",
-                            "tool_name": action_name,
-                        }
-                    )
-                task = self._build_subtask(
+                tasks = self._build_ready_subtasks(
                     action=action,
                     default_question=safe_question,
                     max_tool_calls=safe_tool_calls,
                     question_plan=question_plan,
                 )
-                result = await self._subagent_client.send_task(task)
-                self._update_question_plan(question_plan, task, result)
-                merge_token_usage(token_usage, result.token_usage)
-                tool_observations.append(
-                    self._build_subagent_observation(result, action)
+                retrieval_round += len(tasks)
+                target_names = "/".join(task.target_agent for task in tasks)
+                processing_steps.append(
+                    f"执行计划任务：{target_names}；并行数={len(tasks)}"
                 )
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "event": "subagent_call",
+                            "detail": f"调用 {target_names} 子agent",
+                            "tool_name": "parallel_retrieval",
+                        }
+                    )
+                results = await self._execute_subtasks(tasks)
+                for task, result in zip(tasks, results):
+                    self._update_question_plan(question_plan, task, result)
+                    merge_token_usage(token_usage, result.token_usage)
+                    result_action = {
+                        **action,
+                        "action": f"call_{task.target_agent}",
+                        "question": task.question,
+                    }
+                    tool_observations.append(
+                        self._build_subagent_observation(result, result_action)
+                    )
                 continue
 
             processing_steps.append("主控返回了未知动作，停止生成答案")
