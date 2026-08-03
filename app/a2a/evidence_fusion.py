@@ -86,9 +86,9 @@ def evidence_identity_index(
 def publication_identity(evidence: Evidence) -> str | None:
     """仅使用可信来源字段生成出版物身份。"""
     candidates = (
-        ("guideline", evidence.origin_guideline_id),
-        ("document", evidence.origin_document_id),
         ("hash", evidence.source_hash),
+        ("id", evidence.origin_guideline_id),
+        ("id", evidence.origin_document_id),
     )
     for prefix, value in candidates:
         normalized = _normalized_text(value)

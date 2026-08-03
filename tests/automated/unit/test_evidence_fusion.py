@@ -101,6 +101,47 @@ def test_publication_identity_is_shared_across_kg_and_rag() -> None:
     assert result.distinct_publication_count == 1
 
 
+def test_source_hash_prevents_aliases_from_becoming_two_publications() -> None:
+    source_hash = "d" * 64
+    rag = Evidence(
+        source_type="document",
+        source_id="guide.pdf",
+        origin_guideline_id="china-guideline-2024",
+        source_hash=source_hash,
+        content="指南原文证据",
+    )
+    kg = Evidence(
+        source_type="knowledge_graph",
+        source_id="node-42",
+        origin_document_id="guide-2024",
+        source_hash=source_hash,
+        content="图谱关系证据",
+    )
+
+    result = fuse_evidence([("rag", rag), ("kg", kg)])
+
+    assert publication_identity(rag) == publication_identity(kg)
+    assert result.distinct_publication_count == 1
+
+
+def test_guideline_and_document_fields_share_the_same_id_namespace() -> None:
+    rag = Evidence(
+        source_type="document",
+        source_id="guide.pdf",
+        origin_guideline_id="Guide-2024",
+        content="指南原文证据",
+    )
+    kg = Evidence(
+        source_type="knowledge_graph",
+        source_id="node-42",
+        origin_document_id="guide 2024",
+        content="图谱关系证据",
+    )
+
+    assert publication_identity(rag) == publication_identity(kg)
+    assert fuse_evidence([("rag", rag), ("kg", kg)]).distinct_publication_count == 1
+
+
 def test_evidence_identity_distinguishes_chunks_from_the_same_document() -> None:
     page_three = _evidence(
         source_id="guide.pdf",
