@@ -244,7 +244,13 @@ class A2AService:
         """
         output = str(result.get("output") or "")
         output_type = str(result.get("output_type") or "")
-        confidence = float(result.get("confidence") or 0.0)
+        confidence = str(result.get("confidence") or "low")
+        confidence_breakdown_obj = result.get("confidence_breakdown")
+        confidence_breakdown = (
+            confidence_breakdown_obj
+            if isinstance(confidence_breakdown_obj, dict)
+            else {}
+        )
 
         tool_observations_obj = result.get("tool_observations")
         tool_observations = (
@@ -276,6 +282,7 @@ class A2AService:
                 "metadata": {
                     "output_type": output_type,
                     "confidence": confidence,
+                    "confidence_breakdown": confidence_breakdown,
                 },
             },
             {
@@ -449,7 +456,13 @@ class A2AService:
             artifacts = self._build_artifacts(parsed_result, progress_events)
             output = str(parsed_result.get("output") or "")
             output_type = str(parsed_result.get("output_type") or "")
-            confidence = float(parsed_result.get("confidence") or 0.0)
+            confidence = str(parsed_result.get("confidence") or "low")
+            confidence_breakdown_obj = parsed_result.get("confidence_breakdown")
+            confidence_breakdown = (
+                confidence_breakdown_obj
+                if isinstance(confidence_breakdown_obj, dict)
+                else {}
+            )
 
             async with self._lock:
                 task = self._tasks.get(task_id)
@@ -464,6 +477,7 @@ class A2AService:
                             "output": output,
                             "output_type": output_type,
                             "confidence": confidence,
+                            "confidence_breakdown": confidence_breakdown,
                             "trace_id": task_trace_id,
                             "duration_ms": telemetry["duration_ms"],
                         },
@@ -480,6 +494,7 @@ class A2AService:
                     "metadata": {
                         "output_type": output_type,
                         "confidence": confidence,
+                        "confidence_breakdown": confidence_breakdown,
                         "trace_id": task_trace_id,
                         "duration_ms": telemetry["duration_ms"],
                     },

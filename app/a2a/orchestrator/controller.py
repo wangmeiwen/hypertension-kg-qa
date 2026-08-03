@@ -23,6 +23,7 @@ from app.a2a.client.subagent_client import SubAgentClient
 from app.a2a.claim_support import verify_claim_evidence
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_bundle import build_evidence_bundle
+from app.a2a.evidence_confidence import assess_evidence_confidence
 from app.a2a.evidence_fusion import (
     EvidenceFusionResult,
     evidence_identity,
@@ -35,6 +36,8 @@ from app.a2a.models import (
     AnswerValidationResult,
     ClaimEvidenceAssessment,
     ClaimSupportStatus,
+    ConfidenceBreakdown,
+    ConfidenceLevel,
     Evidence,
     MustCoverItem,
     MustCoverProgressState,
@@ -59,6 +62,10 @@ from app.a2a.telemetry import (
 from app.core.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _low_confidence(reason: str) -> ConfidenceBreakdown:
+    return ConfidenceBreakdown(reasons=[reason])
 
 
 def _sanitize_text(value: Any, max_len: int = 800) -> str:
@@ -1934,10 +1941,12 @@ class UnifiedOrchestratorController:
         """构建超预算中止场景的统一返回结构。"""
         evidence_summary = self._build_evidence_summary(tool_observations)
         evidence_summary["answer_mode"] = "aborted_over_budget"
+        confidence = _low_confidence("answer_not_generated")
         return {
             "output": "这个问题超出软件能力范围，无法回答",
             "output_type": "orchestrator_aborted_over_budget",
-            "confidence": 0.0,
+            "confidence": confidence.level,
+            "confidence_breakdown": confidence.model_dump(),
             "tool_observations": tool_observations,
             "reflection_events": [],
             "processing_steps": processing_steps,
@@ -1968,10 +1977,12 @@ class UnifiedOrchestratorController:
         """构建主控动作无法通过结构化校验时的安全拒答。"""
         evidence_summary = self._build_evidence_summary(tool_observations)
         evidence_summary["answer_mode"] = "abstained_invalid_decision"
+        confidence = _low_confidence("answer_not_generated")
         return {
             "output": "当前无法可靠解析回答策略，请稍后重试。",
             "output_type": "orchestrator_abstained_invalid_decision",
-            "confidence": 0.0,
+            "confidence": confidence.level,
+            "confidence_breakdown": confidence.model_dump(),
             "tool_observations": tool_observations,
             "reflection_events": [],
             "processing_steps": [
@@ -2015,10 +2026,14 @@ class UnifiedOrchestratorController:
                 "evidence_sufficiency": readiness.get("evidence_sufficiency"),
             }
         )
+        confidence = assess_evidence_confidence(
+            sufficiency=readiness.get("evidence_sufficiency")
+        )
         return {
             "output": "当前证据不足或存在未解决冲突，无法给出可靠回答。",
             "output_type": "orchestrator_abstained_insufficient_evidence",
-            "confidence": 0.0,
+            "confidence": confidence.level,
+            "confidence_breakdown": confidence.model_dump(),
             "tool_observations": tool_observations,
             "reflection_events": [],
             "processing_steps": [
@@ -2105,13 +2120,15 @@ class UnifiedOrchestratorController:
         trace_id: str,
     ) -> dict[str, Any]:
         """构建紧急医疗信号的立即就医结果。"""
+        confidence = _low_confidence("medical_risk_redirect")
         result = {
             "output": (
                 "你描述的情况可能涉及医疗紧急风险。请立即联系当地急救服务或尽快前往急诊，"
                 "不要等待在线问答，也不要自行调整药物。"
             ),
             "output_type": "orchestrator_urgent_redirect",
-            "confidence": 0.0,
+            "confidence": confidence.level,
+            "confidence_breakdown": confidence.model_dump(),
             "tool_observations": [],
             "reflection_events": [],
             "processing_steps": ["医疗风险 Gate 命中紧急信号，已停止普通问答"],
@@ -2140,13 +2157,15 @@ class UnifiedOrchestratorController:
         trace_id: str,
     ) -> dict[str, Any]:
         """主体或当前状态不明确时给出保守安全分流。"""
+        confidence = _low_confidence("medical_risk_context_uncertain")
         result = {
             "output": (
                 "如果这些症状或危险血压是你本人或他人当前正在发生的情况，请立即联系当地急救服务或尽快前往急诊，"
                 "不要等待在线问答，也不要自行调整药物。若你只是在咨询医学知识，请补充说明这是知识问题、历史情况还是当前症状。"
             ),
             "output_type": "orchestrator_medical_risk_clarification",
-            "confidence": 0.0,
+            "confidence": confidence.level,
+            "confidence_breakdown": confidence.model_dump(),
             "tool_observations": [],
             "reflection_events": [],
             "processing_steps": ["医疗风险语境不明确，已执行保守安全分流"],
@@ -2222,7 +2241,8 @@ class UnifiedOrchestratorController:
         token_usage = empty_token_usage()
         retrieval_round = 0
         final_answer = ""
-        confidence = 0.2
+        confidence: ConfidenceLevel = "low"
+        confidence_breakdown = _low_confidence("answer_not_generated")
         no_progress_rounds = {item.item_id: 0 for item in question_plan.must_cover}
         no_progress_reasons: dict[str, str] = {}
         previous_progress_state = self._retrieval_progress_state(
@@ -2355,7 +2375,12 @@ class UnifiedOrchestratorController:
                         "终答未通过 must-cover、引用、适用条件或冲突后置校验"
                     )
                     break
-                confidence = 0.9 if tool_observations else 0.7
+                confidence_breakdown = assess_evidence_confidence(
+                    sufficiency=readiness.get("evidence_sufficiency"),
+                    answer_context=accepted_answer_context,
+                    answer_validation=answer_validation,
+                )
+                confidence = confidence_breakdown.level
                 stop_reason = "answer_ready"
                 break
 
@@ -2549,10 +2574,11 @@ class UnifiedOrchestratorController:
             if accepted_readiness is not None
             else None
         )
-        response_result = {
+        response_result: dict[str, Any] = {
             "output": final_answer,
             "output_type": "orchestrator_final",
             "confidence": confidence,
+            "confidence_breakdown": confidence_breakdown.model_dump(),
             "tool_observations": tool_observations,
             "reflection_events": [],
             "processing_steps": processing_steps,

@@ -108,6 +108,7 @@ def test_run_does_not_force_answer_without_evidence() -> None:
     assert decision_count == 2
     assert answer_generator_called is False
     assert result["output_type"] == "orchestrator_abstained_insufficient_evidence"
-    assert result["confidence"] == 0.0
+    assert result["confidence"] == "low"
+    assert result["confidence_breakdown"]["level"] == "low"
     assert result["evidence_summary"]["missing_points"] == ["direct_evidence"]
     assert result["telemetry"]["final_source"] == "insufficient_evidence_policy"

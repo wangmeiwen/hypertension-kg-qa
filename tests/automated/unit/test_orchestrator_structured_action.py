@@ -195,6 +195,7 @@ def test_run_safely_abstains_when_structured_action_is_invalid() -> None:
     )
 
     assert result["output_type"] == "orchestrator_abstained_invalid_decision"
-    assert result["confidence"] == 0.0
+    assert result["confidence"] == "low"
+    assert result["confidence_breakdown"]["level"] == "low"
     assert result["telemetry"]["final_source"] == "invalid_orchestrator_action"
     assert len(controller._client.calls) == 2

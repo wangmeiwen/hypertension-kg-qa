@@ -138,7 +138,8 @@ class AgentRunService:
                 "evidence_summary": result.get("evidence_summary", {}),
                 "question_plan": result.get("question_plan", {}),
                 "evidence_bundle": result.get("evidence_bundle", {}),
-                "confidence": result.get("confidence", 0.0),
+                "confidence": result.get("confidence", "low"),
+                "confidence_breakdown": result.get("confidence_breakdown", {}),
                 "trace_id": trace_id,
                 "run_path": "a2a",
                 "a2a_mode": a2a_mode,
@@ -295,7 +296,13 @@ class AgentRunService:
         message_meta_obj = message_obj.get("metadata")
         message_meta = message_meta_obj if isinstance(message_meta_obj, dict) else {}
         output_type = str(message_meta.get("output_type") or "").strip()
-        confidence = safe_float(message_meta.get("confidence"), default=0.0)
+        confidence = str(message_meta.get("confidence") or "low")
+        confidence_breakdown_obj = message_meta.get("confidence_breakdown")
+        confidence_breakdown = (
+            confidence_breakdown_obj
+            if isinstance(confidence_breakdown_obj, dict)
+            else {}
+        )
 
         tool_observations_obj = extract_a2a_artifact(snapshot, "tool_observations")
         tool_observations = (
@@ -323,6 +330,7 @@ class AgentRunService:
             "output": final_answer,
             "output_type": output_type,
             "confidence": confidence,
+            "confidence_breakdown": confidence_breakdown,
             "tool_observations": tool_observations,
             "reflection_events": progress_events,
             "processing_steps": processing_steps,

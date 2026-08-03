@@ -603,6 +603,8 @@ def test_orchestrator_history_action_is_reachable() -> None:
 
     assert result["output"] == "历史证据支持该回答。[guide.pdf]"
     assert result["answer_validation"]["valid"] is True
+    assert result["confidence"] == "medium"
+    assert result["confidence_breakdown"]["publication_diversity_rate"] == 0.5
     assert result["evidence_summary"]["evidence_count"] == 1
     assert gateway.calls == [
         (

@@ -15,6 +15,7 @@ ClaimSupportStatus = Literal[
     "uncertain",
 ]
 ConflictPolicy = Literal["block_unresolved", "allow_with_disclosure"]
+ConfidenceLevel = Literal["low", "medium", "high"]
 
 
 def _default_required_support_statuses() -> list[ClaimSupportStatus]:
@@ -373,6 +374,24 @@ class AnswerValidationResult(BaseModel):
     unresolved_conflict_ids: list[str] = Field(default_factory=list)
 
 
+class ConfidenceBreakdown(BaseModel):
+    """基于证据状态的可解释置信度分项。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    algorithm_version: Literal["evidence_confidence.v1"] = "evidence_confidence.v1"
+    level: ConfidenceLevel = "low"
+    must_cover_support_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    publication_diversity_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    applicability_match_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    citation_support_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    unresolved_conflict_count: int = Field(default=0, ge=0)
+    supported_must_cover_count: int = Field(default=0, ge=0)
+    total_must_cover_count: int = Field(default=0, ge=0)
+    distinct_publication_count: int = Field(default=0, ge=0)
+    reasons: list[str] = Field(default_factory=list)
+
+
 class EvidenceBundle(BaseModel):
     """主控终止时输出的统一证据包。"""
 
@@ -443,7 +462,10 @@ class FinalAnswer(BaseModel):
     """主代理最终结果。"""
 
     answer: str = Field(default="")
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: ConfidenceLevel = "low"
+    confidence_breakdown: ConfidenceBreakdown = Field(
+        default_factory=ConfidenceBreakdown
+    )
     evidence_summary: dict[str, Any] = Field(default_factory=dict)
     trace: list[str] = Field(default_factory=list)
 
