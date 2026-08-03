@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, Callable
@@ -21,18 +20,20 @@ from app.a2a.answer_context import (
     validate_answer_generation,
 )
 from app.a2a.client.subagent_client import SubAgentClient
-from app.a2a.claim_support import verify_claim_evidence
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_bundle import build_evidence_bundle
 from app.a2a.evidence_confidence import assess_evidence_confidence
 from app.a2a.evidence_fusion import (
     EvidenceFusionResult,
-    evidence_identity,
     evidence_identity_index,
     fuse_evidence,
 )
 from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
+from app.a2a.orchestrator.answer_pipeline import AnswerPipeline
+from app.a2a.orchestrator.evidence_pipeline import EvidencePipeline
+from app.a2a.orchestrator.planning_service import PlanningService
+from app.a2a.orchestrator.retrieval_scheduler import RetrievalScheduler
 from app.a2a.models import (
     AnswerGenerationContext,
     AnswerValidationResult,
@@ -46,7 +47,6 @@ from app.a2a.models import (
     OrchestratorAction,
     QuestionPlan,
     RetrievalTask,
-    SubAgentConstraints,
     SubAgentResult,
     SubTask,
 )
@@ -198,57 +198,7 @@ class UnifiedOrchestratorController:
         action: dict[str, Any], question_plan: QuestionPlan
     ) -> tuple[RetrievalTask | None, MustCoverItem | None]:
         """校验动作引用的计划任务、问题点、代理类型和依赖。"""
-        action_name = str(action.get("action") or "").strip()
-        if action_name == "final_answer":
-            return None, None
-
-        must_cover_id = _sanitize_text(action.get("must_cover_id"), 64)
-        must_cover_item = next(
-            (
-                item
-                for item in question_plan.must_cover
-                if item.item_id == must_cover_id
-            ),
-            None,
-        )
-        if must_cover_item is None:
-            raise ValueError("action_must_cover_not_found")
-        if must_cover_item.status == "missing":
-            raise ValueError("action_must_cover_is_missing")
-        task_id = _sanitize_text(action.get("task_id"), 64)
-        retrieval_task = next(
-            (item for item in question_plan.retrieval_tasks if item.task_id == task_id),
-            None,
-        )
-        if retrieval_task is None:
-            raise ValueError("action_task_not_found")
-        if retrieval_task.must_cover_id != must_cover_id:
-            raise ValueError("action_task_must_cover_mismatch")
-        if retrieval_task.status not in {"pending", "needs_supplement"}:
-            raise ValueError("action_task_not_actionable")
-        covered_ids = {
-            item.item_id
-            for item in question_plan.must_cover
-            if item.status == "covered"
-        }
-        completed_task_ids = {
-            item.task_id
-            for item in question_plan.retrieval_tasks
-            if item.status == "completed"
-        }
-        if any(
-            dependency not in covered_ids and dependency not in completed_task_ids
-            for dependency in retrieval_task.dependency_on
-        ):
-            raise ValueError("action_task_dependency_unmet")
-        if action_name == "call_history_read":
-            if must_cover_item.status != "pending":
-                raise ValueError("history_must_cover_not_actionable")
-            return retrieval_task, must_cover_item
-        expected_agent = "kg" if action_name == "call_kg" else "rag"
-        if retrieval_task.target_agent != expected_agent:
-            raise ValueError("action_task_agent_mismatch")
-        return retrieval_task, must_cover_item
+        return PlanningService().validate_action(action, question_plan)
 
     def _build_compression_system_prompt(self) -> str:
         """构建主控提示词压缩器系统提示词。"""
@@ -1052,36 +1002,10 @@ class UnifiedOrchestratorController:
         question_plan: QuestionPlan,
     ) -> SubTask:
         """根据动作中的精确计划 ID 构建子代理任务对象。"""
-        planned_task, planned_item = self._validate_plan_action(action, question_plan)
-        if planned_task is None or planned_item is None:
-            raise ValueError("retrieval_action_required")
-        subtask_id = question_plan.must_cover.index(planned_item) + 1
-        return SubTask(
-            task_id=planned_task.task_id,
-            must_cover_id=planned_item.item_id,
-            subtask_id=subtask_id,
-            target_agent=planned_task.target_agent,
-            question=planned_task.question,
-            intent="retrieve_for_answer",
-            entities=[],
-            dependency_on=list(planned_task.dependency_on),
-            evidence_type_required=(
-                list(planned_item.evidence_policy.required_retrievers)
-            ),
-            must_cover=[planned_item.question],
-            priority=50,
-            coverage_status=planned_item.status,
-            query_focus=planned_item.claim_type,
-            query_directions=list(planned_item.applicability_conditions),
-            constraints=SubAgentConstraints(
-                allow_extra_retrieval=False,
-                max_tool_calls=max_tool_calls,
-            ),
-            tool_name=(
-                "kg_auto" if planned_task.target_agent == "kg" else "rag_search"
-            ),
-            arguments={},
-            reason=_sanitize_text(action.get("reason"), 200),
+        return PlanningService().build_subtask(
+            action=action,
+            max_tool_calls=max_tool_calls,
+            question_plan=question_plan,
         )
 
     def _build_ready_subtasks(
@@ -1092,148 +1016,26 @@ class UnifiedOrchestratorController:
         question_plan: QuestionPlan,
     ) -> list[SubTask]:
         """扫描全计划并构建所有依赖已满足的可执行任务。"""
-        primary = self._build_subtask(
+        return self._retrieval_scheduler().build_ready_subtasks(
             action=action,
             max_tool_calls=max_tool_calls,
             question_plan=question_plan,
         )
-        covered_ids = {
-            item.item_id
-            for item in question_plan.must_cover
-            if item.status == "covered"
-        }
-        completed_task_ids = {
-            item.task_id
-            for item in question_plan.retrieval_tasks
-            if item.status == "completed"
-        }
-        actionable_item_ids = {
-            item.item_id
-            for item in question_plan.must_cover
-            if item.status == "pending"
-        }
-        ready_tasks = [
-            item
-            for item in question_plan.retrieval_tasks
-            if item.must_cover_id in actionable_item_ids
-            and item.status in {"pending", "needs_supplement"}
-            and all(
-                dependency in covered_ids or dependency in completed_task_ids
-                for dependency in item.dependency_on
-            )
-        ]
-        task_order = {
-            item.task_id: index
-            for index, item in enumerate(question_plan.retrieval_tasks)
-        }
-        ready_tasks.sort(
-            key=lambda item: (
-                item.task_id != primary.task_id,
-                item.retriever_requirement != "required",
-                task_order[item.task_id],
-            )
+
+    def _retrieval_scheduler(self) -> RetrievalScheduler:
+        """按控制器当前运行参数构建无状态检索调度器。"""
+        return RetrievalScheduler(
+            subagent_client=getattr(self, "_subagent_client", None),
+            planning_service=PlanningService(),
+            total_concurrency=self._DAG_TOTAL_CONCURRENCY,
+            agent_concurrency=self._DAG_AGENT_CONCURRENCY,
+            task_timeout_seconds=self._DAG_TASK_TIMEOUT_SECONDS,
+            max_attempts=self._DAG_MAX_ATTEMPTS,
         )
-        unique_tasks = list({item.task_id: item for item in ready_tasks}.values())
-        return [
-            self._build_subtask(
-                action={
-                    "action": f"call_{retrieval_task.target_agent}",
-                    "task_id": retrieval_task.task_id,
-                    "must_cover_id": retrieval_task.must_cover_id,
-                    "question": retrieval_task.question,
-                    "reason": action.get("reason"),
-                },
-                max_tool_calls=max_tool_calls,
-                question_plan=question_plan,
-            )
-            for retrieval_task in unique_tasks
-        ]
 
     async def _execute_subtasks(self, tasks: list[SubTask]) -> list[SubAgentResult]:
         """按总量和单 Agent 上限并发执行，并隔离超时与单任务失败。"""
-
-        unique_tasks = list({task.task_id: task for task in tasks}.values())
-        total_semaphore = asyncio.Semaphore(self._DAG_TOTAL_CONCURRENCY)
-        agent_semaphores = {
-            agent: asyncio.Semaphore(self._DAG_AGENT_CONCURRENCY)
-            for agent in ("kg", "rag")
-        }
-
-        def failure_result(
-            task: SubTask, *, reason: str, error: str, attempts: int
-        ) -> SubAgentResult:
-            return SubAgentResult(
-                task_id=task.task_id,
-                must_cover_id=task.must_cover_id,
-                subtask_id=task.subtask_id,
-                target_agent=task.target_agent,
-                question=task.question,
-                signal="none",
-                coverage={
-                    "coverage_status": "none",
-                    "coverage_ratio": 0.0,
-                    "evidence_count": 0,
-                },
-                missing_points=list(task.must_cover),
-                direct_support=False,
-                no_signal=True,
-                reason=reason,
-                telemetry={
-                    "error": error,
-                    "attempts": attempts,
-                    "task_timeout_seconds": self._DAG_TASK_TIMEOUT_SECONDS,
-                },
-            )
-
-        async def execute(task: SubTask) -> SubAgentResult:
-            last_error = ""
-            for attempt in range(1, self._DAG_MAX_ATTEMPTS + 1):
-                task.attempt_count = attempt
-                try:
-                    async with agent_semaphores[task.target_agent], total_semaphore:
-                        result = await asyncio.wait_for(
-                            self._subagent_client.send_task(task),
-                            timeout=self._DAG_TASK_TIMEOUT_SECONDS,
-                        )
-                    result.task_id = task.task_id
-                    result.must_cover_id = task.must_cover_id
-                    result.subtask_id = task.subtask_id
-                    result.target_agent = task.target_agent
-                    result.telemetry = {
-                        **result.telemetry,
-                        "attempts": attempt,
-                        "task_timeout_seconds": self._DAG_TASK_TIMEOUT_SECONDS,
-                    }
-                    return result
-                except TimeoutError:
-                    last_error = "task_timeout"
-                    logger.warning(
-                        "子代理任务超时: task_id=%s attempt=%s",
-                        task.task_id,
-                        attempt,
-                    )
-                except Exception as exc:
-                    last_error = _sanitize_text(exc, 240)
-                    logger.exception(
-                        "子代理任务执行失败: task_id=%s attempt=%s",
-                        task.task_id,
-                        attempt,
-                    )
-                    if attempt == self._DAG_MAX_ATTEMPTS:
-                        return failure_result(
-                            task,
-                            reason=f"subagent_error:{type(exc).__name__}",
-                            error=last_error,
-                            attempts=attempt,
-                        )
-            return failure_result(
-                task,
-                reason="subagent_timeout",
-                error=last_error,
-                attempts=self._DAG_MAX_ATTEMPTS,
-            )
-
-        return list(await asyncio.gather(*(execute(task) for task in unique_tasks)))
+        return await self._retrieval_scheduler().execute_subtasks(tasks)
 
     @staticmethod
     def _record_claim_assessments(
@@ -1285,87 +1087,22 @@ class UnifiedOrchestratorController:
         existing_rows: Any,
     ) -> tuple[list[ClaimEvidenceAssessment], dict[str, int]]:
         """补齐当前任务尚未生成的 claim-evidence 支持判定。"""
-        retrieval_task = next(
-            (
-                item
-                for item in question_plan.retrieval_tasks
-                if item.task_id == task_id and item.must_cover_id == must_cover_id
-            ),
-            None,
-        )
-        must_cover_item = next(
-            (
-                item
-                for item in question_plan.must_cover
-                if item.item_id == must_cover_id
-            ),
-            None,
-        )
-        if retrieval_task is None or must_cover_item is None:
-            return [], empty_token_usage()
-        evidence: list[Evidence] = []
-        for row in _coerce_list(evidence_rows):
-            try:
-                evidence.append(
-                    row if isinstance(row, Evidence) else Evidence.model_validate(row)
-                )
-            except (ValidationError, ValueError, TypeError):
-                continue
-        allowed_ids = {evidence_identity(item) for item in evidence}
-        existing: list[ClaimEvidenceAssessment] = []
-        reusable_versions = {
-            "claim_support.deterministic.v1",
-            "claim_support.semantic.v1",
-        }
-        for row in _coerce_list(existing_rows):
-            try:
-                assessment = ClaimEvidenceAssessment.model_validate(row)
-            except (ValidationError, ValueError, TypeError):
-                continue
-            evidence_item = next(
-                (
-                    item
-                    for item in evidence
-                    if evidence_identity(item) == assessment.evidence_id
-                ),
-                None,
-            )
-            grounded_excerpt = assessment.support_status in {
-                "irrelevant",
-                "uncertain",
-            } or bool(
-                evidence_item
-                and assessment.support_excerpt
-                and assessment.support_excerpt in evidence_item.content
-            )
-            if (
-                assessment.task_id == task_id
-                and assessment.must_cover_id == must_cover_id
-                and assessment.evidence_id in allowed_ids
-                and assessment.verifier_version in reusable_versions
-                and grounded_excerpt
-            ):
-                existing.append(assessment)
-        assessed_ids = {item.evidence_id for item in existing}
-        missing_evidence = [
-            item for item in evidence if evidence_identity(item) not in assessed_ids
-        ]
-        if not missing_evidence:
-            return existing, empty_token_usage()
         llm_client = getattr(self, "_client", None)
         timeout = (
             float(self._conf.LLM_REQUEST_TIMEOUT_SECONDS)
             if llm_client is not None
             else 0.0
         )
-        verified, usage = await verify_claim_evidence(
-            task=retrieval_task,
-            must_cover=must_cover_item,
-            evidence=missing_evidence,
+        return await EvidencePipeline(
             llm_client=llm_client,
             timeout=timeout,
+        ).verify_task_evidence(
+            question_plan=question_plan,
+            task_id=task_id,
+            must_cover_id=must_cover_id,
+            evidence_rows=evidence_rows,
+            existing_rows=existing_rows,
         )
-        return [*existing, *verified], usage
 
     @staticmethod
     def _refresh_must_cover_support(
@@ -1860,18 +1597,7 @@ class UnifiedOrchestratorController:
 
     def _build_final_answer_system_prompt(self) -> str:
         """构建最终答案生成阶段的系统提示词。"""
-        return (
-            "你是高血压问答系统的最终回答生成器。\n"
-            "请严格依据 AnswerGenerationContext 输出自然、完整、可直接展示给用户的最终答案。\n"
-            "要求：\n"
-            "1. 直接回答问题，不要输出 JSON，不要解释推理过程。\n"
-            "2. 按 must_cover 数组顺序逐项回答，不得遗漏或合并问题点。\n"
-            "3. 每项结论只能使用该项 supporting_evidence，并在同一句末尾附带对应 citation。\n"
-            "4. 明确写出 evidence_policy.required_applicability_fields 中的适用条件。\n"
-            "5. 数值、比较符、单位和测量场景必须与所引 Evidence 完全一致。\n"
-            "6. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
-            "7. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
-        )
+        return AnswerPipeline.system_prompt()
 
     def _build_final_answer_user_prompt(
         self,
@@ -1880,12 +1606,9 @@ class UnifiedOrchestratorController:
         answer_context: AnswerGenerationContext,
     ) -> str:
         """构建最终答案生成阶段的用户提示词。"""
-        return (
-            f"用户问题：{question}\n\n"
-            "AnswerGenerationContext：\n"
-            + answer_context.model_dump_json(indent=2)
-            + "\n\n"
-            + "请输出最终回答。"
+        return AnswerPipeline.user_prompt(
+            question=question,
+            answer_context=answer_context,
         )
 
     async def _stream_final_answer(
@@ -1899,74 +1622,17 @@ class UnifiedOrchestratorController:
         progress_callback: Callable[[dict[str, Any]], None] | None,
     ) -> tuple[str, dict[str, int]]:
         """流式生成最终答案，并通过回调推送增量正文。"""
-        messages = [
-            {"role": "system", "content": self._build_final_answer_system_prompt()},
-            {
-                "role": "user",
-                "content": self._build_final_answer_user_prompt(
-                    question=question,
-                    answer_context=answer_context,
-                ),
-            },
-        ]
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "event": "answer_stream_start",
-                    "detail": "答案生成中",
-                    "tool_name": "answer_stream",
-                }
-            )
-
-        chunks: list[str] = []
-        tokens = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        if image_data or file_id:
-            event_iter = self._client.stream_chat_with_vision_async(
-                messages=messages,
-                image_data=image_data,
-                file_id=file_id,
-                temperature=0.1,
-                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
-                actor_role="controller",
-                actor_name="orchestrator_final_answer",
-            )
-        else:
-            event_iter = self._client.stream_chat_with_tokens_async(
-                messages=messages,
-                temperature=0.1,
-                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
-                actor_role="controller",
-                actor_name="orchestrator_final_answer",
-            )
-
-        async for event in event_iter:
-            if str(event.type or "") == "delta":
-                delta = str(event.delta or "")
-                if not delta:
-                    continue
-                chunks.append(delta)
-                if progress_callback is not None:
-                    progress_callback(
-                        {
-                            "event": "answer_delta",
-                            "detail": delta,
-                            "tool_name": "answer_stream",
-                            "metadata": {"delta": delta},
-                        }
-                    )
-                continue
-
-            if str(event.type or "") == "done":
-                tokens = {
-                    "prompt_tokens": int(getattr(event, "prompt_tokens", 0) or 0),
-                    "completion_tokens": int(
-                        getattr(event, "completion_tokens", 0) or 0
-                    ),
-                    "total_tokens": int(getattr(event, "total_tokens", 0) or 0),
-                }
-
-        answer = "".join(chunks).strip()
-        return answer, tokens
+        _ = tool_observations
+        return await AnswerPipeline(
+            llm_client=self._client,
+            timeout=float(self._conf.LLM_REQUEST_TIMEOUT_SECONDS),
+        ).stream(
+            question=question,
+            answer_context=answer_context,
+            image_data=image_data,
+            file_id=file_id,
+            progress_callback=progress_callback,
+        )
 
     def _build_over_budget_result(
         self,
