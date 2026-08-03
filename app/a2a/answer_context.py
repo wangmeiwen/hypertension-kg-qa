@@ -50,6 +50,12 @@ _MEDICAL_ASSERTION_PATTERN = re.compile(
     r"导致|引起|造成|诱发|促进|增加|降低|升高|减少|风险|目标|阈值|"
     r"诊断|治疗|用药|停药|监测|死亡|并发症|\d)"
 )
+_MEDICAL_DOMAIN_PATTERN = re.compile(
+    r"(?:血压|患者|疾病|症状|药物|依从性|预后|心血管|肾脏?|妊娠|孕妇|疗效)"
+)
+_ASSERTIVE_PREDICATE_PATTERN = re.compile(
+    r"(?:是|为|属于|包括|具有|相关|有益|有害|有效|无效|适用|获益|改善|影响|帮助)"
+)
 
 
 def _evidence_relation_direction(evidence: Evidence) -> tuple[str, str, str]:
@@ -212,7 +218,10 @@ def _uncited_medical_claims(answer: str, context: AnswerGenerationContext) -> li
         normalized = text.strip(" \t-*#")
         if not normalized or normalized.endswith(("：", ":")):
             continue
-        if _MEDICAL_ASSERTION_PATTERN.search(normalized):
+        if _MEDICAL_ASSERTION_PATTERN.search(normalized) or (
+            _MEDICAL_DOMAIN_PATTERN.search(normalized)
+            and _ASSERTIVE_PREDICATE_PATTERN.search(normalized)
+        ):
             uncited.append(normalized)
     return list(dict.fromkeys(uncited))
 
