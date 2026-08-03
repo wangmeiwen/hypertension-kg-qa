@@ -10,11 +10,18 @@ from app.a2a.models import Evidence
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 
 
-def _evidence(source_id: str, content: str, page: int = 1) -> Evidence:
+def _evidence(
+    source_id: str,
+    content: str,
+    page: int = 1,
+    *,
+    guideline_id: str = "",
+) -> Evidence:
     return Evidence(
         source_type="document",
         source_id=source_id,
         origin_document_id=source_id,
+        origin_guideline_id=guideline_id,
         page=page,
         content=content,
     )
@@ -139,6 +146,90 @@ def test_same_source_recommendation_difference_is_not_cross_source_conflict() ->
     ]
 
     assert detect_evidence_conflicts(rows) == []
+
+
+def test_detects_treatment_priority_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "老年人 ACEI 为一线治疗。"),
+        _evidence("guide-b", "老年人 ACEI 为二线治疗。"),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    priority_conflict = next(
+        item for item in conflicts if item.conflict_type == "treatment_priority"
+    )
+    assert priority_conflict.values == ["first_line", "second_line"]
+
+
+def test_detects_evidence_grade_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "ACEI 治疗证据等级 A。"),
+        _evidence("guide-b", "ACEI 治疗证据等级 C。"),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    grade_conflict = next(
+        item for item in conflicts if item.conflict_type == "evidence_grade"
+    )
+    assert grade_conflict.values == ["A", "C"]
+
+
+def test_treatment_priority_for_different_populations_does_not_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "老年人 ACEI 为一线治疗。"),
+        _evidence("guide-b", "孕妇 ACEI 为二线治疗。"),
+    ]
+
+    assert detect_evidence_conflicts(rows) == []
+
+
+def test_detects_changed_conclusion_across_guideline_versions() -> None:
+    rows = [
+        _evidence(
+            "guide-2020",
+            "推荐使用 ACEI 治疗。",
+            guideline_id="china-hypertension-2020",
+        ),
+        _evidence(
+            "guide-2024",
+            "不推荐使用 ACEI 治疗。",
+            guideline_id="china-hypertension-2024",
+        ),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    version_conflict = next(
+        item for item in conflicts if item.conflict_type == "guideline_version"
+    )
+    assert {frame.guideline_family for frame in version_conflict.claim_frames} == {
+        "chinahypertension"
+    }
+    assert {frame.guideline_version for frame in version_conflict.claim_frames} == {
+        "2020",
+        "2024",
+    }
+
+
+def test_same_conclusion_across_guideline_versions_is_not_a_version_conflict() -> None:
+    rows = [
+        _evidence(
+            "guide-2020",
+            "推荐使用 ACEI 治疗。",
+            guideline_id="china-hypertension-2020",
+        ),
+        _evidence(
+            "guide-2024",
+            "推荐使用 ACEI 治疗。",
+            guideline_id="china-hypertension-2024",
+        ),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    assert all(item.conflict_type != "guideline_version" for item in conflicts)
 
 
 def test_different_values_from_same_canonical_source_are_not_cross_source_conflict() -> (

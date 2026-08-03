@@ -286,6 +286,10 @@ class EvidenceClaimFrame(BaseModel):
     polarity: Literal[
         "unknown", "recommend", "consider", "discourage", "contraindicated"
     ] = "unknown"
+    treatment_priority: Literal["", "first_line", "second_line", "third_line"] = ""
+    evidence_grade: str = ""
+    guideline_family: str = ""
+    guideline_version: str = ""
 
 
 class EvidenceConflict(BaseModel):
@@ -301,6 +305,9 @@ class EvidenceConflict(BaseModel):
         "measurement_context",
         "recommendation",
         "contraindication",
+        "treatment_priority",
+        "evidence_grade",
+        "guideline_version",
     ] = "numeric"
     claim_key: str
     values: list[str] = Field(default_factory=list)
