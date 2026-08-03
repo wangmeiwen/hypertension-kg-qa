@@ -87,6 +87,7 @@ class UnifiedOrchestratorController:
 
     _PROMPT_TOKEN_LIMIT = 10000
     _MAX_PROMPT_COMPRESSIONS = 2
+    _MAX_NO_PROGRESS_ROUNDS = 2
 
     def __init__(
         self,
@@ -1082,6 +1083,92 @@ class UnifiedOrchestratorController:
         else:
             must_cover_item.status = "pending"
 
+    @staticmethod
+    def _update_question_plan_from_history(
+        question_plan: QuestionPlan,
+        action: dict[str, Any],
+        history_result: dict[str, Any],
+    ) -> None:
+        """在历史 Evidence 能明确对应问题点时更新计划覆盖。"""
+        payload = _coerce_dict(history_result.get("result"))
+        if not bool(payload.get("matched")) or not _coerce_list(
+            payload.get("evidence")
+        ):
+            return
+        pending_items = [
+            item for item in question_plan.must_cover if item.status == "pending"
+        ]
+        requested_question = _sanitize_text(action.get("user_question"), 300)
+        matched_item = next(
+            (
+                item
+                for item in pending_items
+                if requested_question
+                and (
+                    requested_question in item.question
+                    or item.question in requested_question
+                )
+            ),
+            None,
+        )
+        if matched_item is None and len(pending_items) == 1:
+            matched_item = pending_items[0]
+        if matched_item is None:
+            return
+        matched_item.status = "covered"
+        for retrieval_task in question_plan.retrieval_tasks:
+            if retrieval_task.must_cover_id == matched_item.item_id:
+                retrieval_task.status = "completed"
+
+    @staticmethod
+    def _question_plan_coverage(question_plan: QuestionPlan) -> dict[str, Any]:
+        """计算 must-cover 覆盖率和未覆盖问题点。"""
+        total = len(question_plan.must_cover)
+        covered = [
+            item for item in question_plan.must_cover if item.status == "covered"
+        ]
+        missing = [
+            item for item in question_plan.must_cover if item.status == "missing"
+        ]
+        pending = [
+            item for item in question_plan.must_cover if item.status == "pending"
+        ]
+        return {
+            "total": total,
+            "covered": len(covered),
+            "missing": len(missing),
+            "pending": len(pending),
+            "coverage_ratio": round(len(covered) / total, 4) if total else 0.0,
+            "complete": bool(total) and len(covered) == total,
+            "uncovered_items": [
+                {"item_id": item.item_id, "question": item.question}
+                for item in [*pending, *missing]
+            ],
+        }
+
+    def _retrieval_progress_state(
+        self,
+        tool_observations: list[dict[str, Any]],
+        question_plan: QuestionPlan,
+    ) -> tuple[int, int]:
+        """生成用于判断检索是否取得语义进展的状态。"""
+        evidence_count = len(self._fuse_tool_evidence(tool_observations).evidence)
+        covered_count = int(self._question_plan_coverage(question_plan)["covered"])
+        return evidence_count, covered_count
+
+    def _advance_retrieval_progress(
+        self,
+        *,
+        tool_observations: list[dict[str, Any]],
+        question_plan: QuestionPlan,
+        previous_state: tuple[int, int],
+        no_progress_rounds: int,
+    ) -> tuple[tuple[int, int], int]:
+        """更新连续无进展轮数。"""
+        current_state = self._retrieval_progress_state(tool_observations, question_plan)
+        next_rounds = no_progress_rounds + 1 if current_state == previous_state else 0
+        return current_state, next_rounds
+
     def _build_evidence_summary(
         self, tool_observations: list[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -1138,6 +1225,7 @@ class UnifiedOrchestratorController:
         self,
         tool_observations: list[dict[str, Any]],
         medical_risk: MedicalRiskAssessment | None = None,
+        question_plan: QuestionPlan | None = None,
     ) -> dict[str, Any]:
         """根据现有直接证据和冲突标记判断是否允许生成答案。"""
         missing_points: list[str] = []
@@ -1163,6 +1251,18 @@ class UnifiedOrchestratorController:
             and fusion.distinct_source_count < assessment.minimum_distinct_sources
         ):
             missing_points.append("independent_sources")
+        plan_coverage = (
+            self._question_plan_coverage(question_plan)
+            if question_plan is not None
+            else None
+        )
+        if (
+            evidence
+            and plan_coverage is not None
+            and not bool(plan_coverage["complete"])
+        ):
+            for item in plan_coverage["uncovered_items"]:
+                missing_points.append(f"must_cover:{item['item_id']}")
         return {
             "ready": bool(evidence) and not missing_points,
             "evidence_count": len(evidence),
@@ -1170,6 +1270,7 @@ class UnifiedOrchestratorController:
             "distinct_source_count": fusion.distinct_source_count,
             "missing_points": missing_points,
             "unresolved_conflicts": risk_flags,
+            "plan_coverage": plan_coverage,
         }
 
     def _build_budget_telemetry(
@@ -1417,6 +1518,7 @@ class UnifiedOrchestratorController:
                 "answer_mode": "abstained_insufficient_evidence",
                 "missing_points": readiness.get("missing_points") or [],
                 "unresolved_conflicts": readiness.get("unresolved_conflicts") or [],
+                "plan_coverage": readiness.get("plan_coverage"),
             }
         )
         return {
@@ -1465,6 +1567,9 @@ class UnifiedOrchestratorController:
         telemetry["question_plan"] = {
             "plan_id": question_plan.plan_id,
             "must_cover_count": len(question_plan.must_cover),
+            "coverage": UnifiedOrchestratorController._question_plan_coverage(
+                question_plan
+            ),
             **status_counts,
         }
         result["telemetry"] = telemetry
@@ -1555,6 +1660,11 @@ class UnifiedOrchestratorController:
         retrieval_round = 0
         final_answer = ""
         confidence = 0.2
+        no_progress_rounds = 0
+        previous_progress_state = self._retrieval_progress_state(
+            tool_observations, question_plan
+        )
+        stop_reason = ""
         compression_state: dict[str, Any] = {
             "compression_count": 0,
             "prompt_budget_limit": self._PROMPT_TOKEN_LIMIT,
@@ -1634,7 +1744,7 @@ class UnifiedOrchestratorController:
 
             if action_name == "final_answer":
                 readiness = self._assess_answer_readiness(
-                    tool_observations, medical_risk
+                    tool_observations, medical_risk, question_plan
                 )
                 if not bool(readiness.get("ready")):
                     processing_steps.append(
@@ -1653,6 +1763,7 @@ class UnifiedOrchestratorController:
                 )
                 merge_token_usage(token_usage, answer_tokens)
                 confidence = 0.9 if tool_observations else 0.7
+                stop_reason = "answer_ready"
                 break
 
             if action_name == "call_history_read":
@@ -1686,6 +1797,23 @@ class UnifiedOrchestratorController:
                 tool_observations.append(
                     self._build_history_observation(action, history_result)
                 )
+                self._update_question_plan_from_history(
+                    question_plan, action, history_result
+                )
+                previous_progress_state, no_progress_rounds = (
+                    self._advance_retrieval_progress(
+                        tool_observations=tool_observations,
+                        question_plan=question_plan,
+                        previous_state=previous_progress_state,
+                        no_progress_rounds=no_progress_rounds,
+                    )
+                )
+                if no_progress_rounds >= self._MAX_NO_PROGRESS_ROUNDS:
+                    stop_reason = "no_retrieval_progress"
+                    processing_steps.append(
+                        "连续检索未增加有效 Evidence 或 must-cover 覆盖，提前停止"
+                    )
+                    break
                 continue
 
             if action_name in {"call_kg", "call_rag"}:
@@ -1720,14 +1848,33 @@ class UnifiedOrchestratorController:
                     tool_observations.append(
                         self._build_subagent_observation(result, result_action)
                     )
+                previous_progress_state, no_progress_rounds = (
+                    self._advance_retrieval_progress(
+                        tool_observations=tool_observations,
+                        question_plan=question_plan,
+                        previous_state=previous_progress_state,
+                        no_progress_rounds=no_progress_rounds,
+                    )
+                )
+                if no_progress_rounds >= self._MAX_NO_PROGRESS_ROUNDS:
+                    stop_reason = "no_retrieval_progress"
+                    processing_steps.append(
+                        "连续检索未增加有效 Evidence 或 must-cover 覆盖，提前停止"
+                    )
+                    break
                 continue
 
             processing_steps.append("主控返回了未知动作，停止生成答案")
+            stop_reason = "unknown_action"
             break
 
         if not final_answer:
-            readiness = self._assess_answer_readiness(tool_observations, medical_risk)
-            return self._attach_question_plan(
+            readiness = self._assess_answer_readiness(
+                tool_observations, medical_risk, question_plan
+            )
+            if not stop_reason:
+                stop_reason = "max_turns_exhausted"
+            insufficient_result = self._attach_question_plan(
                 self._attach_medical_risk_telemetry(
                     self._build_insufficient_evidence_result(
                         tool_observations=tool_observations,
@@ -1743,6 +1890,11 @@ class UnifiedOrchestratorController:
                 ),
                 question_plan,
             )
+            result_telemetry = _coerce_dict(insufficient_result.get("telemetry"))
+            result_telemetry["stop_reason"] = stop_reason
+            result_telemetry["no_progress_rounds"] = no_progress_rounds
+            insufficient_result["telemetry"] = result_telemetry
+            return insufficient_result
 
         evidence_summary = self._build_evidence_summary(tool_observations)
         response_result = {
@@ -1759,6 +1911,8 @@ class UnifiedOrchestratorController:
                 "trace_id": safe_trace_id,
                 **token_usage,
                 "final_source": "controller",
+                "stop_reason": stop_reason,
+                "no_progress_rounds": no_progress_rounds,
                 **self._build_budget_telemetry(compression_state),
             },
             "evidence_summary": evidence_summary,
