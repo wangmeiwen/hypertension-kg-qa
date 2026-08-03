@@ -11,10 +11,35 @@ from app.a2a.models import (
     SubAgentConstraints,
     SubTask,
 )
+from app.a2a.numeric_claims import extract_numeric_requirements
 
 
 def _clean(value: Any, limit: int) -> str:
     return str(value or "").replace("\n", " ").strip()[:limit]
+
+
+def _retrieval_query_terms(item: MustCoverItem) -> list[str]:
+    terms = list(item.applicability_conditions)
+    for requirement in extract_numeric_requirements(item.question):
+        if "home" in requirement.measurement_context:
+            terms.extend(["家庭血压", "HBPM"])
+        if "ambulatory" in requirement.measurement_context:
+            terms.extend(["动态血压", "ABPM"])
+        if (
+            requirement.subject == "blood_pressure_monitoring"
+            and requirement.role == "temporal"
+        ):
+            terms.extend(["连续测量", "天数"])
+        if (
+            requirement.subject == "blood_pressure_monitoring"
+            and requirement.role == "frequency"
+        ):
+            terms.extend(["早晚", "测量次数", "读数"])
+        if requirement.predicate == "diagnostic_threshold":
+            terms.append("诊断标准")
+        if requirement.predicate == "target":
+            terms.append("降压目标")
+    return list(dict.fromkeys(term for term in terms if term))
 
 
 class PlanningService:
@@ -99,6 +124,7 @@ class PlanningService:
             priority=50,
             coverage_status=planned_item.status,
             query_focus=planned_item.claim_type,
+            query_terms=_retrieval_query_terms(planned_item),
             query_directions=list(planned_item.applicability_conditions),
             constraints=SubAgentConstraints(
                 allow_extra_retrieval=False,

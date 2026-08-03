@@ -38,14 +38,8 @@ def _compose_query(
 ) -> str:
     """组合最终 RAG 查询文本，支持问句、扩展词和细化词。"""
     base = str(question or "").strip()
-    if not base and query_terms:
-        base = " ".join(query_terms)
-    if refine_terms:
-        suffix = " ".join(refine_terms)
-        if base:
-            return f"{base} {suffix}".strip()
-        return suffix
-    return base
+    parts = [base, *query_terms, *refine_terms]
+    return " ".join(dict.fromkeys(part for part in parts if part)).strip()
 
 
 def build_rag_payload(

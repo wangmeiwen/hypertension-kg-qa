@@ -11,6 +11,7 @@ from app.a2a.orchestrator.evidence_pipeline import EvidencePipeline
 from app.a2a.orchestrator.planning_service import PlanningService
 from app.a2a.orchestrator.retrieval_scheduler import RetrievalScheduler
 from app.a2a.question_planner import build_question_plan
+from app.a2a.subagents.rag.query_builder import build_rag_payload
 
 
 def test_planning_service_binds_action_to_exact_plan_task() -> None:
@@ -30,6 +31,38 @@ def test_planning_service_binds_action_to_exact_plan_task() -> None:
     assert subtask.task_id == planned.task_id
     assert subtask.must_cover_id == planned.must_cover_id
     assert subtask.question == plan.must_cover[0].question
+
+
+def test_planning_service_enriches_home_monitoring_retrieval_query() -> None:
+    plan = build_question_plan(
+        "家庭测血压一般连续几天、每天测几次？", MedicalRiskAssessment()
+    )
+    planned = next(task for task in plan.retrieval_tasks if task.status == "pending")
+
+    subtask = PlanningService().build_subtask(
+        action={
+            "action": f"call_{planned.target_agent}",
+            "task_id": planned.task_id,
+            "must_cover_id": planned.must_cover_id,
+        },
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+    payload = build_rag_payload(subtask.question, query_terms=subtask.query_terms)
+
+    assert subtask.query_terms == [
+        "家庭血压",
+        "HBPM",
+        "连续测量",
+        "天数",
+        "早晚",
+        "测量次数",
+        "读数",
+    ]
+    assert payload["query"] == (
+        "家庭测血压一般连续几天、每天测几次 家庭血压 HBPM 连续测量 "
+        "天数 早晚 测量次数 读数"
+    )
 
 
 def test_retrieval_scheduler_selects_ready_primary_wave_without_execution() -> None:
