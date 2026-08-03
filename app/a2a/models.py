@@ -217,7 +217,7 @@ class SubTask(BaseModel):
     question: str = Field(default="")
     intent: str = Field(default="")
     entities: list[str] = Field(default_factory=list)
-    dependency_on: list[int] = Field(default_factory=list)
+    dependency_on: list[str] = Field(default_factory=list)
     evidence_type_required: list[str] = Field(default_factory=list)
     must_cover: list[str] = Field(default_factory=list)
     priority: int = Field(default=50)

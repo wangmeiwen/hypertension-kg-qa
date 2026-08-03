@@ -125,6 +125,10 @@ class UnifiedOrchestratorController:
     _PROMPT_TOKEN_LIMIT = 10000
     _MAX_PROMPT_COMPRESSIONS = 2
     _MAX_NO_PROGRESS_ROUNDS = 2
+    _DAG_TOTAL_CONCURRENCY = 4
+    _DAG_AGENT_CONCURRENCY = 2
+    _DAG_TASK_TIMEOUT_SECONDS = 120.0
+    _DAG_MAX_ATTEMPTS = 2
 
     def __init__(
         self,
@@ -161,7 +165,8 @@ class UnifiedOrchestratorController:
             "如果历史检索里有高度相关的问题，先使用 call_history_read 读取 Evidence，再决定回答或补检索。\n"
             "必须遵循结构化问题计划，优先处理 status=pending 的 must-cover，且子问题不得偏离其要求。\n"
             "call_kg 和 call_rag 必须从问题计划中选择一个状态为 pending 或 needs_supplement 的 retrieval_task，"
-            "原样返回其 task_id 和 must_cover_id；call_history_read 也必须返回要补充的 task_id 和 must_cover_id。\n"
+            "原样返回其 task_id 和 must_cover_id；该动作会触发全计划同一 ready 层的并行检索；"
+            "call_history_read 也必须返回要补充的 task_id 和 must_cover_id。\n"
             "主控只负责拆分问题和选择子agent，不允许指定 MCP 工具名、Cypher、检索 payload 或底层工具参数。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
@@ -217,8 +222,14 @@ class UnifiedOrchestratorController:
             for item in question_plan.must_cover
             if item.status == "covered"
         }
+        completed_task_ids = {
+            item.task_id
+            for item in question_plan.retrieval_tasks
+            if item.status == "completed"
+        }
         if any(
-            dependency not in covered_ids for dependency in retrieval_task.dependency_on
+            dependency not in covered_ids and dependency not in completed_task_ids
+            for dependency in retrieval_task.dependency_on
         ):
             raise ValueError("action_task_dependency_unmet")
         if action_name == "call_history_read":
@@ -1032,15 +1043,6 @@ class UnifiedOrchestratorController:
         if planned_task is None or planned_item is None:
             raise ValueError("retrieval_action_required")
         subtask_id = question_plan.must_cover.index(planned_item) + 1
-        item_indexes = {
-            item.item_id: index
-            for index, item in enumerate(question_plan.must_cover, start=1)
-        }
-        dependencies = [
-            item_indexes[item_id]
-            for item_id in planned_item.dependency_on
-            if item_id in item_indexes
-        ]
         return SubTask(
             task_id=planned_task.task_id,
             must_cover_id=planned_item.item_id,
@@ -1049,7 +1051,7 @@ class UnifiedOrchestratorController:
             question=planned_task.question,
             intent="retrieve_for_answer",
             entities=[],
-            dependency_on=dependencies,
+            dependency_on=list(planned_task.dependency_on),
             evidence_type_required=(
                 list(planned_item.evidence_policy.required_retrievers)
             ),
@@ -1076,37 +1078,49 @@ class UnifiedOrchestratorController:
         max_tool_calls: int,
         question_plan: QuestionPlan,
     ) -> list[SubTask]:
-        """构建同一 must-cover 下可并行执行的无依赖任务。"""
+        """扫描全计划并构建所有依赖已满足的可执行任务。"""
         primary = self._build_subtask(
             action=action,
             max_tool_calls=max_tool_calls,
             question_plan=question_plan,
-        )
-        must_cover_item = next(
-            item
-            for item in question_plan.must_cover
-            if item.item_id == primary.must_cover_id
         )
         covered_ids = {
             item.item_id
             for item in question_plan.must_cover
             if item.status == "covered"
         }
+        completed_task_ids = {
+            item.task_id
+            for item in question_plan.retrieval_tasks
+            if item.status == "completed"
+        }
+        actionable_item_ids = {
+            item.item_id
+            for item in question_plan.must_cover
+            if item.status == "pending"
+        }
         ready_tasks = [
             item
             for item in question_plan.retrieval_tasks
-            if item.must_cover_id == must_cover_item.item_id
+            if item.must_cover_id in actionable_item_ids
             and item.status in {"pending", "needs_supplement"}
-            and all(dependency in covered_ids for dependency in item.dependency_on)
+            and all(
+                dependency in covered_ids or dependency in completed_task_ids
+                for dependency in item.dependency_on
+            )
         ]
-        required_retrievers = set(must_cover_item.evidence_policy.required_retrievers)
-        if primary.target_agent not in required_retrievers:
-            return [primary]
-        ready_tasks = [
-            item for item in ready_tasks if item.target_agent in required_retrievers
-        ]
-        primary_target = primary.target_agent
-        ready_tasks.sort(key=lambda item: item.target_agent != primary_target)
+        task_order = {
+            item.task_id: index
+            for index, item in enumerate(question_plan.retrieval_tasks)
+        }
+        ready_tasks.sort(
+            key=lambda item: (
+                item.task_id != primary.task_id,
+                item.retriever_requirement != "required",
+                task_order[item.task_id],
+            )
+        )
+        unique_tasks = list({item.task_id: item for item in ready_tasks}.values())
         return [
             self._build_subtask(
                 action={
@@ -1119,37 +1133,94 @@ class UnifiedOrchestratorController:
                 max_tool_calls=max_tool_calls,
                 question_plan=question_plan,
             )
-            for retrieval_task in ready_tasks
-        ] or [primary]
+            for retrieval_task in unique_tasks
+        ]
 
     async def _execute_subtasks(self, tasks: list[SubTask]) -> list[SubAgentResult]:
-        """并发执行独立子任务，并将单个失败转换为标准结果。"""
+        """按总量和单 Agent 上限并发执行，并隔离超时与单任务失败。"""
+
+        unique_tasks = list({task.task_id: task for task in tasks}.values())
+        total_semaphore = asyncio.Semaphore(self._DAG_TOTAL_CONCURRENCY)
+        agent_semaphores = {
+            agent: asyncio.Semaphore(self._DAG_AGENT_CONCURRENCY)
+            for agent in ("kg", "rag")
+        }
+
+        def failure_result(
+            task: SubTask, *, reason: str, error: str, attempts: int
+        ) -> SubAgentResult:
+            return SubAgentResult(
+                task_id=task.task_id,
+                must_cover_id=task.must_cover_id,
+                subtask_id=task.subtask_id,
+                target_agent=task.target_agent,
+                question=task.question,
+                signal="none",
+                coverage={
+                    "coverage_status": "none",
+                    "coverage_ratio": 0.0,
+                    "evidence_count": 0,
+                },
+                missing_points=list(task.must_cover),
+                direct_support=False,
+                no_signal=True,
+                reason=reason,
+                telemetry={
+                    "error": error,
+                    "attempts": attempts,
+                    "task_timeout_seconds": self._DAG_TASK_TIMEOUT_SECONDS,
+                },
+            )
 
         async def execute(task: SubTask) -> SubAgentResult:
-            try:
-                return await self._subagent_client.send_task(task)
-            except Exception as exc:
-                logger.exception("子代理任务执行失败: %s", task.target_agent)
-                return SubAgentResult(
-                    task_id=task.task_id,
-                    must_cover_id=task.must_cover_id,
-                    subtask_id=task.subtask_id,
-                    target_agent=task.target_agent,
-                    question=task.question,
-                    signal="none",
-                    coverage={
-                        "coverage_status": "none",
-                        "coverage_ratio": 0.0,
-                        "evidence_count": 0,
-                    },
-                    missing_points=list(task.must_cover),
-                    direct_support=False,
-                    no_signal=True,
-                    reason=f"subagent_error:{type(exc).__name__}",
-                    telemetry={"error": _sanitize_text(exc, 240)},
-                )
+            last_error = ""
+            for attempt in range(1, self._DAG_MAX_ATTEMPTS + 1):
+                task.attempt_count = attempt
+                try:
+                    async with agent_semaphores[task.target_agent], total_semaphore:
+                        result = await asyncio.wait_for(
+                            self._subagent_client.send_task(task),
+                            timeout=self._DAG_TASK_TIMEOUT_SECONDS,
+                        )
+                    result.task_id = task.task_id
+                    result.must_cover_id = task.must_cover_id
+                    result.subtask_id = task.subtask_id
+                    result.target_agent = task.target_agent
+                    result.telemetry = {
+                        **result.telemetry,
+                        "attempts": attempt,
+                        "task_timeout_seconds": self._DAG_TASK_TIMEOUT_SECONDS,
+                    }
+                    return result
+                except TimeoutError:
+                    last_error = "task_timeout"
+                    logger.warning(
+                        "子代理任务超时: task_id=%s attempt=%s",
+                        task.task_id,
+                        attempt,
+                    )
+                except Exception as exc:
+                    last_error = _sanitize_text(exc, 240)
+                    logger.exception(
+                        "子代理任务执行失败: task_id=%s attempt=%s",
+                        task.task_id,
+                        attempt,
+                    )
+                    if attempt == self._DAG_MAX_ATTEMPTS:
+                        return failure_result(
+                            task,
+                            reason=f"subagent_error:{type(exc).__name__}",
+                            error=last_error,
+                            attempts=attempt,
+                        )
+            return failure_result(
+                task,
+                reason="subagent_timeout",
+                error=last_error,
+                attempts=self._DAG_MAX_ATTEMPTS,
+            )
 
-        return list(await asyncio.gather(*(execute(task) for task in tasks)))
+        return list(await asyncio.gather(*(execute(task) for task in unique_tasks)))
 
     @staticmethod
     def _record_claim_assessments(
