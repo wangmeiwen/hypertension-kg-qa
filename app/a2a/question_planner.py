@@ -127,7 +127,7 @@ def _evidence_policy(
     }
     return MinimumEvidencePolicy(
         minimum_supported_evidence=1,
-        minimum_distinct_publications=1,
+        minimum_distinct_publications=medical_risk.minimum_distinct_publications,
         required_applicability_fields=(
             list(applicability_conditions) if strict_applicability else []
         ),

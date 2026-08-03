@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.a2a.evidence_fusion import evidence_identity
-from app.a2a.medical_risk import MedicalRiskAssessment
+from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import ClaimEvidenceAssessment, Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
@@ -70,6 +70,18 @@ def test_question_plan_separates_optional_retrievers_from_evidence_minimums() ->
     assert numeric_policy.minimum_supported_evidence == 1
     assert numeric_policy.minimum_distinct_publications == 1
     assert numeric_policy.publication_scope == "single_guideline"
+
+
+def test_question_plan_preserves_high_risk_publication_minimum() -> None:
+    question = "怀孕期间血压药能不能停？"
+    risk = assess_medical_risk(question)
+
+    plan = build_question_plan(question, risk)
+
+    assert risk.minimum_distinct_publications == 2
+    assert {
+        item.evidence_policy.minimum_distinct_publications for item in plan.must_cover
+    } == {2}
 
 
 def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
