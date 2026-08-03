@@ -12,9 +12,19 @@ def _optional_int(value: Any) -> Optional[int]:
     if value in (None, ""):
         return None
     try:
-        return int(value)
+        parsed = int(value)
     except (TypeError, ValueError):
         return None
+    return parsed if parsed > 0 else None
+
+
+def _first_text(*values: Any) -> str:
+    """返回第一个非空文本值。"""
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def _optional_float(value: Any) -> Optional[float]:
@@ -34,9 +44,8 @@ def build_rag_evidence(
     """将文档检索命中转换为共享 Evidence。"""
     source_id = str(hit.get("source") or hit.get("id") or "").strip()
     chunk_id = str(hit.get("chunk_id") or hit.get("id") or "").strip()
-    document_id = str(
-        hit.get("document_id") or hit.get("parent_id") or source_id
-    ).strip()
+    document_id = _first_text(hit.get("document_id"), hit.get("parent_id"), source_id)
+    page = _optional_int(hit.get("page_num") or hit.get("start_page"))
     section_parts = [
         str(value).strip()
         for value in (hit.get("parent_index"), hit.get("sub_index"))
@@ -53,7 +62,18 @@ def build_rag_evidence(
         source_id=source_id,
         document_id=document_id,
         chunk_id=chunk_id,
-        page=_optional_int(hit.get("page_num") or hit.get("start_page")),
+        page=page,
+        origin_guideline_id=_first_text(
+            hit.get("origin_guideline_id"), hit.get("guideline_id")
+        ),
+        origin_document_id=_first_text(
+            hit.get("origin_document_id"),
+            hit.get("document_id"),
+            hit.get("parent_id"),
+        ),
+        source_hash=_first_text(hit.get("source_hash")),
+        source_page=page,
+        source_chunk_id=chunk_id,
         section="/".join(section_parts),
         content=str(hit.get("text") or "").strip(),
         score=_optional_float(hit.get("score")),
@@ -73,6 +93,20 @@ def build_kg_evidence(
     """将图谱实体、关系或 Cypher 记录转换为共享 Evidence。"""
     properties_obj = item.get("properties")
     properties = properties_obj if isinstance(properties_obj, dict) else {}
+    source_page = _optional_int(
+        item.get("source_page")
+        or item.get("page_num")
+        or properties.get("source_page")
+        or properties.get("page_num")
+    )
+    source_chunk_id = _first_text(
+        item.get("source_chunk_id"),
+        item.get("source_chunk_index"),
+        item.get("chunk_id"),
+        properties.get("source_chunk_id"),
+        properties.get("source_chunk_index"),
+        properties.get("chunk_id"),
+    )
     source_id = str(
         item.get("id")
         or item.get("entity_id")
@@ -108,6 +142,15 @@ def build_kg_evidence(
     return Evidence(
         source_type="knowledge_graph",
         source_id=source_id,
+        origin_guideline_id=_first_text(
+            item.get("origin_guideline_id"), properties.get("origin_guideline_id")
+        ),
+        origin_document_id=_first_text(
+            item.get("origin_document_id"), properties.get("origin_document_id")
+        ),
+        source_hash=_first_text(item.get("source_hash"), properties.get("source_hash")),
+        source_page=source_page,
+        source_chunk_id=source_chunk_id,
         content=content,
         score=_optional_float(item.get("score")),
         retrieval_method=str(retrieval_method or tool_name).strip(),

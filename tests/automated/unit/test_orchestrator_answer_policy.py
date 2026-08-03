@@ -14,6 +14,7 @@ def _evidence(content: str, source_id: str = "guide") -> dict[str, Any]:
     return Evidence(
         source_type="document",
         source_id=source_id,
+        origin_document_id=source_id,
         chunk_id=f"chunk-{source_id}",
         content=content,
         retrieval_method="dense",

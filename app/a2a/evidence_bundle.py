@@ -6,7 +6,11 @@ import hashlib
 from typing import Any, Iterable
 
 from app.a2a.conflict_detection import detect_evidence_conflicts
-from app.a2a.evidence_fusion import canonical_source_id, fuse_evidence
+from app.a2a.evidence_fusion import (
+    evidence_identity,
+    fuse_evidence,
+    publication_identity,
+)
 from app.a2a.models import Evidence, EvidenceBundle
 
 
@@ -53,14 +57,14 @@ def build_evidence_bundle(
         dict.fromkeys(filter(None, (_citation(item) for item in evidence)))
     )
     conflicts = detect_evidence_conflicts(evidence)
-    evidence_identity = "|".join(
+    evidence_identity_payload = "|".join(
         sorted(
-            f"{canonical_source_id(item)}:{item.page}:{item.content}"
+            f"{evidence_identity(item)}:{publication_identity(item)}:{item.source_page}:{item.content}"
             for item in evidence
         )
     )
     digest = hashlib.sha256(
-        f"{question}|{plan_id}|{evidence_identity}".encode("utf-8")
+        f"{question}|{plan_id}|{evidence_identity_payload}".encode("utf-8")
     ).hexdigest()[:12]
     return EvidenceBundle(
         bundle_id=f"bundle-{digest}",
@@ -74,5 +78,5 @@ def build_evidence_bundle(
         conflicts=conflicts,
         coverage=dict(coverage),
         sufficiency=dict(sufficiency) if sufficiency is not None else {},
-        distinct_source_count=fusion.distinct_source_count,
+        distinct_publication_count=fusion.distinct_publication_count,
     )

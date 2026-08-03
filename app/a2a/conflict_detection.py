@@ -6,7 +6,7 @@ import hashlib
 import re
 from collections import defaultdict
 
-from app.a2a.evidence_fusion import canonical_source_id
+from app.a2a.evidence_fusion import publication_identity
 from app.a2a.models import Evidence, EvidenceConflict
 
 _NUMERIC_PATTERN = re.compile(
@@ -75,7 +75,9 @@ def detect_evidence_conflicts(evidence_rows: list[Evidence]) -> list[EvidenceCon
     """检测同一适用条件下由独立来源给出的不同数值。"""
     claims: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     for evidence in evidence_rows:
-        source = canonical_source_id(evidence)
+        source = publication_identity(evidence)
+        if source is None:
+            continue
         citation = _citation(evidence)
         sentences = re.split(r"[。！？!?；;，,\n]+", evidence.content)
         for sentence in sentences:

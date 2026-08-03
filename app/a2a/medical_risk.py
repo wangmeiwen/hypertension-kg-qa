@@ -16,7 +16,7 @@ class MedicalRiskAssessment(BaseModel):
     risk_level: Literal["low", "high", "emergency"] = "low"
     action: Literal["standard", "evidence_required", "urgent_redirect"] = "standard"
     matched_signals: list[str] = Field(default_factory=list)
-    minimum_distinct_sources: int = Field(default=1, ge=1, le=3)
+    minimum_distinct_publications: int = Field(default=1, ge=1, le=3)
 
 
 _EMERGENCY_SIGNALS = (
@@ -107,7 +107,7 @@ def assess_medical_risk(question: str) -> MedicalRiskAssessment:
             risk_level="emergency",
             action="urgent_redirect",
             matched_signals=emergency,
-            minimum_distinct_sources=1,
+            minimum_distinct_publications=1,
         )
 
     high_risk = [
@@ -122,7 +122,7 @@ def assess_medical_risk(question: str) -> MedicalRiskAssessment:
             risk_level="high",
             action="evidence_required",
             matched_signals=list(dict.fromkeys(high_risk)),
-            minimum_distinct_sources=2,
+            minimum_distinct_publications=2,
         )
 
     return MedicalRiskAssessment()

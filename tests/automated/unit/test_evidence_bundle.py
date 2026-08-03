@@ -13,6 +13,7 @@ def _document(source_id: str, content: str) -> Evidence:
     return Evidence(
         source_type="document",
         source_id=source_id,
+        origin_document_id=source_id,
         page=8,
         content=content,
         retrieval_method="dense",
@@ -24,6 +25,7 @@ def test_bundle_is_stable_and_groups_fused_evidence_by_origin() -> None:
     kg = Evidence(
         source_type="knowledge_graph",
         source_id="relation-1",
+        origin_document_id="graph-guide",
         content="高血压关联家庭血压监测。",
         retrieval_method="kg_relation",
     )
@@ -48,7 +50,7 @@ def test_bundle_is_stable_and_groups_fused_evidence_by_origin() -> None:
     assert len(first.kg_evidence) == 1
     assert len(first.history_evidence) == 1
     assert first.citations == ["[guide-a p8]", "[relation-1]"]
-    assert first.distinct_source_count == 2
+    assert first.distinct_publication_count == 2
 
 
 def test_bundle_contains_structured_conflicts() -> None:

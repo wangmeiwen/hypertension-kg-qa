@@ -11,6 +11,7 @@ def _evidence(source_id: str, content: str, page: int = 1) -> Evidence:
     return Evidence(
         source_type="document",
         source_id=source_id,
+        origin_document_id=source_id,
         page=page,
         content=content,
     )

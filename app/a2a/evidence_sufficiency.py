@@ -40,7 +40,7 @@ def assess_evidence_sufficiency(
     *,
     question_plan: QuestionPlan,
     evidence_by_item: dict[str, list[tuple[str, Evidence | dict[str, Any]]]],
-    minimum_distinct_sources: int,
+    minimum_distinct_publications: int,
 ) -> EvidenceSufficiencyAssessment:
     """逐个 must-cover 评估证据类型、来源数、冲突和覆盖状态。"""
     item_results: list[MustCoverSufficiency] = []
@@ -49,7 +49,7 @@ def assess_evidence_sufficiency(
         fusion = fuse_evidence(rows)
         available_types = _available_evidence_types(rows, fusion.evidence)
         required_sources = max(
-            minimum_distinct_sources,
+            minimum_distinct_publications,
             2 if item.claim_type in _MULTI_SOURCE_CLAIM_TYPES else 1,
         )
         missing_reasons: list[str] = []
@@ -57,8 +57,8 @@ def assess_evidence_sufficiency(
             missing_reasons.append("must_cover_not_covered")
         if not fusion.evidence:
             missing_reasons.append("direct_evidence")
-        if fusion.evidence and fusion.distinct_source_count < required_sources:
-            missing_reasons.append("independent_sources")
+        if fusion.evidence and fusion.distinct_publication_count < required_sources:
+            missing_reasons.append("distinct_publications")
         if item.claim_type == "relation" and "kg" not in available_types:
             missing_reasons.append("knowledge_graph_evidence")
         if item.claim_type == "source" and "rag" not in available_types:
@@ -71,8 +71,8 @@ def assess_evidence_sufficiency(
                 claim_type=item.claim_type,
                 sufficient=not missing_reasons,
                 evidence_count=len(fusion.evidence),
-                distinct_source_count=fusion.distinct_source_count,
-                required_source_count=required_sources,
+                distinct_publication_count=fusion.distinct_publication_count,
+                required_publication_count=required_sources,
                 available_evidence_types=available_types,
                 missing_reasons=missing_reasons,
             )

@@ -102,6 +102,25 @@ def create_kg_collection_with_schema(
             field_name="timestamp", datatype=DataType.VARCHAR, max_length=64
         )
         schema.add_field(
+            field_name="origin_guideline_id",
+            datatype=DataType.VARCHAR,
+            max_length=256,
+        )
+        schema.add_field(
+            field_name="origin_document_id",
+            datatype=DataType.VARCHAR,
+            max_length=512,
+        )
+        schema.add_field(
+            field_name="source_hash", datatype=DataType.VARCHAR, max_length=128
+        )
+        schema.add_field(field_name="source_page", datatype=DataType.INT64)
+        schema.add_field(
+            field_name="source_chunk_id",
+            datatype=DataType.VARCHAR,
+            max_length=128,
+        )
+        schema.add_field(
             field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=embedding_dim
         )
 
@@ -127,8 +146,10 @@ def create_kg_collection_with_schema(
         print(
             "   - 字段: pk_id, doc_id, item_type, name, label, source_name, source_label,"
         )
+        print("           relation_type, target_name, target_label, text, timestamp,")
         print(
-            "           relation_type, target_name, target_label, text, timestamp, embedding"
+            "           origin_guideline_id, origin_document_id, source_hash,"
+            " source_page, source_chunk_id, embedding"
         )
         return True
 

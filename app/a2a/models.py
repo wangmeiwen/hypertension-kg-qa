@@ -14,16 +14,44 @@ class Evidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal["evidence.v2"] = "evidence.v2"
     source_type: str = Field(default="")
     source_id: str = Field(default="")
     document_id: str = Field(default="")
     chunk_id: str = Field(default="")
     page: Optional[int] = Field(default=None)
+    origin_guideline_id: str = Field(default="")
+    origin_document_id: str = Field(default="")
+    source_hash: str = Field(default="")
+    source_page: Optional[int] = Field(default=None)
+    source_chunk_id: str = Field(default="")
+    origin_status: Literal["known", "unknown_origin"] = "unknown_origin"
     section: str = Field(default="")
     content: str = Field(default="")
     score: Optional[float] = Field(default=None)
     retrieval_method: str = Field(default="")
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def normalize_origin_status(self) -> "Evidence":
+        """按可信出版来源字段确定来源状态并补齐定位字段。"""
+        if self.source_page is None:
+            self.source_page = self.page
+        if not self.source_chunk_id:
+            self.source_chunk_id = self.chunk_id
+        self.origin_status = (
+            "known"
+            if any(
+                value.strip()
+                for value in (
+                    self.origin_guideline_id,
+                    self.origin_document_id,
+                    self.source_hash,
+                )
+            )
+            else "unknown_origin"
+        )
+        return self
 
 
 class UserQuestion(BaseModel):
@@ -93,8 +121,8 @@ class MustCoverSufficiency(BaseModel):
     claim_type: str
     sufficient: bool
     evidence_count: int = Field(default=0, ge=0)
-    distinct_source_count: int = Field(default=0, ge=0)
-    required_source_count: int = Field(default=1, ge=1)
+    distinct_publication_count: int = Field(default=0, ge=0)
+    required_publication_count: int = Field(default=1, ge=1)
     available_evidence_types: list[AgentType] = Field(default_factory=list)
     missing_reasons: list[str] = Field(default_factory=list)
 
@@ -190,7 +218,7 @@ class EvidenceBundle(BaseModel):
     conflicts: list[EvidenceConflict] = Field(default_factory=list)
     coverage: dict[str, Any] = Field(default_factory=dict)
     sufficiency: dict[str, Any] = Field(default_factory=dict)
-    distinct_source_count: int = Field(default=0, ge=0)
+    distinct_publication_count: int = Field(default=0, ge=0)
 
 
 class OrchestratorDecision(BaseModel):

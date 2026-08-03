@@ -16,6 +16,7 @@ def _evidence() -> dict[str, Any]:
     return Evidence(
         source_type="document",
         source_id="guide",
+        origin_document_id="guide",
         content="高血压患者应规律监测血压。",
     ).model_dump()
 

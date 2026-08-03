@@ -83,7 +83,15 @@ def _evidence_identities(response: dict[str, Any]) -> set[str]:
             )
     identities: set[str] = set()
     for row in rows:
-        for key in ("source_id", "document_id", "chunk_id"):
+        for key in (
+            "source_id",
+            "document_id",
+            "chunk_id",
+            "origin_guideline_id",
+            "origin_document_id",
+            "source_hash",
+            "source_chunk_id",
+        ):
             value = str(row.get(key) or "").strip()
             if value:
                 identities.add(value)

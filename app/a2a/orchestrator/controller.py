@@ -1207,7 +1207,7 @@ class UnifiedOrchestratorController:
             "evidence_count": len(evidence),
             "raw_evidence_count": fusion.raw_evidence_count,
             "duplicate_count": fusion.duplicate_count,
-            "distinct_source_count": fusion.distinct_source_count,
+            "distinct_publication_count": fusion.distinct_publication_count,
             "corroborated_claim_count": fusion.corroborated_claim_count,
             "fused_evidence": evidence,
             "retrieval_risk_flags": retrieval_risk_flags,
@@ -1298,9 +1298,10 @@ class UnifiedOrchestratorController:
         assessment = medical_risk or MedicalRiskAssessment()
         if (
             evidence
-            and fusion.distinct_source_count < assessment.minimum_distinct_sources
+            and fusion.distinct_publication_count
+            < assessment.minimum_distinct_publications
         ):
-            missing_points.append("independent_sources")
+            missing_points.append("distinct_publications")
         plan_coverage = (
             self._question_plan_coverage(question_plan)
             if question_plan is not None
@@ -1313,7 +1314,9 @@ class UnifiedOrchestratorController:
                 evidence_by_item=self._evidence_by_must_cover(
                     tool_observations, question_plan
                 ),
-                minimum_distinct_sources=assessment.minimum_distinct_sources,
+                minimum_distinct_publications=(
+                    assessment.minimum_distinct_publications
+                ),
             )
             if evidence and not sufficiency.sufficient:
                 for item in sufficiency.items:
@@ -1324,7 +1327,7 @@ class UnifiedOrchestratorController:
             "ready": bool(evidence) and not missing_points,
             "evidence_count": len(evidence),
             "raw_evidence_count": fusion.raw_evidence_count,
-            "distinct_source_count": fusion.distinct_source_count,
+            "distinct_publication_count": fusion.distinct_publication_count,
             "missing_points": missing_points,
             "unresolved_conflicts": risk_flags,
             "conflict_details": conflicts,
@@ -1661,7 +1664,7 @@ class UnifiedOrchestratorController:
         telemetry["evidence_bundle"] = {
             "bundle_id": bundle.bundle_id,
             "evidence_count": len(bundle.evidence),
-            "distinct_source_count": bundle.distinct_source_count,
+            "distinct_publication_count": bundle.distinct_publication_count,
             "conflict_count": len(bundle.conflicts),
         }
         result["telemetry"] = telemetry

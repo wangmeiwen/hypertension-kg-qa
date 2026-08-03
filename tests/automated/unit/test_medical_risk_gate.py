@@ -43,7 +43,7 @@ def test_high_risk_questions_require_two_sources(question: str) -> None:
 
     assert assessment.risk_level == "high"
     assert assessment.action == "evidence_required"
-    assert assessment.minimum_distinct_sources == 2
+    assert assessment.minimum_distinct_publications == 2
 
 
 def test_negated_emergency_signal_does_not_trigger_redirect() -> None:
@@ -73,6 +73,7 @@ def test_high_risk_question_abstains_with_only_one_source() -> None:
     evidence = Evidence(
         source_type="document",
         source_id="guide-1",
+        origin_document_id="guide-1",
         chunk_id="chunk-1",
         content="妊娠期高血压治疗需要专业评估。",
         retrieval_method="dense",
@@ -137,5 +138,5 @@ def test_high_risk_question_abstains_with_only_one_source() -> None:
     )
 
     assert result["output_type"] == "orchestrator_abstained_insufficient_evidence"
-    assert "independent_sources" in result["evidence_summary"]["missing_points"]
+    assert "distinct_publications" in result["evidence_summary"]["missing_points"]
     assert result["telemetry"]["medical_risk"]["risk_level"] == "high"

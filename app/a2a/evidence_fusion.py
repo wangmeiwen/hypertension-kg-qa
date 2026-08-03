@@ -19,7 +19,7 @@ class EvidenceFusionResult:
     evidence: list[Evidence]
     raw_evidence_count: int
     duplicate_count: int
-    distinct_source_count: int
+    distinct_publication_count: int
     corroborated_claim_count: int
 
 
@@ -34,23 +34,34 @@ def _content_fingerprint(evidence: Evidence) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
-def canonical_source_id(evidence: Evidence) -> str:
-    """按文档、来源或内容生成规范化来源标识。"""
+def evidence_identity(evidence: Evidence) -> str:
+    """生成单条 Evidence 的稳定对象身份。"""
     source_type = _normalized_text(evidence.source_type) or "unknown"
-    document_id = _normalized_text(evidence.document_id)
     source_id = _normalized_text(evidence.source_id)
-    if document_id:
-        return f"origin:{document_id}"
     if source_id:
-        return f"origin:{source_id}"
-    return f"{source_type}:content:{_content_fingerprint(evidence)}"
+        return f"evidence:{source_type}:{source_id}"
+    return f"evidence:{source_type}:content:{_content_fingerprint(evidence)}"
+
+
+def publication_identity(evidence: Evidence) -> str | None:
+    """仅使用可信来源字段生成出版物身份。"""
+    candidates = (
+        ("guideline", evidence.origin_guideline_id),
+        ("document", evidence.origin_document_id),
+        ("hash", evidence.source_hash),
+    )
+    for prefix, value in candidates:
+        normalized = _normalized_text(value)
+        if normalized:
+            return f"publication:{prefix}:{normalized}"
+    return None
 
 
 def _deduplication_key(evidence: Evidence) -> tuple[str, int | None, str, str]:
     """构建同一来源内的精确去重键。"""
     return (
-        canonical_source_id(evidence),
-        evidence.page,
+        publication_identity(evidence) or evidence_identity(evidence),
+        evidence.source_page,
         _normalized_text(evidence.section),
         _content_fingerprint(evidence),
     )
@@ -83,11 +94,13 @@ def fuse_evidence(
     for agent, evidence in validated:
         grouped.setdefault(_deduplication_key(evidence), []).append((agent, evidence))
 
-    claim_sources: dict[str, set[str]] = {}
+    claim_publications: dict[str, set[str]] = {}
     for _, evidence in validated:
-        claim_sources.setdefault(_content_fingerprint(evidence), set()).add(
-            canonical_source_id(evidence)
-        )
+        publication = publication_identity(evidence)
+        if publication is not None:
+            claim_publications.setdefault(_content_fingerprint(evidence), set()).add(
+                publication
+            )
 
     fused: list[Evidence] = []
     for duplicates in grouped.values():
@@ -105,26 +118,34 @@ def fuse_evidence(
             }
         )
         fingerprint = _content_fingerprint(representative)
-        source_ids = sorted(claim_sources[fingerprint])
+        publication_ids = sorted(claim_publications.get(fingerprint, set()))
         representative.provenance = {
             **representative.provenance,
-            "canonical_source_id": canonical_source_id(representative),
+            "evidence_identity": evidence_identity(representative),
+            "publication_identity": publication_identity(representative),
             "supporting_agents": agents,
             "retrieval_methods": methods,
             "duplicate_count": len(evidence_rows) - 1,
-            "supporting_source_ids": source_ids,
-            "independent_source_count": len(source_ids),
+            "supporting_publication_ids": publication_ids,
+            "distinct_publication_count": len(publication_ids),
+            "unknown_origin": not publication_ids,
         }
         fused.append(representative)
 
-    distinct_sources = {canonical_source_id(item) for item in fused}
+    distinct_publications = {
+        identity
+        for item in fused
+        if (identity := publication_identity(item)) is not None
+    }
     corroborated_claims = sum(
-        1 for source_ids in claim_sources.values() if len(source_ids) >= 2
+        1
+        for publication_ids in claim_publications.values()
+        if len(publication_ids) >= 2
     )
     return EvidenceFusionResult(
         evidence=fused,
         raw_evidence_count=len(validated),
         duplicate_count=len(validated) - len(fused),
-        distinct_source_count=len(distinct_sources),
+        distinct_publication_count=len(distinct_publications),
         corroborated_claim_count=corroborated_claims,
     )

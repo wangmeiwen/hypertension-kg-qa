@@ -22,11 +22,18 @@ from app.mcp.tools import (
 from app.rag_core.vector_store import VectorStore
 
 EVIDENCE_FIELDS = {
+    "schema_version",
     "source_type",
     "source_id",
     "document_id",
     "chunk_id",
     "page",
+    "origin_guideline_id",
+    "origin_document_id",
+    "source_hash",
+    "source_page",
+    "source_chunk_id",
+    "origin_status",
     "section",
     "content",
     "score",
@@ -41,6 +48,7 @@ def test_rag_hit_is_normalized_to_shared_evidence() -> None:
             "id": "hit-1",
             "source": "guideline.pdf",
             "document_id": "doc-1",
+            "source_hash": "a" * 64,
             "chunk_id": "chunk-1",
             "page_num": 12,
             "parent_index": 3,
@@ -55,6 +63,9 @@ def test_rag_hit_is_normalized_to_shared_evidence() -> None:
     assert evidence["source_type"] == "document"
     assert evidence["source_id"] == "guideline.pdf"
     assert evidence["document_id"] == "doc-1"
+    assert evidence["origin_document_id"] == "doc-1"
+    assert evidence["source_hash"] == "a" * 64
+    assert evidence["origin_status"] == "known"
     assert evidence["chunk_id"] == "chunk-1"
     assert evidence["page"] == 12
     assert evidence["section"] == "3/1"
@@ -68,6 +79,8 @@ def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
             "name": "高血压",
             "labels": ["Disease"],
             "score": "0.88",
+            "source_hash": "b" * 64,
+            "source_chunk_index": 3,
         },
         tool_name="kg_query",
         evidence_kind="entity",
@@ -78,6 +91,8 @@ def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
     assert evidence["source_id"] == "node-1"
     assert evidence["content"] == "高血压"
     assert evidence["score"] == 0.88
+    assert evidence["source_hash"] == "b" * 64
+    assert evidence["source_chunk_id"] == "3"
     assert evidence["provenance"]["kind"] == "entity"
     assert evidence["provenance"]["raw"]["labels"] == ["Disease"]
 
@@ -453,6 +468,7 @@ def test_orchestrator_history_action_is_reachable() -> None:
     evidence = build_rag_evidence(
         {
             "source": "guide.pdf",
+            "document_id": "guide-document",
             "text": "历史证据",
             "retrieval_method": "dense",
         }
