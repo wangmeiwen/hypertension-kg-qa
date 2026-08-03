@@ -31,6 +31,7 @@ class CanaryMustCover(BaseModel):
     minimum_matched_groups: int = Field(default=0, ge=0)
     applicability_conditions: list[str] = Field(default_factory=list)
     expected_evidence_ids: list[str] = Field(default_factory=list)
+    expected_conflict_types: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_group_requirement(self) -> "CanaryMustCover":
@@ -38,6 +39,17 @@ class CanaryMustCover(BaseModel):
         if self.minimum_matched_groups > len(self.expected_term_groups):
             raise ValueError("minimum_matched_groups_exceeds_groups")
         return self
+
+
+class DomainReviewMetadata(BaseModel):
+    """领域复核记录，不包含评测系统自产指标。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: str = Field(min_length=1)
+    reviewer_role: str = Field(min_length=1)
+    reviewed_at: str = Field(min_length=1)
+    guideline_snapshot_id: str = Field(min_length=1)
 
 
 class AgentCanaryCase(BaseModel):
@@ -54,6 +66,7 @@ class AgentCanaryCase(BaseModel):
     required_retrievers: list[Literal["kg", "rag"]] = Field(default_factory=list)
     requires_multihop: bool = False
     review_status: ReviewStatus = "engineering_baseline"
+    domain_review: DomainReviewMetadata | None = None
 
     @model_validator(mode="after")
     def validate_case(self) -> "AgentCanaryCase":
@@ -63,6 +76,13 @@ class AgentCanaryCase(BaseModel):
             raise ValueError("duplicate_must_cover_id")
         if self.category == "multihop_relation" and not self.requires_multihop:
             raise ValueError("multihop_category_requires_multihop")
+        if self.review_status == "domain_reviewed":
+            if self.domain_review is None:
+                raise ValueError("domain_review_metadata_required")
+            if self.expected_behavior == "answer" and any(
+                not item.expected_evidence_ids for item in self.must_cover
+            ):
+                raise ValueError("domain_reviewed_answer_requires_evidence_labels")
         return self
 
     def to_evaluation_case(self) -> dict[str, object]:
@@ -85,11 +105,17 @@ class AgentCanaryCase(BaseModel):
             "expected_term_groups": groups,
             "min_expected_groups": minimum_groups,
             "expected_evidence_ids": evidence_ids,
+            "must_cover_expectations": [item.model_dump() for item in self.must_cover],
             "expected_behavior": self.expected_behavior,
             "expected_risk_level": self.expected_risk_level,
             "requires_multihop": self.requires_multihop,
             "review_status": self.review_status,
             "category": self.category,
+            "domain_review": (
+                self.domain_review.model_dump()
+                if self.domain_review is not None
+                else None
+            ),
         }
 
 

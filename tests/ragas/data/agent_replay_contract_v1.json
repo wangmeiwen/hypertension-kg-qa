@@ -1,0 +1,57 @@
+{
+  "manifest": {
+    "schema_version": "agent_replay.v1",
+    "replay_id": "agent-replay-contract-v1",
+    "replay_kind": "contract_fixture",
+    "canary_dataset_id": "agent-replay-contract-canary-v1",
+    "document_snapshot": "contract-document-sha256",
+    "document_page_count": 20,
+    "neo4j_snapshot": "contract-neo4j-v1",
+    "milvus_snapshot": "contract-milvus-v1",
+    "model_snapshot": "contract-model-v1",
+    "prompt_snapshot": "contract-prompt-v1",
+    "config_snapshot": "contract-config-v1"
+  },
+  "records": [
+    {
+      "case_id": "contract-single-fact-01",
+      "response": {
+        "ok": true,
+        "output": "示例患病率为27.5%。[guide-v1 p1]",
+        "output_type": "orchestrator_final",
+        "confidence": "medium",
+        "tool_observations": [],
+        "telemetry": {
+          "retrieval_round": 1,
+          "medical_risk": {"risk_level": "low"}
+        },
+        "evidence_bundle": {
+          "evidence": [
+            {
+              "origin_document_id": "publication:guide-v1",
+              "source_id": "guide-v1"
+            }
+          ],
+          "coverage": {"complete": true, "coverage_ratio": 1.0},
+          "sufficiency": {"sufficient": true},
+          "conflicts": [],
+          "citations": ["[guide-v1 p1]"]
+        },
+        "answer_context": {
+          "must_cover": [
+            {
+              "item_id": "runtime-mc-1",
+              "supporting_evidence": [
+                {
+                  "evidence_id": "evidence-1",
+                  "publication_id": "publication:guide-v1",
+                  "citation": "[guide-v1 p1]"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

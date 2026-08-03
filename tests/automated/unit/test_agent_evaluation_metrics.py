@@ -197,6 +197,67 @@ def test_external_expectation_is_not_blocked_by_system_self_assessment() -> None
     assert result["passed"] is True
 
 
+def test_claim_citation_alignment_requires_all_externally_labeled_evidence() -> None:
+    response = _successful_response()
+    response["answer_context"] = {
+        "must_cover": [
+            {
+                "item_id": "runtime-mc-1",
+                "supporting_evidence": [
+                    {
+                        "evidence_id": "evidence-a",
+                        "publication_id": "publication-a",
+                        "citation": "[guide]",
+                    }
+                ],
+            }
+        ]
+    }
+    response["evidence_bundle"]["evidence"] = [
+        {"origin_document_id": "publication-a"},
+        {"origin_document_id": "publication-b"},
+    ]
+    case = {
+        "id": "case-citation-alignment",
+        "question": "哪种方法由哪份指南支持？",
+        "expected_term_groups": [["动态血压监测"]],
+        "min_expected_groups": 1,
+        "expected_evidence_ids": ["publication-a", "publication-b"],
+        "must_cover_expectations": [
+            {
+                "item_id": "claim-1",
+                "expected_evidence_ids": ["publication-a", "publication-b"],
+            }
+        ],
+        "expected_behavior": "answer",
+    }
+
+    result = evaluate_agent_case(case, response)
+
+    assert result["evidence_labels_passed"] is True
+    assert result["citation_support_assessed"] is True
+    assert result["claim_citation_alignment_passed"] is False
+    assert result["passed"] is False
+
+
+def test_quality_and_telemetry_metrics_are_reported_separately() -> None:
+    result = evaluate_agent_case(
+        {
+            "id": "case-separated-metrics",
+            "question": "哪种方法由哪份指南支持？",
+            "expected_term_groups": [["动态血压监测"]],
+            "min_expected_groups": 1,
+            "expected_behavior": "answer",
+        },
+        _successful_response(),
+    )
+
+    assert "behavior_correct" in result["quality_metrics"]
+    assert "evidence_sufficient" not in result["quality_metrics"]
+    assert result["telemetry_metrics"]["evidence_sufficient"] is True
+    assert "behavior_correct" not in result["telemetry_metrics"]
+
+
 def test_agent_canary_v1_has_five_cases_per_category() -> None:
     dataset = load_agent_canary(
         PROJECT_ROOT / "tests" / "ragas" / "data" / "agent_canary_v1.json"

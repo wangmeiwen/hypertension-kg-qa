@@ -98,6 +98,81 @@ def _evidence_identities(response: dict[str, Any]) -> set[str]:
     return identities
 
 
+def _context_evidence_identities(evidence: dict[str, Any]) -> set[str]:
+    return {
+        str(evidence.get(key) or "").strip()
+        for key in ("evidence_id", "publication_id", "source_id")
+        if str(evidence.get(key) or "").strip()
+    }
+
+
+def _claim_citation_alignment(
+    case: dict[str, Any], response: dict[str, Any], answer: str
+) -> tuple[list[dict[str, Any]], bool, float]:
+    """按 must-cover 对齐外部 Evidence 标签与答案中的引用。"""
+    expected_items = [
+        item
+        for item in _as_list(case.get("must_cover_expectations"))
+        if isinstance(item, dict)
+    ]
+    context_items = [
+        item
+        for item in _as_list(_as_dict(response.get("answer_context")).get("must_cover"))
+        if isinstance(item, dict)
+    ]
+    rows: list[dict[str, Any]] = []
+    assessed_count = 0
+    supported_count = 0
+    for index, expected in enumerate(expected_items):
+        expected_ids = {
+            str(item)
+            for item in _as_list(expected.get("expected_evidence_ids"))
+            if str(item)
+        }
+        context = context_items[index] if index < len(context_items) else {}
+        supporting_evidence = [
+            item
+            for item in _as_list(context.get("supporting_evidence"))
+            if isinstance(item, dict)
+        ]
+        matched_rows = [
+            item
+            for item in supporting_evidence
+            if expected_ids & _context_evidence_identities(item)
+        ]
+        matched_ids = {
+            identity
+            for item in matched_rows
+            for identity in _context_evidence_identities(item)
+            if identity in expected_ids
+        }
+        assessed = bool(expected_ids)
+        citation_supported = (
+            assessed
+            and expected_ids.issubset(matched_ids)
+            and bool(matched_rows)
+            and all(
+                bool(str(item.get("citation") or ""))
+                and str(item.get("citation") or "") in answer
+                for item in matched_rows
+            )
+        )
+        if assessed:
+            assessed_count += 1
+            supported_count += citation_supported
+        rows.append(
+            {
+                "item_id": expected.get("item_id"),
+                "assessed": assessed,
+                "expected_evidence_ids": sorted(expected_ids),
+                "matched_evidence_ids": sorted(matched_ids),
+                "citation_supported": citation_supported,
+            }
+        )
+    rate = supported_count / assessed_count if assessed_count else 0.0
+    return rows, assessed_count > 0, round(rate, 6)
+
+
 def evaluate_agent_case(
     case: dict[str, Any], response: dict[str, Any]
 ) -> dict[str, Any]:
@@ -162,7 +237,16 @@ def evaluate_agent_case(
         str(item) for item in _as_list(case.get("expected_evidence_ids")) if str(item)
     }
     matched_evidence_ids = expected_evidence_ids & _evidence_identities(response)
-    evidence_labels_passed = not expected_evidence_ids or bool(matched_evidence_ids)
+    evidence_labels_passed = (
+        not expected_evidence_ids
+        or expected_evidence_ids.issubset(matched_evidence_ids)
+    )
+    must_cover_quality, citation_support_assessed, claim_citation_support_rate = (
+        _claim_citation_alignment(case, response, answer)
+    )
+    claim_citation_alignment_passed = (
+        claim_citation_support_rate == 1.0 if citation_support_assessed else True
+    )
     if expected_behavior == "answer":
         passed = all(
             (
@@ -171,6 +255,7 @@ def evaluate_agent_case(
                 answer_terms_passed,
                 multihop_passed,
                 evidence_labels_passed,
+                claim_citation_alignment_passed,
                 conflict_safe,
                 risk_level_correct,
             )
@@ -180,6 +265,23 @@ def evaluate_agent_case(
 
     citations = [str(item) for item in _as_list(bundle.get("citations")) if str(item)]
     cited_count = sum(1 for citation in citations if citation in answer)
+    quality_metrics = {
+        "answer_term_coverage": round(answer_term_coverage, 6),
+        "multihop_passed": multihop_passed,
+        "behavior_correct": behavior_correct,
+        "risk_level_correct": risk_level_correct,
+        "evidence_labels_passed": evidence_labels_passed,
+        "claim_citation_alignment_passed": claim_citation_alignment_passed,
+        "claim_citation_support_rate": claim_citation_support_rate,
+        "conflict_safe": conflict_safe,
+    }
+    telemetry_metrics = {
+        "plan_complete": plan_complete,
+        "plan_coverage_ratio": round(plan_coverage_ratio, 6),
+        "evidence_sufficient": evidence_sufficient,
+        "confidence": response.get("confidence"),
+        "retrieval_round": int(telemetry.get("retrieval_round") or 0),
+    }
     return {
         "id": case.get("id") or case.get("case_id"),
         "question": case.get("question"),
@@ -203,12 +305,23 @@ def evaluate_agent_case(
         "expected_evidence_ids": sorted(expected_evidence_ids),
         "matched_evidence_ids": sorted(matched_evidence_ids),
         "evidence_labels_passed": evidence_labels_passed,
+        "must_cover_quality": must_cover_quality,
+        "citation_support_assessed": citation_support_assessed,
+        "claim_citation_alignment_passed": claim_citation_alignment_passed,
+        "claim_citation_support_rate": claim_citation_support_rate,
         "citation_coverage": (
             round(cited_count / len(citations), 6) if citations else 0.0
         ),
         "retrieval_round": int(telemetry.get("retrieval_round") or 0),
         "answer": answer,
         "confidence": response.get("confidence"),
+        "quality_scope": (
+            "domain_validated"
+            if case.get("review_status") == "domain_reviewed"
+            else "engineering_baseline"
+        ),
+        "quality_metrics": quality_metrics,
+        "telemetry_metrics": telemetry_metrics,
         "trace_id": response.get("trace_id"),
         "question_plan": response.get("question_plan"),
         "evidence_bundle": bundle,
@@ -232,6 +345,35 @@ def summarize_agent_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             else 0.0
         )
 
+    quality_summary = {
+        "task_success_rate": round(passed / total, 6) if total else 0.0,
+        "behavior_accuracy": rate("behavior_correct"),
+        "evidence_label_accuracy": rate("evidence_labels_passed"),
+        "claim_citation_alignment_rate": rate("claim_citation_alignment_passed"),
+        "conflict_safety_rate": rate("conflict_safe"),
+    }
+    telemetry_summary = {
+        "plan_completion_rate": rate("plan_complete"),
+        "evidence_sufficiency_rate": rate("evidence_sufficient"),
+        "multihop_evidence_rate": rate("has_multihop_evidence"),
+        "plan_coverage_ratio_avg": (
+            round(
+                sum(float(item.get("plan_coverage_ratio") or 0.0) for item in results)
+                / total,
+                6,
+            )
+            if total
+            else 0.0
+        ),
+        "retrieval_round_avg": (
+            round(
+                sum(int(item.get("retrieval_round") or 0) for item in results) / total,
+                6,
+            )
+            if total
+            else 0.0
+        ),
+    }
     return {
         "total": total,
         "passed": passed,
@@ -243,6 +385,7 @@ def summarize_agent_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "conflict_safety_rate": rate("conflict_safe"),
         "behavior_accuracy": rate("behavior_correct"),
         "evidence_label_accuracy": rate("evidence_labels_passed"),
+        "claim_citation_alignment_rate": rate("claim_citation_alignment_passed"),
         "abstention_accuracy": (
             round(
                 sum(1 for item in abstention_rows if item["abstention_correct"])
@@ -268,6 +411,14 @@ def summarize_agent_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             )
             if total
             else 0.0
+        ),
+        "quality_metrics": quality_summary,
+        "telemetry_metrics": telemetry_summary,
+        "quality_scope": (
+            "domain_validated"
+            if results
+            and all(item.get("quality_scope") == "domain_validated" for item in results)
+            else "engineering_baseline"
         ),
         "results": results,
     }

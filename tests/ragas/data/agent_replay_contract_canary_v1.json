@@ -1,0 +1,35 @@
+{
+  "schema_version": "agent_canary.v1",
+  "dataset_id": "agent-replay-contract-canary-v1",
+  "review_status": "engineering_baseline",
+  "source_snapshot": {
+    "document_label": "contract-fixture-20-pages",
+    "page_count": 20,
+    "neo4j_snapshot": "contract-neo4j-v1",
+    "milvus_snapshot": "contract-milvus-v1",
+    "model_snapshot": "contract-model-v1"
+  },
+  "category_targets": {
+    "single_fact": 1
+  },
+  "cases": [
+    {
+      "case_id": "contract-single-fact-01",
+      "category": "single_fact",
+      "question": "示例患病率是多少？",
+      "must_cover": [
+        {
+          "item_id": "prevalence",
+          "claim": "示例患病率",
+          "expected_term_groups": [["27.5%"]],
+          "minimum_matched_groups": 1,
+          "expected_evidence_ids": ["publication:guide-v1"]
+        }
+      ],
+      "expected_behavior": "answer",
+      "expected_risk_level": "low",
+      "required_retrievers": ["rag"],
+      "review_status": "engineering_baseline"
+    }
+  ]
+}
