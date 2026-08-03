@@ -763,7 +763,9 @@ def test_post_validation_inherits_scope_for_exclusively_cited_numeric_bullets() 
     )
 
     result = validate_answer_generation(
-        "家庭血压诊断阈值为≥135/85mmHg[guide-a p6]。\n"
+        "### 家庭血压\n"
+        "在未使用降压药的情况下，连续5~7d测量家庭血压≥135/85mmHg"
+        "[guide-a p6]。\n"
         "动态血压诊断阈值如下[guide-a p16]：\n"
         "- 24h平均值：≥130和/或≥80mmHg[guide-a p16]。\n"
         "- 白天平均值：≥135和/或≥85mmHg[guide-a p16]。\n"

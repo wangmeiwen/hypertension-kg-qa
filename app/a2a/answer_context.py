@@ -256,6 +256,8 @@ def _numeric_claims_are_faithful(
                 updates["measurement_context"] = list(requirement.measurement_context)
             if allow_inheritance and not claim.predicate:
                 updates["predicate"] = requirement.predicate
+            if allow_inheritance and claim.role == "unknown":
+                updates["role"] = requirement.role
             return claim.model_copy(update=updates) if updates else claim
 
         def evidence_allows_inheritance(evidence_id: str) -> bool:
