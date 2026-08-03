@@ -20,6 +20,9 @@ _PARALLEL_SLOT_PATTERN = re.compile(
     r"(?P<topic>诊断标准|诊断界值|目标|阈值|剂量|频次|频率)"
     r"分别(?P<suffix>.+)$"
 )
+_PARALLEL_VALUE_PATTERN = re.compile(
+    r"^(?P<left>.+?)(?:和|与)(?P<right>.+?)" r"分别(?P<suffix>(?:各)?(?:是|为)?多少.*)$"
+)
 
 _CONDITION_TERMS = (
     "孕妇",
@@ -61,6 +64,15 @@ def _split_question(question: str) -> list[str]:
         right_conditions = set(_applicability_conditions(right))
         if left_conditions and right_conditions and left_conditions != right_conditions:
             return [f"{left}{topic}{suffix}", f"{right}{topic}{suffix}"]
+    parallel_value = _PARALLEL_VALUE_PATTERN.match(text)
+    if parallel_value is not None:
+        left = parallel_value.group("left").strip(" ，,")
+        right = parallel_value.group("right").strip(" ，,")
+        suffix = parallel_value.group("suffix").strip(" ，,")
+        left_conditions = set(_applicability_conditions(left))
+        right_conditions = set(_applicability_conditions(right))
+        if left_conditions and right_conditions and left_conditions != right_conditions:
+            return [f"{left}{suffix}", f"{right}{suffix}"]
     clauses = [item.strip(" ，,。？?") for item in _CLAUSE_SPLIT_PATTERN.split(text)]
     clauses = [item for item in clauses if item]
     return clauses or [text]

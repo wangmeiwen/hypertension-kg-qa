@@ -131,6 +131,29 @@ def test_question_plan_splits_parallel_measurement_targets() -> None:
     assert [item.claim_type for item in plan.must_cover] == ["numeric", "numeric"]
 
 
+def test_question_plan_splits_parallel_measurements_without_explicit_topic() -> None:
+    plan = build_question_plan(
+        "家庭血压和动态血压分别是多少？", MedicalRiskAssessment()
+    )
+
+    assert [item.question for item in plan.must_cover] == [
+        "家庭血压是多少",
+        "动态血压是多少",
+    ]
+    assert [item.applicability_conditions for item in plan.must_cover] == [
+        ["家庭血压"],
+        ["动态血压"],
+    ]
+    assert [item.claim_type for item in plan.must_cover] == ["numeric", "numeric"]
+
+
+def test_question_plan_keeps_systolic_diastolic_pair_in_one_must_cover() -> None:
+    plan = build_question_plan("收缩压和舒张压分别是多少？", MedicalRiskAssessment())
+
+    assert len(plan.must_cover) == 1
+    assert plan.must_cover[0].question == "收缩压和舒张压分别是多少"
+
+
 def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
