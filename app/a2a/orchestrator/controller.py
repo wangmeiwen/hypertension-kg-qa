@@ -19,6 +19,7 @@ from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_bundle import build_evidence_bundle
 from app.a2a.evidence_fusion import EvidenceFusionResult, fuse_evidence
+from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
     Evidence,
@@ -810,6 +811,7 @@ class UnifiedOrchestratorController:
         return {
             "agent": "history",
             "action": "call_history_read",
+            "must_cover_id": _sanitize_text(action.get("must_cover_id"), 64),
             "tool_name": "history_read",
             "subquery": _sanitize_text(
                 action.get("user_question") or action.get("history_id"), 200
@@ -872,6 +874,7 @@ class UnifiedOrchestratorController:
         return {
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
+            "must_cover_id": _sanitize_text(action.get("must_cover_id"), 64),
             "tool_name": f"{result.target_agent}_subagent",
             "requested_tool_name": "",
             "subquery": _sanitize_text(result.question, 240),
@@ -1227,6 +1230,40 @@ class UnifiedOrchestratorController:
         return rows
 
     @classmethod
+    def _evidence_by_must_cover(
+        cls,
+        tool_observations: list[dict[str, Any]],
+        question_plan: QuestionPlan,
+    ) -> dict[str, list[tuple[str, Evidence | dict[str, Any]]]]:
+        """按计划问题点归集 Evidence，避免跨结论错误计数。"""
+        grouped: dict[str, list[tuple[str, Evidence | dict[str, Any]]]] = {
+            item.item_id: [] for item in question_plan.must_cover
+        }
+        for observation in tool_observations:
+            if not isinstance(observation, dict):
+                continue
+            item_id = _sanitize_text(observation.get("must_cover_id"), 64)
+            if item_id not in grouped:
+                subquery = _sanitize_text(observation.get("subquery"), 300)
+                matched = [
+                    item
+                    for item in question_plan.must_cover
+                    if subquery
+                    and (subquery in item.question or item.question in subquery)
+                ]
+                if len(matched) == 1:
+                    item_id = matched[0].item_id
+                elif len(question_plan.must_cover) == 1:
+                    item_id = question_plan.must_cover[0].item_id
+                else:
+                    continue
+            agent = _sanitize_text(observation.get("agent"), 32) or "unknown"
+            for evidence in _coerce_list(observation.get("evidence")):
+                if isinstance(evidence, dict):
+                    grouped[item_id].append((agent, evidence))
+        return grouped
+
+    @classmethod
     def _fuse_tool_evidence(
         cls, tool_observations: list[dict[str, Any]]
     ) -> EvidenceFusionResult:
@@ -1269,13 +1306,20 @@ class UnifiedOrchestratorController:
             if question_plan is not None
             else None
         )
-        if (
-            evidence
-            and plan_coverage is not None
-            and not bool(plan_coverage["complete"])
-        ):
-            for item in plan_coverage["uncovered_items"]:
-                missing_points.append(f"must_cover:{item['item_id']}")
+        sufficiency = None
+        if question_plan is not None:
+            sufficiency = assess_evidence_sufficiency(
+                question_plan=question_plan,
+                evidence_by_item=self._evidence_by_must_cover(
+                    tool_observations, question_plan
+                ),
+                minimum_distinct_sources=assessment.minimum_distinct_sources,
+            )
+            if evidence and not sufficiency.sufficient:
+                for item in sufficiency.items:
+                    marker = f"must_cover:{item.item_id}"
+                    if not item.sufficient and marker not in missing_points:
+                        missing_points.append(marker)
         return {
             "ready": bool(evidence) and not missing_points,
             "evidence_count": len(evidence),
@@ -1285,6 +1329,9 @@ class UnifiedOrchestratorController:
             "unresolved_conflicts": risk_flags,
             "conflict_details": conflicts,
             "plan_coverage": plan_coverage,
+            "evidence_sufficiency": (
+                sufficiency.model_dump() if sufficiency is not None else None
+            ),
         }
 
     def _build_budget_telemetry(
@@ -1534,6 +1581,7 @@ class UnifiedOrchestratorController:
                 "unresolved_conflicts": readiness.get("unresolved_conflicts") or [],
                 "conflict_details": readiness.get("conflict_details") or [],
                 "plan_coverage": readiness.get("plan_coverage"),
+                "evidence_sufficiency": readiness.get("evidence_sufficiency"),
             }
         )
         return {
@@ -1598,6 +1646,7 @@ class UnifiedOrchestratorController:
         question: str,
         question_plan: QuestionPlan,
         tool_observations: list[dict[str, Any]],
+        sufficiency: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """把最终 Evidence Bundle 写入终止结果和遥测。"""
         bundle = build_evidence_bundle(
@@ -1605,6 +1654,7 @@ class UnifiedOrchestratorController:
             plan_id=question_plan.plan_id,
             rows=cls._tool_evidence_rows(tool_observations),
             coverage=cls._question_plan_coverage(question_plan),
+            sufficiency=sufficiency,
         )
         result["evidence_bundle"] = bundle.model_dump()
         telemetry = _coerce_dict(result.get("telemetry"))
@@ -1707,6 +1757,7 @@ class UnifiedOrchestratorController:
             tool_observations, question_plan
         )
         stop_reason = ""
+        accepted_readiness: dict[str, Any] | None = None
         compression_state: dict[str, Any] = {
             "compression_count": 0,
             "prompt_budget_limit": self._PROMPT_TOKEN_LIMIT,
@@ -1803,6 +1854,7 @@ class UnifiedOrchestratorController:
                         "主控请求终答，但证据覆盖未达标或仍有冲突，继续检索决策"
                     )
                     continue
+                accepted_readiness = readiness
                 final_answer, answer_tokens = await self._stream_final_answer(
                     question=safe_question,
                     qa_memory_text=qa_memory_text,
@@ -1846,11 +1898,27 @@ class UnifiedOrchestratorController:
                     token_usage,
                     _coerce_dict(history_result.get("meta")).get("token_usage"),
                 )
-                tool_observations.append(
-                    self._build_history_observation(action, history_result)
-                )
+                covered_before = {
+                    item.item_id
+                    for item in question_plan.must_cover
+                    if item.status == "covered"
+                }
                 self._update_question_plan_from_history(
                     question_plan, action, history_result
+                )
+                newly_covered = [
+                    item.item_id
+                    for item in question_plan.must_cover
+                    if item.status == "covered" and item.item_id not in covered_before
+                ]
+                history_action = {
+                    **action,
+                    "must_cover_id": (
+                        newly_covered[0] if len(newly_covered) == 1 else ""
+                    ),
+                }
+                tool_observations.append(
+                    self._build_history_observation(history_action, history_result)
                 )
                 previous_progress_state, no_progress_rounds = (
                     self._advance_retrieval_progress(
@@ -1896,6 +1964,9 @@ class UnifiedOrchestratorController:
                         **action,
                         "action": f"call_{task.target_agent}",
                         "question": task.question,
+                        "must_cover_id": question_plan.must_cover[
+                            task.subtask_id - 1
+                        ].item_id,
                     }
                     tool_observations.append(
                         self._build_subagent_observation(result, result_action)
@@ -1947,6 +2018,7 @@ class UnifiedOrchestratorController:
                 question=safe_question,
                 question_plan=question_plan,
                 tool_observations=tool_observations,
+                sufficiency=readiness.get("evidence_sufficiency"),
             )
             result_telemetry = _coerce_dict(insufficient_result.get("telemetry"))
             result_telemetry["stop_reason"] = stop_reason
@@ -1955,6 +2027,11 @@ class UnifiedOrchestratorController:
             return insufficient_result
 
         evidence_summary = self._build_evidence_summary(tool_observations)
+        evidence_summary["evidence_sufficiency"] = (
+            accepted_readiness.get("evidence_sufficiency")
+            if accepted_readiness is not None
+            else None
+        )
         response_result = {
             "output": final_answer,
             "output_type": "orchestrator_final",
@@ -1983,4 +2060,9 @@ class UnifiedOrchestratorController:
             question=safe_question,
             question_plan=question_plan,
             tool_observations=tool_observations,
+            sufficiency=(
+                accepted_readiness.get("evidence_sufficiency")
+                if accepted_readiness is not None
+                else None
+            ),
         )

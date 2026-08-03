@@ -84,6 +84,31 @@ class QuestionPlan(BaseModel):
     answer_constraints: list[str] = Field(default_factory=list)
 
 
+class MustCoverSufficiency(BaseModel):
+    """单个 must-cover 的证据充分性结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    claim_type: str
+    sufficient: bool
+    evidence_count: int = Field(default=0, ge=0)
+    distinct_source_count: int = Field(default=0, ge=0)
+    required_source_count: int = Field(default=1, ge=1)
+    available_evidence_types: list[AgentType] = Field(default_factory=list)
+    missing_reasons: list[str] = Field(default_factory=list)
+
+
+class EvidenceSufficiencyAssessment(BaseModel):
+    """整份回答的证据充分性结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sufficient: bool
+    sufficiency_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    items: list[MustCoverSufficiency] = Field(default_factory=list)
+
+
 class SubTask(BaseModel):
     """主代理派发给子代理的任务单元。"""
 
@@ -164,6 +189,7 @@ class EvidenceBundle(BaseModel):
     citations: list[str] = Field(default_factory=list)
     conflicts: list[EvidenceConflict] = Field(default_factory=list)
     coverage: dict[str, Any] = Field(default_factory=dict)
+    sufficiency: dict[str, Any] = Field(default_factory=dict)
     distinct_source_count: int = Field(default=0, ge=0)
 
 

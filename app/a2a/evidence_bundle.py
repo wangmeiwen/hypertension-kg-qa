@@ -31,6 +31,7 @@ def build_evidence_bundle(
     plan_id: str,
     rows: Iterable[tuple[str, Evidence | dict[str, Any]]],
     coverage: dict[str, Any],
+    sufficiency: dict[str, Any] | None = None,
 ) -> EvidenceBundle:
     """构建稳定、去重、可追踪的最终 Evidence Bundle。"""
     fusion = fuse_evidence(rows)
@@ -72,5 +73,6 @@ def build_evidence_bundle(
         citations=citations,
         conflicts=conflicts,
         coverage=dict(coverage),
+        sufficiency=dict(sufficiency) if sufficiency is not None else {},
         distinct_source_count=fusion.distinct_source_count,
     )
