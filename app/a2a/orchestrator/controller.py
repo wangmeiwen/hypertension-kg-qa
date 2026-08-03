@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
+from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
     Evidence,
     OrchestratorAction,
@@ -944,7 +945,9 @@ class UnifiedOrchestratorController:
         }
 
     def _assess_answer_readiness(
-        self, tool_observations: list[dict[str, Any]]
+        self,
+        tool_observations: list[dict[str, Any]],
+        medical_risk: MedicalRiskAssessment | None = None,
     ) -> dict[str, Any]:
         """根据现有直接证据和冲突标记判断是否允许生成答案。"""
         evidence: list[dict[str, Any]] = []
@@ -967,9 +970,18 @@ class UnifiedOrchestratorController:
             missing_points.append("direct_evidence")
         if risk_flags:
             missing_points.append("unresolved_conflict")
+        assessment = medical_risk or MedicalRiskAssessment()
+        source_ids = {
+            _sanitize_text(item.get("source_id"), 120)
+            for item in evidence
+            if _sanitize_text(item.get("source_id"), 120)
+        }
+        if evidence and len(source_ids) < assessment.minimum_distinct_sources:
+            missing_points.append("independent_sources")
         return {
             "ready": bool(evidence) and not missing_points,
             "evidence_count": len(evidence),
+            "distinct_source_count": len(source_ids),
             "missing_points": missing_points,
             "unresolved_conflicts": risk_flags,
         }
@@ -1239,6 +1251,51 @@ class UnifiedOrchestratorController:
             "evidence_summary": evidence_summary,
         }
 
+    @staticmethod
+    def _attach_medical_risk_telemetry(
+        result: dict[str, Any], assessment: MedicalRiskAssessment
+    ) -> dict[str, Any]:
+        """将医疗风险 Gate 结果写入统一 telemetry。"""
+        telemetry = _coerce_dict(result.get("telemetry"))
+        telemetry["medical_risk"] = assessment.model_dump()
+        result["telemetry"] = telemetry
+        return result
+
+    def _build_urgent_redirect_result(
+        self,
+        *,
+        assessment: MedicalRiskAssessment,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        """构建紧急医疗信号的立即就医结果。"""
+        result = {
+            "output": (
+                "你描述的情况可能涉及医疗紧急风险。请立即联系当地急救服务或尽快前往急诊，"
+                "不要等待在线问答，也不要自行调整药物。"
+            ),
+            "output_type": "orchestrator_urgent_redirect",
+            "confidence": 0.0,
+            "tool_observations": [],
+            "reflection_events": [],
+            "processing_steps": ["医疗风险 Gate 命中紧急信号，已停止普通问答"],
+            "telemetry": {
+                "controller_mode": "medical_risk_gate",
+                "retrieval_round": 0,
+                "trace_id": trace_id,
+                **empty_token_usage(),
+                "final_source": "medical_risk_gate",
+            },
+            "evidence_summary": {
+                "answer_mode": "urgent_redirect",
+                "supported_points": [],
+                "citations": [],
+                "covered_topics": [],
+                "evidence_count": 0,
+                "retrieval_risk_flags": [],
+            },
+        }
+        return self._attach_medical_risk_telemetry(result, assessment)
+
     async def run(
         self,
         *,
@@ -1257,6 +1314,12 @@ class UnifiedOrchestratorController:
         safe_question = str(input_text or "").strip()
         safe_session_id = str(session_id or "").strip()
         safe_trace_id = str(trace_id or "").strip()
+        medical_risk = assess_medical_risk(safe_question)
+        if medical_risk.action == "urgent_redirect":
+            return self._build_urgent_redirect_result(
+                assessment=medical_risk,
+                trace_id=safe_trace_id,
+            )
         safe_memory = memory_context if isinstance(memory_context, dict) else {}
         qa_memory_text = str(safe_memory.get("qa_memory_text") or "当前暂无问答对")
         retrieval_index_text = str(
@@ -1273,7 +1336,10 @@ class UnifiedOrchestratorController:
         )
 
         tool_observations: list[dict[str, Any]] = []
-        processing_steps: list[str] = ["已加载显式 QA 记忆与历史检索问题索引"]
+        processing_steps: list[str] = [
+            "已加载显式 QA 记忆与历史检索问题索引",
+            f"医疗风险 Gate：{medical_risk.risk_level}",
+        ]
         token_usage = empty_token_usage()
         retrieval_round = 0
         final_answer = ""
@@ -1314,25 +1380,31 @@ class UnifiedOrchestratorController:
                     progress_callback=progress_callback,
                 )
             except PromptBudgetExceededError:
-                return self._build_over_budget_result(
-                    tool_observations=tool_observations,
-                    processing_steps=processing_steps,
-                    retrieval_round=retrieval_round,
-                    max_turns=safe_max_turns,
-                    token_usage=token_usage,
-                    trace_id=safe_trace_id,
-                    compression_state=compression_state,
+                return self._attach_medical_risk_telemetry(
+                    self._build_over_budget_result(
+                        tool_observations=tool_observations,
+                        processing_steps=processing_steps,
+                        retrieval_round=retrieval_round,
+                        max_turns=safe_max_turns,
+                        token_usage=token_usage,
+                        trace_id=safe_trace_id,
+                        compression_state=compression_state,
+                    ),
+                    medical_risk,
                 )
             except OrchestratorActionValidationError as exc:
-                return self._build_invalid_decision_result(
-                    tool_observations=tool_observations,
-                    processing_steps=processing_steps,
-                    retrieval_round=retrieval_round,
-                    max_turns=safe_max_turns,
-                    token_usage=token_usage,
-                    trace_id=safe_trace_id,
-                    compression_state=compression_state,
-                    error=str(exc),
+                return self._attach_medical_risk_telemetry(
+                    self._build_invalid_decision_result(
+                        tool_observations=tool_observations,
+                        processing_steps=processing_steps,
+                        retrieval_round=retrieval_round,
+                        max_turns=safe_max_turns,
+                        token_usage=token_usage,
+                        trace_id=safe_trace_id,
+                        compression_state=compression_state,
+                        error=str(exc),
+                    ),
+                    medical_risk,
                 )
             merge_token_usage(token_usage, tokens)
             action_name = str(action.get("action") or "").strip()
@@ -1341,7 +1413,9 @@ class UnifiedOrchestratorController:
             )
 
             if action_name == "final_answer":
-                readiness = self._assess_answer_readiness(tool_observations)
+                readiness = self._assess_answer_readiness(
+                    tool_observations, medical_risk
+                )
                 if not bool(readiness.get("ready")):
                     processing_steps.append(
                         "主控请求终答，但证据覆盖未达标或仍有冲突，继续检索决策"
@@ -1420,20 +1494,23 @@ class UnifiedOrchestratorController:
             break
 
         if not final_answer:
-            readiness = self._assess_answer_readiness(tool_observations)
-            return self._build_insufficient_evidence_result(
-                tool_observations=tool_observations,
-                processing_steps=processing_steps,
-                retrieval_round=retrieval_round,
-                max_turns=safe_max_turns,
-                token_usage=token_usage,
-                trace_id=safe_trace_id,
-                compression_state=compression_state,
-                readiness=readiness,
+            readiness = self._assess_answer_readiness(tool_observations, medical_risk)
+            return self._attach_medical_risk_telemetry(
+                self._build_insufficient_evidence_result(
+                    tool_observations=tool_observations,
+                    processing_steps=processing_steps,
+                    retrieval_round=retrieval_round,
+                    max_turns=safe_max_turns,
+                    token_usage=token_usage,
+                    trace_id=safe_trace_id,
+                    compression_state=compression_state,
+                    readiness=readiness,
+                ),
+                medical_risk,
             )
 
         evidence_summary = self._build_evidence_summary(tool_observations)
-        return {
+        response_result = {
             "output": final_answer,
             "output_type": "orchestrator_final",
             "confidence": confidence,
@@ -1451,3 +1528,4 @@ class UnifiedOrchestratorController:
             },
             "evidence_summary": evidence_summary,
         }
+        return self._attach_medical_risk_telemetry(response_result, medical_risk)
