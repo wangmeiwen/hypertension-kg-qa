@@ -415,8 +415,15 @@ class UnifiedOrchestratorController:
         return record
 
     def _detect_numeric_conflicts(self, rows: list[dict[str, Any]]) -> list[str]:
-        """检测证据片段中是否存在明显数值冲突。"""
-        return ["numeric_conflict"] if self._detect_evidence_conflicts(rows) else []
+        """返回结构化 Evidence 冲突的阻断标记。"""
+        conflicts = self._detect_evidence_conflicts(rows)
+        return sorted(
+            {
+                f"{_sanitize_text(item.get('conflict_type'), 40)}_conflict"
+                for item in conflicts
+                if _sanitize_text(item.get("conflict_type"), 40)
+            }
+        )
 
     @staticmethod
     def _detect_evidence_conflicts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

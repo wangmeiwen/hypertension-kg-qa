@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from app.a2a.conflict_detection import detect_evidence_conflicts
+from app.a2a.conflict_detection import (
+    detect_evidence_conflicts,
+    extract_claim_frames,
+)
 from app.a2a.models import Evidence
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 
@@ -32,6 +35,7 @@ def test_detects_numeric_conflict_with_sources_and_citations() -> None:
     assert conflict.conflict_type == "numeric"
     assert conflict.values == ["10%", "20%"]
     assert conflict.citations == ["[guide-a p12]", "[guide-b p18]"]
+    assert {frame.topic for frame in conflict.claim_frames} == {"risk_reduction"}
     assert conflict.status == "unresolved"
 
 
@@ -42,6 +46,54 @@ def test_different_applicability_conditions_are_not_treated_as_conflict() -> Non
     ]
 
     assert detect_evidence_conflicts(rows) == []
+
+
+def test_different_measurement_contexts_are_not_treated_as_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "诊室血压目标为 140 mmHg。"),
+        _evidence("guide-b", "家庭血压目标为 135 mmHg。"),
+    ]
+
+    frames = extract_claim_frames(rows)
+
+    assert {tuple(frame.measurement_context) for frame in frames} == {
+        ("clinic",),
+        ("home",),
+    }
+    assert detect_evidence_conflicts(rows) == []
+
+
+def test_compatible_units_are_normalized_before_comparison() -> None:
+    equivalent = [
+        _evidence("guide-a", "血压目标为 140 mmHg。"),
+        _evidence("guide-b", "血压目标为 18.7 kPa。"),
+    ]
+    different = [
+        _evidence("guide-a", "血压目标为 140 mmHg。"),
+        _evidence("guide-b", "血压目标为 18 kPa。"),
+    ]
+
+    assert detect_evidence_conflicts(equivalent) == []
+    conflicts = detect_evidence_conflicts(different)
+    assert len(conflicts) == 1
+    assert conflicts[0].conflict_type == "numeric"
+    assert {frame.normalized_unit for frame in conflicts[0].claim_frames} == {"mmhg"}
+
+
+def test_incompatible_units_are_reported_separately() -> None:
+    rows = [
+        _evidence("guide-a", "血压目标为 140 mmHg。"),
+        _evidence("guide-b", "血压目标为 10 mg。"),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    assert len(conflicts) == 1
+    assert conflicts[0].conflict_type == "unit"
+    assert {frame.normalized_unit for frame in conflicts[0].claim_frames} == {
+        "mmhg",
+        "mg",
+    }
 
 
 def test_different_values_from_same_canonical_source_are_not_cross_source_conflict() -> (

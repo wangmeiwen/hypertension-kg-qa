@@ -265,17 +265,39 @@ class SubAgentResult(BaseModel):
     telemetry: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvidenceClaimFrame(BaseModel):
+    """从 Evidence 解析出的结构化结论框架。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    frame_id: str
+    evidence_id: str
+    publication_id: str
+    citation: str = ""
+    sentence: str
+    topic: str
+    numeric_value: str = ""
+    normalized_value: str = ""
+    unit: str = ""
+    normalized_unit: str = ""
+    population: list[str] = Field(default_factory=list)
+    measurement_context: list[str] = Field(default_factory=list)
+
+
 class EvidenceConflict(BaseModel):
     """融合证据中尚未解决的结构化冲突。"""
 
     model_config = ConfigDict(extra="forbid")
 
     conflict_id: str
-    conflict_type: Literal["numeric"] = "numeric"
+    conflict_type: Literal["numeric", "unit", "population", "measurement_context"] = (
+        "numeric"
+    )
     claim_key: str
     values: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
+    claim_frames: list[EvidenceClaimFrame] = Field(default_factory=list)
     status: Literal["unresolved", "resolved"] = "unresolved"
 
 
