@@ -12,10 +12,8 @@ from app.a2a.answer_context import evidence_citation
 from app.a2a.evidence_fusion import evidence_identity, publication_identity
 from app.a2a.models import Evidence, EvidenceClaimFrame, EvidenceConflict
 from app.a2a.numeric_claims import extract_structured_numeric_claims
+from app.a2a.recommendation_claims import recommendation_polarity
 
-RecommendationPolarity = Literal[
-    "unknown", "recommend", "consider", "discourage", "contraindicated"
-]
 TreatmentPriority = Literal["", "first_line", "second_line", "third_line"]
 
 _POPULATION_ALIASES = (
@@ -38,12 +36,6 @@ _INTERVENTION_ALIASES = (
     ("diuretic", ("利尿剂",)),
     ("combination_therapy", ("联合治疗", "联合用药")),
     ("monotherapy", ("单药治疗", "单药用药")),
-)
-_POLARITY_PATTERNS: tuple[tuple[RecommendationPolarity, re.Pattern[str]], ...] = (
-    ("contraindicated", re.compile(r"(?:禁忌|禁止|不得使用|应避免|避免使用)")),
-    ("discourage", re.compile(r"(?:不推荐|不建议|不应使用)")),
-    ("consider", re.compile(r"(?:可考虑|可以考虑)")),
-    ("recommend", re.compile(r"(?:推荐|建议|应使用|首选)")),
 )
 _PRIORITY_PATTERNS: tuple[tuple[TreatmentPriority, re.Pattern[str]], ...] = (
     ("first_line", re.compile(r"(?:一线|首选)")),
@@ -79,13 +71,6 @@ def _canonical_terms(
         for canonical, terms in aliases
         if any(term.casefold() in lowered for term in terms)
     ]
-
-
-def _recommendation_polarity(sentence: str) -> RecommendationPolarity:
-    for polarity, pattern in _POLARITY_PATTERNS:
-        if pattern.search(sentence):
-            return polarity
-    return "unknown"
 
 
 def _treatment_priority(sentence: str) -> TreatmentPriority:
@@ -147,7 +132,7 @@ def extract_claim_frames(evidence_rows: list[Evidence]) -> list[EvidenceClaimFra
                 continue
             population = _canonical_terms(sentence, _POPULATION_ALIASES)
             measurement_context = _canonical_terms(sentence, _MEASUREMENT_ALIASES)
-            polarity = _recommendation_polarity(sentence)
+            polarity = recommendation_polarity(sentence)
             intervention = _intervention(sentence)
             treatment_priority = _treatment_priority(sentence)
             evidence_grade = _evidence_grade(sentence)

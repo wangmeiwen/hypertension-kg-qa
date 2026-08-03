@@ -31,6 +31,10 @@ from app.a2a.numeric_claims import (
     extract_structured_numeric_claims,
     numeric_claim_matches_requirement,
 )
+from app.a2a.recommendation_claims import (
+    recommendation_polarities_conflict,
+    recommendation_polarity,
+)
 
 _ANSWER_SEGMENT_PATTERN = re.compile(
     r"[^。！？!?\n]+(?:[。！？!?](?:[ \t]*\[[^\]\n]+\])*)?"
@@ -254,6 +258,30 @@ def _numeric_claims_are_faithful(
     )
 
 
+def _recommendation_claims_are_faithful(
+    *,
+    item: AnswerMustCoverContext,
+    answer_claims: list[StructuredAnswerClaim],
+) -> tuple[bool, list[str]]:
+    evidence_by_id = {row.evidence_id: row for row in item.supporting_evidence}
+    mismatched_claim_ids: list[str] = []
+    for answer_claim in answer_claims:
+        answer_polarity = recommendation_polarity(answer_claim.text)
+        if answer_polarity == "unknown":
+            continue
+        evidence_polarities = [
+            recommendation_polarity(evidence_by_id[evidence_id].support_excerpt)
+            for evidence_id in answer_claim.evidence_ids
+            if evidence_id in evidence_by_id
+        ]
+        if any(
+            recommendation_polarities_conflict(answer_polarity, evidence_polarity)
+            for evidence_polarity in evidence_polarities
+        ):
+            mismatched_claim_ids.append(answer_claim.claim_id)
+    return not mismatched_claim_ids, list(dict.fromkeys(mismatched_claim_ids))
+
+
 def validate_answer_generation(
     answer: str, context: AnswerGenerationContext
 ) -> AnswerValidationResult:
@@ -316,7 +344,18 @@ def validate_answer_generation(
             ),
         )
         numeric_mismatch_ids.extend(mismatched_claims)
-        if supported and has_citation and not missing_conditions and numeric_faithful:
+        polarity_faithful, polarity_mismatches = _recommendation_claims_are_faithful(
+            item=item,
+            answer_claims=item_answer_claims,
+        )
+        unsupported_claim_ids.extend(polarity_mismatches)
+        if (
+            supported
+            and has_citation
+            and not missing_conditions
+            and numeric_faithful
+            and polarity_faithful
+        ):
             covered_ids.append(item.item_id)
             continue
         missing_ids.append(item.item_id)
@@ -324,7 +363,7 @@ def validate_answer_generation(
             missing_citation_ids.append(item.item_id)
         if missing_conditions:
             missing_applicability[item.item_id] = missing_conditions
-        if has_citation and not numeric_faithful:
+        if has_citation and (not numeric_faithful or not polarity_faithful):
             unsupported_claim_ids.extend(row.claim_id for row in item_answer_claims)
 
     unresolved_conflict_ids = [
