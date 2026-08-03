@@ -657,6 +657,52 @@ def test_post_validation_accepts_definition_thresholds_across_ocr_linebreaks() -
     assert result.numeric_mismatch_ids == []
 
 
+def test_post_validation_accepts_logical_blood_pressure_pairs_from_guide_table() -> (
+    None
+):
+    plan = build_question_plan("动态血压诊断阈值是多少？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=16,
+        content=(
+            "基于动态血压的高血压诊断标准"
+            "|血压类型|测量方式|收缩压/舒张压(mmHg)|"
+            "|动态血压|24h平均值|≥130和/或≥80|"
+            "|动态血压|白天平均值|≥135和/或≥85|"
+            "|动态血压|夜晚平均值|≥120和/或≥70|"
+        ),
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+            applicability_conditions=["动态血压"],
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "针对动态血压，诊断阈值包括：24h平均值≥130和/或≥80mmHg；"
+        "白天平均值≥135和/或≥85mmHg；"
+        "夜晚平均值≥120和/或≥70mmHg[guide-a p16]。",
+        context,
+    )
+
+    assert result.valid is True
+    assert result.numeric_mismatch_ids == []
+
+
 def test_citation_must_be_locally_bound_to_answer_claim() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")

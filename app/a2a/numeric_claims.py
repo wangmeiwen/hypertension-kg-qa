@@ -28,6 +28,13 @@ _BLOOD_PRESSURE_TABLE_ROW_PATTERN = re.compile(
     r"(?P<diastolic>\d{2,3})(?:\s*mm\s*hg)?(?=\||$)",
     flags=re.IGNORECASE,
 )
+_INLINE_BLOOD_PRESSURE_LOGICAL_PAIR_PATTERN = re.compile(
+    r"(?P<systolic_comparator>≤|>=|≥|<=|＜|<|＞|>)?\s*"
+    r"(?P<systolic>\d{2,3})\s*和?\s*[/／]\s*或\s*"
+    r"(?P<diastolic_comparator>≤|>=|≥|<=|＜|<|＞|>)?\s*"
+    r"(?P<diastolic>\d{2,3})\s*mm\s*hg",
+    flags=re.IGNORECASE,
+)
 _NUMERIC_PATTERN = re.compile(
     r"(?P<comparator>≤|>=|≥|<=|＜|<|＞|>|低于|小于|不超过|以下|"
     r"高于|大于|至少|不低于|不少于|以上)?\s*"
@@ -271,6 +278,52 @@ def _extract_blood_pressure_table_claims(text: str) -> list[StructuredNumericCla
     return claims
 
 
+def _extract_inline_blood_pressure_logical_pair_claims(
+    *,
+    clause: str,
+    predicate_context: str,
+    population: list[str],
+    measurement_context: list[str],
+) -> list[StructuredNumericClaim]:
+    """解析正文中“收缩压和/或舒张压”共用单位的成对阈值。"""
+    predicate = _subject_and_predicate(clause, "blood_pressure", predicate_context)[1]
+    if not predicate:
+        return []
+    claims: list[StructuredNumericClaim] = []
+    for matched in _INLINE_BLOOD_PRESSURE_LOGICAL_PAIR_PATTERN.finditer(clause):
+        for subject, value_field, comparator_field in (
+            (
+                "systolic_blood_pressure",
+                "systolic",
+                "systolic_comparator",
+            ),
+            (
+                "diastolic_blood_pressure",
+                "diastolic",
+                "diastolic_comparator",
+            ),
+        ):
+            raw_value = matched.group(value_field)
+            raw_comparator = matched.group(comparator_field) or ""
+            claims.append(
+                StructuredNumericClaim(
+                    subject=subject,
+                    predicate=predicate,
+                    raw_value=raw_value,
+                    normalized_value=raw_value,
+                    comparator=_comparator(raw_comparator, raw_value),
+                    unit="mmhg",
+                    unit_family="blood_pressure",
+                    population=population,
+                    measurement_context=measurement_context,
+                    intervention=_intervention(clause),
+                    role="claim_value",
+                    local_text=clause,
+                )
+            )
+    return claims
+
+
 def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]:
     """按局部子句提取数值，避免把年龄、年份和频次当作目标值。"""
     normalized_text = normalize_numeric_ocr_text(text)
@@ -298,6 +351,14 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
             measurement_context = (
                 _canonical_terms(clause, _MEASUREMENT_ALIASES)
                 or sentence_measurement_context
+            )
+            claims.extend(
+                _extract_inline_blood_pressure_logical_pair_claims(
+                    clause=clause,
+                    predicate_context=predicate_context,
+                    population=population,
+                    measurement_context=measurement_context,
+                )
             )
             for matched in _NUMERIC_PATTERN.finditer(clause):
                 unit_family, factor, unit = _canonical_unit(matched.group("unit"))
