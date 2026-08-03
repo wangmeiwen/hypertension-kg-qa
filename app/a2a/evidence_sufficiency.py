@@ -53,8 +53,8 @@ def assess_evidence_sufficiency(
             2 if item.claim_type in _MULTI_SOURCE_CLAIM_TYPES else 1,
         )
         missing_reasons: list[str] = []
-        if item.status != "covered":
-            missing_reasons.append("must_cover_not_covered")
+        if item.support_status != "supported":
+            missing_reasons.append("claim_not_supported")
         if not fusion.evidence:
             missing_reasons.append("direct_evidence")
         if fusion.evidence and fusion.distinct_publication_count < required_sources:
@@ -69,6 +69,7 @@ def assess_evidence_sufficiency(
             MustCoverSufficiency(
                 item_id=item.item_id,
                 claim_type=item.claim_type,
+                support_status=item.support_status,
                 sufficient=not missing_reasons,
                 evidence_count=len(fusion.evidence),
                 distinct_publication_count=fusion.distinct_publication_count,

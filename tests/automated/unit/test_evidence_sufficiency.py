@@ -30,6 +30,7 @@ def _knowledge_graph(source_id: str, content: str) -> Evidence:
 def test_fact_claim_accepts_one_direct_source_after_coverage() -> None:
     plan = build_question_plan("高血压如何监测？", MedicalRiskAssessment())
     item = plan.must_cover[0]
+    item.support_status = "supported"
     item.status = "covered"
 
     assessment = assess_evidence_sufficiency(
@@ -42,9 +43,29 @@ def test_fact_claim_accepts_one_direct_source_after_coverage() -> None:
     assert assessment.sufficiency_ratio == 1.0
 
 
+def test_evidence_presence_cannot_replace_claim_support() -> None:
+    plan = build_question_plan(
+        "80 岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+
+    assessment = assess_evidence_sufficiency(
+        question_plan=plan,
+        evidence_by_item={
+            item.item_id: [("rag", _document("guide", "老年人应定期监测血压"))]
+        },
+        minimum_distinct_publications=1,
+    )
+
+    assert assessment.sufficient is False
+    assert assessment.items[0].support_status == "uncertain"
+    assert "claim_not_supported" in assessment.items[0].missing_reasons
+
+
 def test_numeric_claim_requires_two_distinct_publications() -> None:
     plan = build_question_plan("血压目标是多少？", MedicalRiskAssessment())
     item = plan.must_cover[0]
+    item.support_status = "supported"
     item.status = "covered"
     one_source = {item.item_id: [("rag", _document("guide-a", "目标为130 mmHg"))]}
     two_sources = {
@@ -73,6 +94,7 @@ def test_numeric_claim_requires_two_distinct_publications() -> None:
 def test_relation_claim_requires_knowledge_graph_evidence() -> None:
     plan = build_question_plan("高血压和肾病有什么关系？", MedicalRiskAssessment())
     item = plan.must_cover[0]
+    item.support_status = "supported"
     item.status = "covered"
 
     document_only = assess_evidence_sufficiency(
@@ -98,6 +120,7 @@ def test_high_risk_gate_raises_source_requirement_for_fact_claim() -> None:
         MedicalRiskAssessment(risk_level="high", action="evidence_required"),
     )
     item = plan.must_cover[0]
+    item.support_status = "supported"
     item.status = "covered"
 
     assessment = assess_evidence_sufficiency(
@@ -114,6 +137,7 @@ def test_high_risk_gate_raises_source_requirement_for_fact_claim() -> None:
 def test_unknown_kg_origin_cannot_satisfy_publication_requirement() -> None:
     plan = build_question_plan("高血压和肾病有什么关系？", MedicalRiskAssessment())
     item = plan.must_cover[0]
+    item.support_status = "supported"
     item.status = "covered"
     unknown = Evidence(
         source_type="knowledge_graph",
@@ -140,6 +164,7 @@ def test_controller_counts_evidence_per_must_cover_without_cross_contamination()
         "血压目标是多少，并说明指南来源", MedicalRiskAssessment()
     )
     for item in plan.must_cover:
+        item.support_status = "supported"
         item.status = "covered"
     numeric_item, source_item = plan.must_cover
     observations = [

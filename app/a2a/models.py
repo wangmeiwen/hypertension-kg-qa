@@ -7,6 +7,13 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AgentType = Literal["kg", "rag"]
+ClaimSupportStatus = Literal[
+    "supported",
+    "partially_supported",
+    "contradicted",
+    "irrelevant",
+    "uncertain",
+]
 
 
 class Evidence(BaseModel):
@@ -82,7 +89,23 @@ class MustCoverItem(BaseModel):
     required_evidence_types: list[AgentType] = Field(default_factory=list)
     dependency_on: list[str] = Field(default_factory=list)
     applicability_conditions: list[str] = Field(default_factory=list)
+    support_status: ClaimSupportStatus = "uncertain"
     status: Literal["pending", "covered", "missing"] = "pending"
+
+
+class ClaimEvidenceAssessment(BaseModel):
+    """一条 Evidence 对目标 claim 的支持判定。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    must_cover_id: str
+    evidence_id: str
+    support_status: ClaimSupportStatus
+    support_excerpt: str = Field(default="", max_length=2000)
+    applicability_conditions: list[str] = Field(default_factory=list)
+    reason: str = Field(default="", max_length=1000)
+    verifier_version: str = Field(default="claim_support.v1", max_length=64)
 
 
 class RetrievalTask(BaseModel):
@@ -109,6 +132,9 @@ class QuestionPlan(BaseModel):
     medical_risk_level: Literal["low", "high", "emergency"] = "low"
     must_cover: list[MustCoverItem] = Field(default_factory=list)
     retrieval_tasks: list[RetrievalTask] = Field(default_factory=list)
+    claim_evidence_assessments: list[ClaimEvidenceAssessment] = Field(
+        default_factory=list
+    )
     answer_constraints: list[str] = Field(default_factory=list)
 
 
@@ -119,6 +145,7 @@ class MustCoverSufficiency(BaseModel):
 
     item_id: str
     claim_type: str
+    support_status: ClaimSupportStatus = "uncertain"
     sufficient: bool
     evidence_count: int = Field(default=0, ge=0)
     distinct_publication_count: int = Field(default=0, ge=0)
@@ -177,6 +204,7 @@ class SubAgentResult(BaseModel):
     query_records: list[dict[str, Any]] = Field(default_factory=list)
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    claim_assessments: list[ClaimEvidenceAssessment] = Field(default_factory=list)
     signal: str = Field(default="none")
     coverage: dict[str, Any] = Field(default_factory=dict)
     missing_points: list[str] = Field(default_factory=list)

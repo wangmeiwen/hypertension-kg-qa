@@ -18,10 +18,16 @@ from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClient
 from app.a2a.conflict_detection import detect_evidence_conflicts
 from app.a2a.evidence_bundle import build_evidence_bundle
-from app.a2a.evidence_fusion import EvidenceFusionResult, fuse_evidence
+from app.a2a.evidence_fusion import (
+    EvidenceFusionResult,
+    evidence_identity,
+    fuse_evidence,
+)
 from app.a2a.evidence_sufficiency import assess_evidence_sufficiency
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
+    ClaimEvidenceAssessment,
+    ClaimSupportStatus,
     Evidence,
     MustCoverItem,
     OrchestratorAction,
@@ -76,6 +82,20 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
 def _coerce_list(value: Any) -> list[Any]:
     """将输入转换为列表，不可转换时返回空列表。"""
     return value if isinstance(value, list) else []
+
+
+def _evidence_ids(rows: Any) -> set[str]:
+    """提取可通过 Evidence 契约校验的对象身份。"""
+    identities: set[str] = set()
+    for row in _coerce_list(rows):
+        try:
+            evidence = (
+                row if isinstance(row, Evidence) else Evidence.model_validate(row)
+            )
+        except (ValidationError, ValueError, TypeError):
+            continue
+        identities.add(evidence_identity(evidence))
+    return identities
 
 
 class PromptBudgetExceededError(RuntimeError):
@@ -876,6 +896,11 @@ class UnifiedOrchestratorController:
             )
             if normalized is not None
         ]
+        claim_assessments = [
+            item
+            for item in _coerce_list(payload.get("claim_assessments"))
+            if isinstance(item, dict)
+        ]
         return {
             "agent": "history",
             "action": "call_history_read",
@@ -892,6 +917,7 @@ class UnifiedOrchestratorController:
             "duration_ms": float(meta.get("duration_ms") or 0.0),
             "token_usage": normalize_token_usage(meta.get("token_usage")),
             "evidence": evidence,
+            "claim_assessments": claim_assessments,
             "result": {
                 "ok": bool(tool_result.get("ok")),
                 "error": str(tool_result.get("error") or ""),
@@ -940,6 +966,11 @@ class UnifiedOrchestratorController:
         evidence_summary = self._summarize_evidence(evidence, limit=3)
         risk_flags = self._detect_numeric_conflicts(evidence)
         telemetry = result.telemetry if isinstance(result.telemetry, dict) else {}
+        claim_assessments = [
+            item.model_dump() if isinstance(item, ClaimEvidenceAssessment) else item
+            for item in getattr(result, "claim_assessments", [])
+            if isinstance(item, (ClaimEvidenceAssessment, dict))
+        ]
         return {
             "agent": str(result.target_agent or ""),
             "action": str(action.get("action") or ""),
@@ -953,6 +984,7 @@ class UnifiedOrchestratorController:
             "token_usage": normalize_token_usage(result.token_usage),
             "query_records": query_records,
             "evidence": evidence,
+            "claim_assessments": claim_assessments,
             "result": {
                 "ok": True,
                 "error": "",
@@ -967,6 +999,7 @@ class UnifiedOrchestratorController:
                     "queries_used": result.queries_used,
                     "query_records": query_records,
                     "evidence_count": len(evidence),
+                    "claim_assessments": claim_assessments,
                     "retrieval_risk_flags": risk_flags,
                 },
             },
@@ -1096,10 +1129,96 @@ class UnifiedOrchestratorController:
         return list(await asyncio.gather(*(execute(task) for task in tasks)))
 
     @staticmethod
+    def _record_claim_assessments(
+        question_plan: QuestionPlan,
+        rows: Any,
+        *,
+        task_id: str,
+        must_cover_id: str,
+        allowed_evidence_ids: set[str],
+    ) -> None:
+        """记录与当前计划任务精确匹配的 claim 支持判定。"""
+        for row in _coerce_list(rows):
+            try:
+                assessment = ClaimEvidenceAssessment.model_validate(row)
+            except (ValidationError, ValueError, TypeError):
+                continue
+            if (
+                assessment.task_id != task_id
+                or assessment.must_cover_id != must_cover_id
+                or assessment.evidence_id not in allowed_evidence_ids
+            ):
+                continue
+            key = (
+                assessment.task_id,
+                assessment.must_cover_id,
+                assessment.evidence_id,
+                assessment.verifier_version,
+            )
+            question_plan.claim_evidence_assessments = [
+                item
+                for item in question_plan.claim_evidence_assessments
+                if (
+                    item.task_id,
+                    item.must_cover_id,
+                    item.evidence_id,
+                    item.verifier_version,
+                )
+                != key
+            ]
+            question_plan.claim_evidence_assessments.append(assessment)
+
+    @staticmethod
+    def _refresh_must_cover_support(
+        question_plan: QuestionPlan, must_cover_id: str
+    ) -> None:
+        """根据显式支持判定刷新 must-cover，而不读取 Evidence 数量。"""
+        must_cover_item = next(
+            (
+                item
+                for item in question_plan.must_cover
+                if item.item_id == must_cover_id
+            ),
+            None,
+        )
+        if must_cover_item is None:
+            return
+        support_statuses = {
+            item.support_status
+            for item in question_plan.claim_evidence_assessments
+            if item.must_cover_id == must_cover_id
+        }
+        aggregate_status: ClaimSupportStatus
+        if "contradicted" in support_statuses:
+            aggregate_status = "contradicted"
+        elif "supported" in support_statuses:
+            aggregate_status = "supported"
+        elif "partially_supported" in support_statuses:
+            aggregate_status = "partially_supported"
+        elif support_statuses == {"irrelevant"}:
+            aggregate_status = "irrelevant"
+        else:
+            aggregate_status = "uncertain"
+        must_cover_item.support_status = aggregate_status
+        if aggregate_status == "supported":
+            must_cover_item.status = "covered"
+            return
+        task_statuses = {
+            item.status
+            for item in question_plan.retrieval_tasks
+            if item.must_cover_id == must_cover_id
+        }
+        must_cover_item.status = (
+            "pending"
+            if task_statuses.intersection({"pending", "needs_supplement"})
+            else "missing"
+        )
+
+    @staticmethod
     def _update_question_plan(
         question_plan: QuestionPlan, task: SubTask, result: Any
     ) -> None:
-        """根据一次子代理结果更新检索任务与 must-cover 状态。"""
+        """分别更新检索执行状态和 claim 支持状态。"""
         must_cover_item = next(
             (
                 item
@@ -1120,25 +1239,19 @@ class UnifiedOrchestratorController:
         )
         if must_cover_item is None or retrieval_task is None:
             return
-        succeeded = bool(getattr(result, "direct_support", False)) or bool(
-            getattr(result, "evidence", [])
+        reason = str(getattr(result, "reason", "") or "").strip()
+        technical_failure = reason.startswith(("error:", "subagent_error:"))
+        retrieval_task.status = "failed" if technical_failure else "completed"
+        UnifiedOrchestratorController._record_claim_assessments(
+            question_plan,
+            getattr(result, "claim_assessments", []),
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            allowed_evidence_ids=_evidence_ids(getattr(result, "evidence", [])),
         )
-        retrieval_task.status = "completed" if succeeded else "failed"
-
-        required_tasks = [
-            item
-            for item in question_plan.retrieval_tasks
-            if item.must_cover_id == must_cover_item.item_id
-        ]
-        statuses = {item.status for item in required_tasks}
-        if statuses == {"completed"}:
-            must_cover_item.status = "covered"
-        elif not statuses.intersection({"pending", "needs_supplement"}) and (
-            "failed" in statuses
-        ):
-            must_cover_item.status = "missing"
-        else:
-            must_cover_item.status = "pending"
+        UnifiedOrchestratorController._refresh_must_cover_support(
+            question_plan, must_cover_item.item_id
+        )
 
     @staticmethod
     def _update_question_plan_from_history(
@@ -1148,10 +1261,6 @@ class UnifiedOrchestratorController:
     ) -> None:
         """在历史 Evidence 能明确对应问题点时更新计划覆盖。"""
         payload = _coerce_dict(history_result.get("result"))
-        if not bool(payload.get("matched")) or not _coerce_list(
-            payload.get("evidence")
-        ):
-            return
         must_cover_id = _sanitize_text(action.get("must_cover_id"), 64)
         matched_item = next(
             (
@@ -1176,8 +1285,19 @@ class UnifiedOrchestratorController:
         )
         if matched_task is None:
             return
-        matched_item.status = "covered"
-        matched_task.status = "completed"
+        matched_task.status = (
+            "completed" if bool(history_result.get("ok")) else "failed"
+        )
+        UnifiedOrchestratorController._record_claim_assessments(
+            question_plan,
+            payload.get("claim_assessments"),
+            task_id=matched_task.task_id,
+            must_cover_id=matched_item.item_id,
+            allowed_evidence_ids=_evidence_ids(payload.get("evidence")),
+        )
+        UnifiedOrchestratorController._refresh_must_cover_support(
+            question_plan, matched_item.item_id
+        )
 
     @staticmethod
     def _mark_supplement_tasks(
@@ -1223,9 +1343,27 @@ class UnifiedOrchestratorController:
             "coverage_ratio": round(len(covered) / total, 4) if total else 0.0,
             "complete": bool(total) and len(covered) == total,
             "uncovered_items": [
-                {"item_id": item.item_id, "question": item.question}
+                {
+                    "item_id": item.item_id,
+                    "question": item.question,
+                    "support_status": item.support_status,
+                }
                 for item in [*pending, *missing]
             ],
+            "support_status_counts": {
+                status: sum(
+                    1
+                    for item in question_plan.must_cover
+                    if item.support_status == status
+                )
+                for status in (
+                    "supported",
+                    "partially_supported",
+                    "contradicted",
+                    "irrelevant",
+                    "uncertain",
+                )
+            },
         }
 
     def _retrieval_progress_state(

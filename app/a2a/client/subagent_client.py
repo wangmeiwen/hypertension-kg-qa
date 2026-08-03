@@ -57,6 +57,10 @@ class SubAgentClient:
         tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
         evidence_obj = first_item.get("evidence")
         evidence = evidence_obj if isinstance(evidence_obj, list) else []
+        claim_assessments_obj = first_item.get("claim_assessments")
+        claim_assessments = (
+            claim_assessments_obj if isinstance(claim_assessments_obj, list) else []
+        )
 
         signal = str(first_item.get("signal") or "").strip()
         coverage_obj = first_item.get("coverage")
@@ -114,6 +118,7 @@ class SubAgentClient:
             query_records=query_records,
             tool_results=tool_results,
             evidence=evidence,
+            claim_assessments=claim_assessments,
             signal=signal,
             coverage=coverage,
             missing_points=[str(item) for item in missing_points],

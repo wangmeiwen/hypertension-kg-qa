@@ -97,6 +97,11 @@ class GraphSubAgent:
                         else []
                     ),
                     "evidence": evidence,
+                    "claim_assessments": (
+                        result.get("claim_assessments")
+                        if isinstance(result.get("claim_assessments"), list)
+                        else []
+                    ),
                     "signal": str(result.get("signal") or "none"),
                     "coverage": (
                         result.get("coverage")

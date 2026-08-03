@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
+from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import Evidence, SubAgentResult, SubTask
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
@@ -35,6 +36,7 @@ def test_answer_readiness_requires_all_must_cover_items() -> None:
     pending = controller._assess_answer_readiness(
         observations, MedicalRiskAssessment(), plan
     )
+    plan.must_cover[0].support_status = "supported"
     plan.must_cover[0].status = "covered"
     covered = controller._assess_answer_readiness(
         observations, MedicalRiskAssessment(), plan
@@ -49,15 +51,33 @@ def test_answer_readiness_requires_all_must_cover_items() -> None:
 
 def test_history_evidence_covers_only_unambiguous_plan_item() -> None:
     single = build_question_plan("如何监测血压？", MedicalRiskAssessment())
+    single_evidence = _evidence()
+    single_task = single.retrieval_tasks[0]
     UnifiedOrchestratorController._update_question_plan_from_history(
         single,
         {
             "action": "call_history_read",
             "history_id": "history-1",
-            "task_id": single.retrieval_tasks[0].task_id,
+            "task_id": single_task.task_id,
             "must_cover_id": single.must_cover[0].item_id,
         },
-        {"result": {"matched": True, "evidence": [_evidence()]}},
+        {
+            "ok": True,
+            "result": {
+                "matched": True,
+                "evidence": [single_evidence],
+                "claim_assessments": [
+                    {
+                        "task_id": single_task.task_id,
+                        "must_cover_id": single.must_cover[0].item_id,
+                        "evidence_id": evidence_identity(
+                            Evidence.model_validate(single_evidence)
+                        ),
+                        "support_status": "supported",
+                    }
+                ],
+            },
+        },
     )
     assert single.must_cover[0].status == "covered"
 
@@ -80,6 +100,7 @@ def test_history_evidence_covers_only_unambiguous_plan_item() -> None:
 def test_insufficient_must_cover_reopens_only_its_tasks_for_supplement() -> None:
     plan = build_question_plan("如何监测血压，并说明指南来源", MedicalRiskAssessment())
     for item in plan.must_cover:
+        item.support_status = "supported"
         item.status = "covered"
     for task in plan.retrieval_tasks:
         task.status = "completed"

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
-from app.a2a.models import Evidence, SubAgentResult
+from app.a2a.models import ClaimEvidenceAssessment, Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -59,16 +60,30 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
     assert kg_task.must_cover == [plan.must_cover[0].question]
     assert kg_task.coverage_status == "pending"
 
+    kg_evidence = Evidence(source_id="kg-1", content="图谱证据")
     controller._update_question_plan(
         plan,
         kg_task,
         SubAgentResult(
+            task_id=kg_task.task_id,
+            must_cover_id=kg_task.must_cover_id,
             target_agent="kg",
             direct_support=True,
-            evidence=[Evidence(source_id="kg-1", content="图谱证据")],
+            evidence=[kg_evidence],
+            claim_assessments=[
+                ClaimEvidenceAssessment(
+                    task_id=kg_task.task_id,
+                    must_cover_id=kg_task.must_cover_id,
+                    evidence_id=evidence_identity(kg_evidence),
+                    support_status="supported",
+                    support_excerpt="图谱证据",
+                    reason="测试显式支持判定",
+                )
+            ],
         ),
     )
-    assert plan.must_cover[0].status == "pending"
+    assert plan.must_cover[0].support_status == "supported"
+    assert plan.must_cover[0].status == "covered"
 
     planned_rag_task = plan.retrieval_tasks[1]
     rag_task = controller._build_subtask(
@@ -84,6 +99,8 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
         plan,
         rag_task,
         SubAgentResult(
+            task_id=rag_task.task_id,
+            must_cover_id=rag_task.must_cover_id,
             target_agent="rag",
             direct_support=True,
             evidence=[Evidence(source_id="doc-1", content="文档证据")],
@@ -92,6 +109,94 @@ def test_subtask_uses_plan_fields_and_updates_coverage() -> None:
 
     assert plan.must_cover[0].status == "covered"
     assert {task.status for task in plan.retrieval_tasks} == {"completed"}
+
+
+def test_evidence_and_direct_support_do_not_cover_claim_without_assessment() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan(
+        "80 岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
+    )
+    planned_task = plan.retrieval_tasks[0]
+    task = controller._build_subtask(
+        action={
+            "action": f"call_{planned_task.target_agent}",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
+        },
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+
+    controller._update_question_plan(
+        plan,
+        task,
+        SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            target_agent=task.target_agent,
+            direct_support=True,
+            evidence=[
+                Evidence(
+                    source_id="monitoring-1",
+                    content="老年人应定期监测血压。",
+                )
+            ],
+            claim_assessments=[
+                ClaimEvidenceAssessment(
+                    task_id=task.task_id,
+                    must_cover_id=task.must_cover_id,
+                    evidence_id="evidence:document:not-returned",
+                    support_status="supported",
+                )
+            ],
+        ),
+    )
+
+    assert planned_task.status == "completed"
+    assert plan.must_cover[0].support_status == "uncertain"
+    assert plan.must_cover[0].status == "pending"
+
+
+def test_contradicted_assessment_overrides_supported_claim_state() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+
+    for index, planned_task in enumerate(plan.retrieval_tasks):
+        task = controller._build_subtask(
+            action={
+                "action": f"call_{planned_task.target_agent}",
+                "task_id": planned_task.task_id,
+                "must_cover_id": planned_task.must_cover_id,
+            },
+            max_tool_calls=3,
+            question_plan=plan,
+        )
+        evidence = Evidence(
+            source_type=planned_task.target_agent,
+            source_id=f"evidence-{index}",
+            content="支持" if index == 0 else "反证",
+        )
+        controller._update_question_plan(
+            plan,
+            task,
+            SubAgentResult(
+                task_id=task.task_id,
+                must_cover_id=task.must_cover_id,
+                target_agent=task.target_agent,
+                evidence=[evidence],
+                claim_assessments=[
+                    ClaimEvidenceAssessment(
+                        task_id=task.task_id,
+                        must_cover_id=task.must_cover_id,
+                        evidence_id=evidence_identity(evidence),
+                        support_status=("supported" if index == 0 else "contradicted"),
+                    )
+                ],
+            ),
+        )
+
+    assert plan.must_cover[0].support_status == "contradicted"
+    assert plan.must_cover[0].status == "missing"
 
 
 def test_plan_action_requires_exact_task_binding() -> None:

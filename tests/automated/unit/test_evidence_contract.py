@@ -8,6 +8,7 @@ from pydantic import ValidationError
 import pytest
 
 from app.a2a.evidence import build_kg_evidence, build_rag_evidence
+from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
@@ -509,6 +510,16 @@ def test_orchestrator_history_action_is_reachable() -> None:
                     "history_id": "h-1-2",
                     "user_question": "历史问题",
                     "evidence": [evidence],
+                    "claim_assessments": [
+                        {
+                            "task_id": plan.retrieval_tasks[0].task_id,
+                            "must_cover_id": plan.must_cover[0].item_id,
+                            "evidence_id": evidence_identity(
+                                Evidence.model_validate(evidence)
+                            ),
+                            "support_status": "supported",
+                        }
+                    ],
                 },
             }
 
