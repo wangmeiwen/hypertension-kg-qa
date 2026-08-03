@@ -16,7 +16,12 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
-from app.a2a.models import Evidence, SubAgentConstraints, SubTask
+from app.a2a.models import (
+    Evidence,
+    OrchestratorAction,
+    SubAgentConstraints,
+    SubTask,
+)
 from app.a2a.telemetry import (
     empty_token_usage,
     merge_token_usage,
@@ -41,8 +46,8 @@ def _safe_json(value: Any, max_len: int = 2400) -> str:
     return text[:max_len]
 
 
-def _extract_json_object(text: str) -> dict[str, Any]:
-    """从模型输出中提取首个 JSON 对象。"""
+def _parse_json_object(text: str) -> dict[str, Any]:
+    """严格解析模型返回的 JSON 对象。"""
     raw = str(text or "").strip()
     if not raw:
         return {}
@@ -50,15 +55,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
         parsed = json.loads(raw)
         return parsed if isinstance(parsed, dict) else {}
     except (TypeError, ValueError, json.JSONDecodeError):
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start < 0 or end <= start:
-            return {}
-        try:
-            parsed = json.loads(raw[start : end + 1])
-            return parsed if isinstance(parsed, dict) else {}
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {}
+        return {}
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
@@ -73,6 +70,10 @@ def _coerce_list(value: Any) -> list[Any]:
 
 class PromptBudgetExceededError(RuntimeError):
     """主控提示词压缩两次后仍超限时抛出。"""
+
+
+class OrchestratorActionValidationError(RuntimeError):
+    """主控动作连续两次未通过结构化校验时抛出。"""
 
 
 class UnifiedOrchestratorController:
@@ -101,6 +102,9 @@ class UnifiedOrchestratorController:
 
     def _build_system_prompt(self) -> str:
         """构建主控决策提示词。"""
+        action_schema = json.dumps(
+            OrchestratorAction.model_json_schema(), ensure_ascii=False
+        )
         return (
             "你是高血压问答系统的主控agent。\n"
             "你的职责是基于当前用户问题、会话问答记忆、历史检索问题索引，以及已经拿到的工具结果，自主决定下一步动作。\n"
@@ -122,6 +126,7 @@ class UnifiedOrchestratorController:
             '"user_question":"仅 call_history_read 且没有 history_id 时填写历史问题",'
             '"answer":"仅 final_answer 时填写"'
             "}\n"
+            f"输出必须满足以下 JSON Schema：{action_schema}\n"
             "若信息仍不足且已拿到一些证据，也要基于现有证据给出谨慎回答，不要卡住。"
         )
 
@@ -497,7 +502,7 @@ class UnifiedOrchestratorController:
             actor_role="controller",
             actor_name="orchestrator_prompt_compressor",
         )
-        parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
+        parsed = _parse_json_object(str(getattr(response, "content", "") or ""))
         tokens = {
             "prompt_tokens": int(getattr(response, "prompt_tokens", 0) or 0),
             "completion_tokens": int(getattr(response, "completion_tokens", 0) or 0),
@@ -712,34 +717,63 @@ class UnifiedOrchestratorController:
             processing_steps=processing_steps,
             progress_callback=progress_callback,
         )
-        if image_data or file_id:
-            response = await self._client.chat_with_vision_async(
-                messages=messages,
-                image_data=image_data,
-                file_id=file_id,
-                temperature=0.1,
-                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
-                actor_role="controller",
-                actor_name="orchestrator_controller",
+        tokens = normalize_token_usage(compression_tokens)
+        decision_messages = list(messages)
+        last_error = "invalid_orchestrator_action"
+
+        for attempt in range(1, 3):
+            if image_data or file_id:
+                response = await self._client.chat_with_vision_async(
+                    messages=decision_messages,
+                    image_data=image_data,
+                    file_id=file_id,
+                    temperature=0.1,
+                    timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
+                    actor_role="controller",
+                    actor_name="orchestrator_controller",
+                    response_format={"type": "json_object"},
+                )
+            else:
+                response = await self._client.chat_with_tokens_async(
+                    messages=decision_messages,
+                    temperature=0.1,
+                    timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
+                    actor_role="controller",
+                    actor_name="orchestrator_controller",
+                    response_format={"type": "json_object"},
+                )
+
+            merge_token_usage(
+                tokens,
+                {
+                    "prompt_tokens": int(getattr(response, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(
+                        getattr(response, "completion_tokens", 0) or 0
+                    ),
+                    "total_tokens": int(getattr(response, "total_tokens", 0) or 0),
+                },
             )
-        else:
-            response = await self._client.chat_with_tokens_async(
-                messages=messages,
-                temperature=0.1,
-                timeout=self._conf.LLM_REQUEST_TIMEOUT_SECONDS,
-                actor_role="controller",
-                actor_name="orchestrator_controller",
-            )
-        parsed = _extract_json_object(str(getattr(response, "content", "") or ""))
-        tokens = {
-            "prompt_tokens": int(getattr(response, "prompt_tokens", 0) or 0)
-            + int(compression_tokens.get("prompt_tokens") or 0),
-            "completion_tokens": int(getattr(response, "completion_tokens", 0) or 0)
-            + int(compression_tokens.get("completion_tokens") or 0),
-            "total_tokens": int(getattr(response, "total_tokens", 0) or 0)
-            + int(compression_tokens.get("total_tokens") or 0),
-        }
-        return parsed, tokens
+            raw_content = str(getattr(response, "content", "") or "").strip()
+            try:
+                action = OrchestratorAction.model_validate_json(raw_content)
+                return action.model_dump(), tokens
+            except (ValidationError, ValueError, TypeError) as exc:
+                last_error = f"{type(exc).__name__}:{_sanitize_text(exc, 240)}"
+                if attempt >= 2:
+                    break
+                decision_messages = [
+                    *messages,
+                    {"role": "assistant", "content": raw_content[:1200]},
+                    {
+                        "role": "user",
+                        "content": (
+                            "上一次输出未通过 JSON Schema 校验。"
+                            "请修正并只返回一个完整 JSON 对象，不要使用 Markdown。"
+                        ),
+                    },
+                ]
+
+        raise OrchestratorActionValidationError(last_error)
 
     def _build_history_observation(
         self, action: dict[str, Any], tool_result: dict[str, Any]
@@ -1091,6 +1125,44 @@ class UnifiedOrchestratorController:
             "evidence_summary": evidence_summary,
         }
 
+    def _build_invalid_decision_result(
+        self,
+        *,
+        tool_observations: list[dict[str, Any]],
+        processing_steps: list[str],
+        retrieval_round: int,
+        max_turns: int,
+        token_usage: dict[str, int],
+        trace_id: str,
+        compression_state: dict[str, Any],
+        error: str,
+    ) -> dict[str, Any]:
+        """构建主控动作无法通过结构化校验时的安全拒答。"""
+        evidence_summary = self._build_evidence_summary(tool_observations)
+        evidence_summary["answer_mode"] = "abstained_invalid_decision"
+        return {
+            "output": "当前无法可靠解析回答策略，请稍后重试。",
+            "output_type": "orchestrator_abstained_invalid_decision",
+            "confidence": 0.0,
+            "tool_observations": tool_observations,
+            "reflection_events": [],
+            "processing_steps": [
+                *processing_steps,
+                "主控动作连续两次未通过结构化校验，已安全拒答",
+            ],
+            "telemetry": {
+                "controller_mode": "explicit_memory_with_subagents",
+                "retrieval_round": retrieval_round,
+                "max_turns": max_turns,
+                "trace_id": trace_id,
+                **token_usage,
+                "final_source": "invalid_orchestrator_action",
+                "decision_error": _sanitize_text(error, 300),
+                **self._build_budget_telemetry(compression_state),
+            },
+            "evidence_summary": evidence_summary,
+        }
+
     async def run(
         self,
         *,
@@ -1174,6 +1246,17 @@ class UnifiedOrchestratorController:
                     token_usage=token_usage,
                     trace_id=safe_trace_id,
                     compression_state=compression_state,
+                )
+            except OrchestratorActionValidationError as exc:
+                return self._build_invalid_decision_result(
+                    tool_observations=tool_observations,
+                    processing_steps=processing_steps,
+                    retrieval_round=retrieval_round,
+                    max_turns=safe_max_turns,
+                    token_usage=token_usage,
+                    trace_id=safe_trace_id,
+                    compression_state=compression_state,
+                    error=str(exc),
                 )
             merge_token_usage(token_usage, tokens)
             action_name = str(action.get("action") or "").strip()
@@ -1280,6 +1363,17 @@ class UnifiedOrchestratorController:
                     token_usage=token_usage,
                     trace_id=safe_trace_id,
                     compression_state=compression_state,
+                )
+            except OrchestratorActionValidationError as exc:
+                return self._build_invalid_decision_result(
+                    tool_observations=tool_observations,
+                    processing_steps=processing_steps,
+                    retrieval_round=retrieval_round,
+                    max_turns=safe_max_turns,
+                    token_usage=token_usage,
+                    trace_id=safe_trace_id,
+                    compression_state=compression_state,
+                    error=str(exc),
                 )
             merge_token_usage(token_usage, tokens)
             final_answer, answer_tokens = await self._stream_final_answer(

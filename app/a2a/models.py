@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AgentType = Literal["kg", "rag"]
 
@@ -114,6 +114,32 @@ class OrchestratorDecision(BaseModel):
     next_question: str = Field(default="")
     query_hint: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(default="")
+
+
+class OrchestratorAction(BaseModel):
+    """主控模型单轮动作。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["final_answer", "call_kg", "call_rag", "call_history_read"]
+    reason: str = Field(default="", max_length=400)
+    question: str = Field(default="", max_length=1000)
+    history_id: str = Field(default="", max_length=128)
+    user_question: str = Field(default="", max_length=1000)
+    answer: str = Field(default="", max_length=8000)
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> "OrchestratorAction":
+        """校验不同动作所需的字段。"""
+        if self.action == "final_answer" and not self.answer.strip():
+            raise ValueError("final_answer_requires_answer")
+        if (
+            self.action == "call_history_read"
+            and not self.history_id.strip()
+            and not self.user_question.strip()
+        ):
+            raise ValueError("history_read_requires_locator")
+        return self
 
 
 class FinalAnswer(BaseModel):

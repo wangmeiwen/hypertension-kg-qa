@@ -524,6 +524,7 @@ class LLMClient:
         timeout: int = 60,
         actor_role: str | None = None,
         actor_name: str | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """异步调用文本大模型并返回标准化内容和 token 使用量。
 
@@ -533,6 +534,7 @@ class LLMClient:
             timeout: 单次请求超时时间，单位秒。
             actor_role: 调用方角色，用于链路日志。
             actor_name: 调用方名称，用于链路日志。
+            response_format: 模型服务支持的结构化输出格式。
 
         Returns:
             标准化 LLM 响应对象。
@@ -554,6 +556,8 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         request_timeout = max(1, int(timeout or self.conf.LLM_REQUEST_TIMEOUT_SECONDS))
         max_attempts = max(1, int(self.conf.LLM_REQUEST_RETRY_MAX_ATTEMPTS or 1))
         message_hash = _hash_payload(messages)
@@ -990,6 +994,7 @@ class LLMClient:
         timeout: int = 120,
         actor_role: str | None = None,
         actor_name: str | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """异步调用视觉模型，并在用户消息中附加图片数据。
 
@@ -1001,6 +1006,7 @@ class LLMClient:
             timeout: 单次请求超时时间，单位秒。
             actor_role: 调用方角色，用于链路日志。
             actor_name: 调用方名称，用于链路日志。
+            response_format: 模型服务支持的结构化输出格式。
 
         Returns:
             标准化 LLM 响应对象。
@@ -1012,6 +1018,7 @@ class LLMClient:
             timeout,
             actor_role=actor_role,
             actor_name=actor_name,
+            response_format=response_format,
         )
 
     async def stream_chat_with_vision_async(
