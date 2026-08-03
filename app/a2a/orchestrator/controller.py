@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
+from app.a2a.evidence_fusion import EvidenceFusionResult, fuse_evidence
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
     Evidence,
@@ -1085,18 +1086,15 @@ class UnifiedOrchestratorController:
         self, tool_observations: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """汇总工具观测中的证据覆盖信息。"""
-        evidence: list[dict[str, Any]] = []
         covered_topics: list[str] = []
         for row in tool_observations:
             if not isinstance(row, dict):
                 continue
-            for item in _coerce_list(row.get("evidence")):
-                normalized = self._normalize_evidence(item)
-                if normalized is not None:
-                    evidence.append(normalized)
             subquery = _sanitize_text(row.get("subquery"), 120)
             if subquery and subquery not in covered_topics:
                 covered_topics.append(subquery)
+        fusion = self._fuse_tool_evidence(tool_observations)
+        evidence = [item.model_dump() for item in fusion.evidence]
         supported_points = []
         citations: list[str] = []
         for item in evidence[:5]:
@@ -1113,8 +1111,28 @@ class UnifiedOrchestratorController:
             "citations": citations,
             "covered_topics": covered_topics[:5],
             "evidence_count": len(evidence),
+            "raw_evidence_count": fusion.raw_evidence_count,
+            "duplicate_count": fusion.duplicate_count,
+            "distinct_source_count": fusion.distinct_source_count,
+            "corroborated_claim_count": fusion.corroborated_claim_count,
+            "fused_evidence": evidence,
             "retrieval_risk_flags": retrieval_risk_flags,
         }
+
+    @staticmethod
+    def _fuse_tool_evidence(
+        tool_observations: list[dict[str, Any]],
+    ) -> EvidenceFusionResult:
+        """收集工具观测并执行统一 Evidence 融合。"""
+        rows: list[tuple[str, dict[str, Any]]] = []
+        for observation in tool_observations:
+            if not isinstance(observation, dict):
+                continue
+            agent = _sanitize_text(observation.get("agent"), 32) or "unknown"
+            for item in _coerce_list(observation.get("evidence")):
+                if isinstance(item, dict):
+                    rows.append((agent, item))
+        return fuse_evidence(rows)
 
     def _assess_answer_readiness(
         self,
@@ -1122,38 +1140,34 @@ class UnifiedOrchestratorController:
         medical_risk: MedicalRiskAssessment | None = None,
     ) -> dict[str, Any]:
         """根据现有直接证据和冲突标记判断是否允许生成答案。"""
-        evidence: list[dict[str, Any]] = []
         missing_points: list[str] = []
         for row in tool_observations:
             if not isinstance(row, dict):
                 continue
-            for item in _coerce_list(row.get("evidence")):
-                normalized = self._normalize_evidence(item)
-                if normalized is not None:
-                    evidence.append(normalized)
             result_payload = _coerce_dict(_coerce_dict(row.get("result")).get("result"))
             for item in _coerce_list(result_payload.get("missing_points")):
                 point = _sanitize_text(item, 160)
                 if point and point not in missing_points:
                     missing_points.append(point)
 
+        fusion = self._fuse_tool_evidence(tool_observations)
+        evidence = [item.model_dump() for item in fusion.evidence]
         risk_flags = self._detect_numeric_conflicts(evidence)
         if not evidence:
             missing_points.append("direct_evidence")
         if risk_flags:
             missing_points.append("unresolved_conflict")
         assessment = medical_risk or MedicalRiskAssessment()
-        source_ids = {
-            _sanitize_text(item.get("source_id"), 120)
-            for item in evidence
-            if _sanitize_text(item.get("source_id"), 120)
-        }
-        if evidence and len(source_ids) < assessment.minimum_distinct_sources:
+        if (
+            evidence
+            and fusion.distinct_source_count < assessment.minimum_distinct_sources
+        ):
             missing_points.append("independent_sources")
         return {
             "ready": bool(evidence) and not missing_points,
             "evidence_count": len(evidence),
-            "distinct_source_count": len(source_ids),
+            "raw_evidence_count": fusion.raw_evidence_count,
+            "distinct_source_count": fusion.distinct_source_count,
             "missing_points": missing_points,
             "unresolved_conflicts": risk_flags,
         }
@@ -1205,14 +1219,18 @@ class UnifiedOrchestratorController:
         draft_answer: str,
     ) -> str:
         """构建最终答案生成阶段的用户提示词。"""
-        observation_lines = self._build_observation_lines(tool_observations)
+        fused_evidence = self._fuse_tool_evidence(tool_observations).evidence
+        evidence_lines = [
+            self._format_evidence_excerpt(item.model_dump()) for item in fused_evidence
+        ]
+        evidence_lines = [item for item in evidence_lines if item]
         draft_text = _sanitize_text(draft_answer, 1600)
         return (
             f"用户问题：{question}\n\n"
             f"会话问答记忆：\n{qa_memory_text}\n\n"
             f"历史检索问题索引：\n{retrieval_index_text}\n\n"
-            "当前已获取的工具/检索结果：\n"
-            + "\n".join(observation_lines)
+            "当前已融合的 Evidence：\n"
+            + ("\n".join(evidence_lines) if evidence_lines else "当前没有有效 Evidence")
             + "\n\n"
             + (
                 f"主控草稿答案（可参考但不要机械复述）：\n{draft_text}\n\n"
