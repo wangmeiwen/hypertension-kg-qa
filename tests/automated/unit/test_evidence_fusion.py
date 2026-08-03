@@ -124,6 +124,30 @@ def test_source_hash_prevents_aliases_from_becoming_two_publications() -> None:
     assert result.distinct_publication_count == 1
 
 
+def test_fusion_links_document_id_to_hash_when_only_kg_carries_both() -> None:
+    source_hash = "6" * 64
+    rag = Evidence(
+        source_type="document",
+        source_id="中国高血压防治指南2024.pdf",
+        origin_document_id="中国高血压防治指南2024.pdf",
+        content="妊娠期高血压疾病的指南原文。",
+    )
+    kg = Evidence(
+        source_type="knowledge_graph",
+        source_id="node-42",
+        origin_document_id="中国高血压防治指南2024.pdf",
+        source_hash=source_hash,
+        content="妊娠期高血压疾病的图谱关系。",
+    )
+
+    result = fuse_evidence([("rag", rag), ("kg", kg)])
+
+    assert result.distinct_publication_count == 1
+    assert {item.provenance["publication_identity"] for item in result.evidence} == {
+        f"publication:hash:{source_hash}"
+    }
+
+
 def test_guideline_and_document_fields_share_the_same_id_namespace() -> None:
     rag = Evidence(
         source_type="document",

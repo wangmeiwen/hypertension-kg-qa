@@ -83,8 +83,25 @@ def evidence_identity_index(
     return indexed
 
 
+def _publication_aliases(evidence: Evidence) -> set[str]:
+    aliases: set[str] = set()
+    normalized_hash = _normalized_text(evidence.source_hash)
+    if normalized_hash:
+        aliases.add(f"publication:hash:{normalized_hash}")
+    for value in (evidence.origin_guideline_id, evidence.origin_document_id):
+        normalized_id = _normalized_text(value)
+        if normalized_id:
+            aliases.add(f"publication:id:{normalized_id}")
+    return aliases
+
+
 def publication_identity(evidence: Evidence) -> str | None:
     """仅使用可信来源字段生成出版物身份。"""
+    canonical = str(
+        evidence.provenance.get("canonical_publication_identity") or ""
+    ).strip()
+    if canonical.startswith(("publication:hash:", "publication:id:")):
+        return canonical
     candidates = (
         ("hash", evidence.source_hash),
         ("id", evidence.origin_guideline_id),
@@ -95,6 +112,59 @@ def publication_identity(evidence: Evidence) -> str | None:
         if normalized:
             return f"publication:{prefix}:{normalized}"
     return None
+
+
+def _canonicalize_publications(
+    rows: list[tuple[str, Evidence]],
+) -> list[tuple[str, Evidence]]:
+    """通过同一 Evidence 同时携带的 hash/id 将跨检索器来源别名合并。"""
+    parent: dict[str, str] = {}
+
+    def find(alias: str) -> str:
+        parent.setdefault(alias, alias)
+        while parent[alias] != alias:
+            parent[alias] = parent[parent[alias]]
+            alias = parent[alias]
+        return alias
+
+    def union(left: str, right: str) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    aliases_by_row: list[set[str]] = []
+    for _, evidence in rows:
+        aliases = _publication_aliases(evidence)
+        aliases_by_row.append(aliases)
+        ordered = sorted(aliases)
+        for alias in ordered:
+            find(alias)
+        for alias in ordered[1:]:
+            union(ordered[0], alias)
+
+    components: dict[str, set[str]] = {}
+    for alias in parent:
+        components.setdefault(find(alias), set()).add(alias)
+    canonical_by_alias: dict[str, str] = {}
+    for aliases in components.values():
+        canonical = min(
+            aliases,
+            key=lambda value: (not value.startswith("publication:hash:"), value),
+        )
+        canonical_by_alias.update({alias: canonical for alias in aliases})
+
+    canonicalized: list[tuple[str, Evidence]] = []
+    for (agent, evidence), aliases in zip(rows, aliases_by_row):
+        normalized = evidence.model_copy(deep=True)
+        if aliases:
+            first_alias = min(aliases)
+            normalized.provenance = {
+                **normalized.provenance,
+                "canonical_publication_identity": canonical_by_alias[first_alias],
+            }
+        canonicalized.append((agent, normalized))
+    return canonicalized
 
 
 def _deduplication_key(evidence: Evidence) -> tuple[str, int | None, str, str]:
@@ -129,7 +199,7 @@ def fuse_evidence(
     rows: Iterable[tuple[str, Evidence | dict[str, Any]]],
 ) -> EvidenceFusionResult:
     """融合跨 KG、RAG、历史读取的 Evidence。"""
-    validated = _validated_rows(rows)
+    validated = _canonicalize_publications(_validated_rows(rows))
     grouped: dict[tuple[str, int | None, str, str], list[tuple[str, Evidence]]] = {}
     for agent, evidence in validated:
         grouped.setdefault(_deduplication_key(evidence), []).append((agent, evidence))
