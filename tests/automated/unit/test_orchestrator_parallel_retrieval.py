@@ -6,8 +6,15 @@ import asyncio
 
 import pytest
 
+from app.a2a.evidence_fusion import evidence_identity
 from app.a2a.medical_risk import MedicalRiskAssessment
-from app.a2a.models import Evidence, QuestionPlan, SubAgentResult, SubTask
+from app.a2a.models import (
+    ClaimEvidenceAssessment,
+    Evidence,
+    QuestionPlan,
+    SubAgentResult,
+    SubTask,
+)
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.a2a.question_planner import build_question_plan
 
@@ -59,7 +66,7 @@ def _controller(client: _ConcurrentSubagentClient) -> UnifiedOrchestratorControl
     return controller
 
 
-def _action(plan: QuestionPlan, target_agent: str = "kg") -> dict[str, str]:
+def _action(plan: QuestionPlan, target_agent: str = "rag") -> dict[str, str]:
     task = next(
         item for item in plan.retrieval_tasks if item.target_agent == target_agent
     )
@@ -76,9 +83,11 @@ def _require_both_retrievers(plan: QuestionPlan) -> None:
     plan.must_cover[0].evidence_policy.optional_retrievers = []
     for task in plan.retrieval_tasks:
         task.retriever_requirement = "required"
+        task.execution_stage = "primary"
+        task.status = "pending"
 
 
-def test_ready_wave_includes_optional_sibling_tasks() -> None:
+def test_ready_wave_runs_primary_retriever_before_optional_sibling() -> None:
     controller = _controller(_ConcurrentSubagentClient())
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
 
@@ -88,7 +97,7 @@ def test_ready_wave_includes_optional_sibling_tasks() -> None:
         question_plan=plan,
     )
 
-    assert [task.target_agent for task in tasks] == ["kg", "rag"]
+    assert [task.target_agent for task in tasks] == ["rag"]
     assert len({task.subtask_id for task in tasks}) == 1
     assert len({task.question for task in tasks}) == 1
 
@@ -101,7 +110,7 @@ def test_dependency_blocks_task_from_parallel_batch() -> None:
     rag_task.dependency_on = ["uncovered-item"]
 
     tasks = controller._build_ready_subtasks(
-        action=_action(plan),
+        action=_action(plan, "kg"),
         max_tool_calls=3,
         question_plan=plan,
     )
@@ -148,11 +157,11 @@ def test_executes_tasks_concurrently_and_isolates_single_failure() -> None:
     results = asyncio.run(controller._execute_subtasks(tasks))
 
     assert client.max_active == 2
-    assert [result.target_agent for result in results] == ["kg", "rag"]
-    assert results[0].direct_support is True
-    assert results[1].no_signal is True
-    assert results[1].reason == "subagent_error:RuntimeError"
-    assert results[1].telemetry["attempts"] == 2
+    assert [result.target_agent for result in results] == ["rag", "kg"]
+    assert results[0].no_signal is True
+    assert results[0].reason == "subagent_error:RuntimeError"
+    assert results[0].telemetry["attempts"] == 2
+    assert results[1].direct_support is True
 
 
 def test_ready_wave_spans_multiple_must_cover_items() -> None:
@@ -165,11 +174,11 @@ def test_ready_wave_spans_multiple_must_cover_items() -> None:
         question_plan=plan,
     )
 
-    assert len(tasks) == 4
+    assert len(tasks) == 2
     assert {task.must_cover_id for task in tasks} == {
         item.item_id for item in plan.must_cover
     }
-    assert {task.target_agent for task in tasks} == {"kg", "rag"}
+    assert {task.target_agent for task in tasks} == {"rag"}
 
 
 def test_cross_item_dependency_respects_topological_order() -> None:
@@ -189,11 +198,11 @@ def test_cross_item_dependency_respects_topological_order() -> None:
     second_primary = next(
         task
         for task in plan.retrieval_tasks
-        if task.must_cover_id == second_item.item_id and task.target_agent == "kg"
+        if task.must_cover_id == second_item.item_id and task.target_agent == "rag"
     )
     second_wave = controller._build_ready_subtasks(
         action={
-            "action": "call_kg",
+            "action": "call_rag",
             "task_id": second_primary.task_id,
             "must_cover_id": second_item.item_id,
         },
@@ -203,6 +212,79 @@ def test_cross_item_dependency_respects_topological_order() -> None:
 
     assert {task.must_cover_id for task in first_wave} == {first_item.item_id}
     assert {task.must_cover_id for task in second_wave} == {second_item.item_id}
+
+
+def test_unsupported_primary_activates_only_its_supplement_task() -> None:
+    controller = _controller(_ConcurrentSubagentClient())
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    primary = next(
+        task for task in plan.retrieval_tasks if task.execution_stage == "primary"
+    )
+    supplement = next(
+        task for task in plan.retrieval_tasks if task.execution_stage == "supplement"
+    )
+    task = controller._build_subtask(
+        action=_action(plan),
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+
+    controller._update_question_plan(
+        plan,
+        task,
+        SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            target_agent=task.target_agent,
+            no_signal=True,
+        ),
+    )
+
+    assert primary.status == "completed"
+    assert supplement.status == "needs_supplement"
+    assert plan.must_cover[0].status == "pending"
+
+
+def test_supported_primary_keeps_optional_retriever_deferred() -> None:
+    controller = _controller(_ConcurrentSubagentClient())
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    task = controller._build_subtask(
+        action=_action(plan),
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide",
+        origin_document_id="guide",
+        content="高血压患者应规律监测血压。",
+    )
+    controller._update_question_plan(
+        plan,
+        task,
+        SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            target_agent=task.target_agent,
+            evidence=[evidence],
+            claim_assessments=[
+                ClaimEvidenceAssessment(
+                    task_id=task.task_id,
+                    must_cover_id=task.must_cover_id,
+                    evidence_id=evidence_identity(evidence),
+                    support_status="supported",
+                    support_excerpt=evidence.content,
+                )
+            ],
+        ),
+    )
+
+    assert plan.must_cover[0].status == "covered"
+    assert {
+        row.status
+        for row in plan.retrieval_tasks
+        if row.execution_stage == "supplement"
+    } == {"deferred"}
 
 
 def test_execution_enforces_total_and_per_agent_concurrency_limits() -> None:

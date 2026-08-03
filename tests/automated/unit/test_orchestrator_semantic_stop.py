@@ -112,7 +112,7 @@ def test_insufficient_must_cover_reopens_only_its_tasks_for_supplement() -> None
         item.support_status = "supported"
         item.status = "covered"
     for task in plan.retrieval_tasks:
-        task.status = "completed"
+        task.status = "completed" if task.execution_stage == "primary" else "deferred"
     target_item = plan.must_cover[1]
 
     UnifiedOrchestratorController._mark_supplement_tasks(
@@ -133,12 +133,12 @@ def test_insufficient_must_cover_reopens_only_its_tasks_for_supplement() -> None
         task.status
         for task in plan.retrieval_tasks
         if task.must_cover_id == target_item.item_id
-    } == {"needs_supplement"}
+    } == {"completed", "needs_supplement"}
     assert {
         task.status
         for task in plan.retrieval_tasks
         if task.must_cover_id != target_item.item_id
-    } == {"completed"}
+    } == {"completed", "deferred"}
 
 
 class _NoEvidenceSubagentClient:

@@ -1295,9 +1295,7 @@ async def test_orchestrator_hides_subagent_mcp_selection_from_model() -> None:
     assert "kg_entity_relation_search" not in prompt
     assert "call_history_read" in prompt
     assert '"arguments"' not in prompt
-    plan = build_question_plan(
-        "高血压合并 CKD 和蛋白尿怎么用药？", MedicalRiskAssessment()
-    )
+    plan = build_question_plan("高血压和 CKD 有什么关系？", MedicalRiskAssessment())
     planned_task = next(
         task for task in plan.retrieval_tasks if task.target_agent == "kg"
     )

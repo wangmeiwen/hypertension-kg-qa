@@ -1414,6 +1414,22 @@ class UnifiedOrchestratorController:
         )
 
     @staticmethod
+    def _activate_deferred_supplement(
+        question_plan: QuestionPlan, must_cover_id: str
+    ) -> bool:
+        """仅为指定证据缺口激活尚未执行的补充检索器。"""
+        activated = False
+        for task in question_plan.retrieval_tasks:
+            if (
+                task.must_cover_id == must_cover_id
+                and task.execution_stage == "supplement"
+                and task.status == "deferred"
+            ):
+                task.status = "needs_supplement"
+                activated = True
+        return activated
+
+    @staticmethod
     def _update_question_plan(
         question_plan: QuestionPlan, task: SubTask, result: Any
     ) -> None:
@@ -1448,6 +1464,15 @@ class UnifiedOrchestratorController:
             must_cover_id=task.must_cover_id,
             allowed_evidence_ids=_evidence_ids(getattr(result, "evidence", [])),
         )
+        has_supported_assessment = any(
+            item.must_cover_id == must_cover_item.item_id
+            and item.support_status == "supported"
+            for item in question_plan.claim_evidence_assessments
+        )
+        if not has_supported_assessment:
+            UnifiedOrchestratorController._activate_deferred_supplement(
+                question_plan, must_cover_item.item_id
+            )
         UnifiedOrchestratorController._refresh_must_cover_support(
             question_plan, must_cover_item.item_id
         )
@@ -1494,6 +1519,15 @@ class UnifiedOrchestratorController:
             must_cover_id=matched_item.item_id,
             allowed_evidence_ids=_evidence_ids(payload.get("evidence")),
         )
+        has_supported_assessment = any(
+            item.must_cover_id == matched_item.item_id
+            and item.support_status == "supported"
+            for item in question_plan.claim_evidence_assessments
+        )
+        if not has_supported_assessment:
+            UnifiedOrchestratorController._activate_deferred_supplement(
+                question_plan, matched_item.item_id
+            )
         UnifiedOrchestratorController._refresh_must_cover_support(
             question_plan, matched_item.item_id
         )
@@ -1514,6 +1548,13 @@ class UnifiedOrchestratorController:
             if must_cover_item.item_id not in insufficient_ids:
                 continue
             must_cover_item.status = "pending"
+            deferred_activated = (
+                UnifiedOrchestratorController._activate_deferred_supplement(
+                    question_plan, must_cover_item.item_id
+                )
+            )
+            if deferred_activated:
+                continue
             for retrieval_task in question_plan.retrieval_tasks:
                 if (
                     retrieval_task.must_cover_id == must_cover_item.item_id

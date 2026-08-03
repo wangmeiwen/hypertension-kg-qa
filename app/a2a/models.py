@@ -184,9 +184,12 @@ class RetrievalTask(BaseModel):
     must_cover_id: str
     target_agent: AgentType
     retriever_requirement: Literal["required", "optional"] = "optional"
+    execution_stage: Literal["primary", "supplement"] = "primary"
     question: str
     dependency_on: list[str] = Field(default_factory=list)
-    status: Literal["pending", "completed", "failed", "needs_supplement"] = "pending"
+    status: Literal[
+        "deferred", "pending", "completed", "failed", "needs_supplement"
+    ] = "pending"
 
 
 class QuestionPlan(BaseModel):

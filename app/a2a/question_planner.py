@@ -147,6 +147,11 @@ def build_question_plan(
             applicability_conditions=applicability_conditions,
         )
         must_cover.append(item)
+        primary_retriever = (
+            evidence_policy.required_retrievers[0]
+            if evidence_policy.required_retrievers
+            else "rag"
+        )
         for agent_type in [
             *evidence_policy.required_retrievers,
             *evidence_policy.optional_retrievers,
@@ -161,7 +166,13 @@ def build_question_plan(
                         if agent_type in evidence_policy.required_retrievers
                         else "optional"
                     ),
+                    execution_stage=(
+                        "primary" if agent_type == primary_retriever else "supplement"
+                    ),
                     question=clause,
+                    status=(
+                        "pending" if agent_type == primary_retriever else "deferred"
+                    ),
                 )
             )
 

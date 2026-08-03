@@ -141,17 +141,17 @@ def test_decide_action_rejects_markdown_wrapped_json_after_one_retry() -> None:
 
 def test_decide_action_retries_when_task_binding_is_invalid() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
-    kg_task = next(task for task in plan.retrieval_tasks if task.target_agent == "kg")
+    rag_task = next(task for task in plan.retrieval_tasks if task.target_agent == "rag")
     controller = _build_controller(
         [
             (
-                '{"action":"call_rag","task_id":"'
-                f'{kg_task.task_id}","must_cover_id":"{kg_task.must_cover_id}"'
+                '{"action":"call_kg","task_id":"'
+                f'{rag_task.task_id}","must_cover_id":"{rag_task.must_cover_id}"'
                 "}"
             ),
             (
-                '{"action":"call_kg","task_id":"'
-                f'{kg_task.task_id}","must_cover_id":"{kg_task.must_cover_id}"'
+                '{"action":"call_rag","task_id":"'
+                f'{rag_task.task_id}","must_cover_id":"{rag_task.must_cover_id}"'
                 "}"
             ),
         ]
@@ -174,8 +174,8 @@ def test_decide_action_retries_when_task_binding_is_invalid() -> None:
         )
     )
 
-    assert action["action"] == "call_kg"
-    assert action["task_id"] == kg_task.task_id
+    assert action["action"] == "call_rag"
+    assert action["task_id"] == rag_task.task_id
     assert len(controller._client.calls) == 2
     assert (
         "action_task_agent_mismatch"
