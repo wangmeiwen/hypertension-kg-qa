@@ -11,9 +11,22 @@ RecommendationPolarity = Literal[
 
 _POLARITY_PATTERNS: tuple[tuple[RecommendationPolarity, re.Pattern[str]], ...] = (
     ("contraindicated", re.compile(r"(?:禁忌|禁止|不得使用|应避免|避免使用)")),
-    ("discourage", re.compile(r"(?:不推荐|不建议|不应使用)")),
+    (
+        "discourage",
+        re.compile(
+            r"(?:不推荐|不建议|不应使用|无益|未见获益|没有获益|不利于|有害|"
+            r"不能改善|增加[^。；，,]{0,20}风险|恶化)"
+        ),
+    ),
     ("consider", re.compile(r"(?:可考虑|可以考虑)")),
     ("recommend", re.compile(r"(?:推荐|建议|应使用|首选)")),
+    (
+        "recommend",
+        re.compile(
+            r"(?:有助于|有益于?|获益|改善|提升|提高|可用于|"
+            r"降低[^。；，,]{0,20}风险|减少[^。；，,]{0,20}风险)"
+        ),
+    ),
 )
 _POSITIVE_POLARITIES = {"recommend", "consider"}
 _NEGATIVE_POLARITIES = {"discourage", "contraindicated"}

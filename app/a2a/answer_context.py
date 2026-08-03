@@ -319,9 +319,12 @@ def _recommendation_claims_are_faithful(
             for evidence_id in answer_claim.evidence_ids
             if evidence_id in evidence_by_id
         ]
-        if any(
+        explicit_evidence_polarities = [
+            polarity for polarity in evidence_polarities if polarity != "unknown"
+        ]
+        if not explicit_evidence_polarities or any(
             recommendation_polarities_conflict(answer_polarity, evidence_polarity)
-            for evidence_polarity in evidence_polarities
+            for evidence_polarity in explicit_evidence_polarities
         ):
             mismatched_claim_ids.append(answer_claim.claim_id)
     return not mismatched_claim_ids, list(dict.fromkeys(mismatched_claim_ids))

@@ -273,6 +273,74 @@ def test_post_validation_rejects_reversed_recommendation_polarity() -> None:
     assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
 
 
+def test_post_validation_rejects_reversal_of_implicit_positive_recommendation() -> None:
+    plan = build_question_plan("是否推荐家庭血压监测？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        content="HBPM可以显著提升高血压控制率，并改善患者预后。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "不推荐高血压患者进行家庭血压监测。[guide-a]", context
+    )
+
+    assert result.valid is False
+    assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
+
+
+def test_post_validation_rejects_explicit_polarity_when_evidence_is_directionless() -> (
+    None
+):
+    plan = build_question_plan("是否推荐家庭血压监测？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        content="家庭血压监测是一种诊室外血压测量方法。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "推荐高血压患者进行家庭血压监测。[guide-a]", context
+    )
+
+    assert result.valid is False
+    assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
+
+
 def test_post_validation_rejects_reversed_kg_relation_direction() -> None:
     plan = build_question_plan("高血压和慢性肾病有什么关系？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "kg")
