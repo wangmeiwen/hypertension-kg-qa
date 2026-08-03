@@ -70,6 +70,59 @@ def test_different_measurement_contexts_are_not_treated_as_conflict() -> None:
     assert detect_evidence_conflicts(rows) == []
 
 
+def test_numeric_frames_bind_each_value_to_its_local_blood_pressure_subject() -> None:
+    rows = [
+        _evidence(
+            "guide-a",
+            "收缩压目标为140 mmHg，舒张压目标为90 mmHg。",
+        ),
+        _evidence(
+            "guide-b",
+            "收缩压目标为140 mmHg，舒张压目标为80 mmHg。",
+        ),
+    ]
+
+    frames = extract_claim_frames(rows)
+    conflicts = detect_evidence_conflicts(rows)
+
+    assert {frame.subject for frame in frames} == {
+        "systolic_blood_pressure",
+        "diastolic_blood_pressure",
+    }
+    assert {frame.sentence for frame in frames} == {
+        "收缩压目标为140 mmHg",
+        "舒张压目标为90 mmHg",
+        "舒张压目标为80 mmHg",
+    }
+    assert len(conflicts) == 1
+    assert "diastolic_blood_pressure:target" in conflicts[0].claim_key
+    assert conflicts[0].values == ["80mmhg", "90mmhg"]
+
+
+def test_applicability_number_is_not_emitted_as_numeric_conclusion_frame() -> None:
+    frames = extract_claim_frames(
+        [_evidence("guide-a", "80岁以上老年人的收缩压目标为140 mmHg。")]
+    )
+
+    assert len(frames) == 1
+    assert frames[0].subject == "systolic_blood_pressure"
+    assert frames[0].numeric_value == "140"
+    assert frames[0].numeric_role == "claim_value"
+
+
+def test_numeric_comparator_difference_is_a_conflict() -> None:
+    conflicts = detect_evidence_conflicts(
+        [
+            _evidence("guide-a", "收缩压目标低于140 mmHg。"),
+            _evidence("guide-b", "收缩压目标不超过140 mmHg。"),
+        ]
+    )
+
+    assert len(conflicts) == 1
+    assert conflicts[0].conflict_type == "numeric"
+    assert conflicts[0].values == ["lt140mmhg", "lte140mmhg"]
+
+
 def test_compatible_units_are_normalized_before_comparison() -> None:
     equivalent = [
         _evidence("guide-a", "血压目标为 140 mmHg。"),

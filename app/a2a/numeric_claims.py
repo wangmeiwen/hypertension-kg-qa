@@ -94,19 +94,13 @@ def _comparator(
 ) -> Literal["eq", "lt", "lte", "gt", "gte", "range"]:
     if re.search(r"(?:-|—|~|～|至|到)", raw_value):
         return "range"
-    if raw_comparator in {"≤", "<=", "＜", "<", "低于", "小于", "不超过", "以下"}:
+    if raw_comparator in {"＜", "<", "低于", "小于"}:
+        return "lt"
+    if raw_comparator in {"≤", "<=", "不超过", "以下"}:
         return "lte"
-    if raw_comparator in {
-        "≥",
-        ">=",
-        "＞",
-        ">",
-        "高于",
-        "大于",
-        "至少",
-        "不低于",
-        "以上",
-    }:
+    if raw_comparator in {"＞", ">", "高于", "大于"}:
+        return "gt"
+    if raw_comparator in {"≥", ">=", "至少", "不低于", "以上"}:
         return "gte"
     return "eq"
 
@@ -116,8 +110,13 @@ def _subject_and_predicate(text: str, unit_family: str) -> tuple[str, str]:
         return "blood_pressure_monitoring", "frequency"
     if unit_family == "duration":
         return "blood_pressure_monitoring", "duration"
+    if any(term in text for term in ("风险下降", "风险降低")):
+        return "risk_reduction", "change"
+    if any(term in text for term in ("风险增加", "风险升高")):
+        return "risk_increase", "change"
     if any(term in text for term in ("患病率", "发生率")):
-        return "prevalence", "prevalence"
+        subject = "prevalence" if "患病率" in text else "incidence"
+        return subject, subject
     if any(term in text for term in ("剂量", "用量")):
         return "medication_dose", "dose"
     if "收缩压" in text:
@@ -207,12 +206,14 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                             claim.model_copy(
                                 update={
                                     "subject": "systolic_blood_pressure",
+                                    "raw_value": re.split(r"[/／]", raw_value)[0],
                                     "normalized_value": systolic,
                                 }
                             ),
                             claim.model_copy(
                                 update={
                                     "subject": "diastolic_blood_pressure",
+                                    "raw_value": re.split(r"[/／]", raw_value)[1],
                                     "normalized_value": diastolic,
                                 }
                             ),

@@ -322,6 +322,10 @@ class EvidenceClaimFrame(BaseModel):
     citation: str = ""
     sentence: str
     topic: str
+    subject: str = ""
+    predicate: str = ""
+    comparator: Literal["eq", "lt", "lte", "gt", "gte", "range"] = "eq"
+    numeric_role: NumericMentionRole = "unknown"
     numeric_value: str = ""
     normalized_value: str = ""
     unit: str = ""

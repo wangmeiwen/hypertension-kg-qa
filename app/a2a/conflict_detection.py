@@ -5,33 +5,19 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Literal
 
 from app.a2a.answer_context import evidence_citation
 from app.a2a.evidence_fusion import evidence_identity, publication_identity
 from app.a2a.models import Evidence, EvidenceClaimFrame, EvidenceConflict
+from app.a2a.numeric_claims import extract_structured_numeric_claims
 
 RecommendationPolarity = Literal[
     "unknown", "recommend", "consider", "discourage", "contraindicated"
 ]
 TreatmentPriority = Literal["", "first_line", "second_line", "third_line"]
 
-_NUMERIC_PATTERN = re.compile(
-    r"(?P<value>\d{2,3}\s*[/／]\s*\d{2,3}|\d+(?:\.\d+)?)\s*"
-    r"(?P<unit>%|mm\s*hg|kpa|mg|μg|ug|g|mmol/l|次/天)",
-    flags=re.IGNORECASE,
-)
-_TOPIC_ALIASES = (
-    ("systolic_blood_pressure", ("收缩压",)),
-    ("diastolic_blood_pressure", ("舒张压",)),
-    ("blood_pressure_target", ("血压目标", "目标血压", "目标值", "阈值")),
-    ("risk_reduction", ("风险下降", "风险降低")),
-    ("risk_increase", ("风险增加", "风险升高")),
-    ("dose", ("剂量", "用量")),
-    ("prevalence", ("患病率",)),
-    ("incidence", ("发生率",)),
-)
 _POPULATION_ALIASES = (
     ("pregnancy", ("孕妇", "妊娠", "怀孕")),
     ("older_adults", ("老年人", "高龄", "老年患者")),
@@ -69,15 +55,14 @@ _EVIDENCE_GRADE_PATTERNS = (
     re.compile(r"([A-E])\s*级证据", flags=re.IGNORECASE),
 )
 _GUIDELINE_VERSION_PATTERN = re.compile(r"(?<!\d)((?:19|20)\d{2})(?:\s*年)?(?:\s*版)?")
-_UNIT_DEFINITIONS = {
-    "mmhg": ("mmhg", Decimal("1")),
-    "kpa": ("mmhg", Decimal("7.50062")),
-    "mg": ("mg", Decimal("1")),
-    "g": ("mg", Decimal("1000")),
-    "ug": ("mg", Decimal("0.001")),
-    "%": ("percent", Decimal("1")),
-    "mmol/l": ("mmol/l", Decimal("1")),
-    "次/天": ("times_per_day", Decimal("1")),
+_NORMALIZED_UNIT_BY_FAMILY = {
+    "blood_pressure": "mmhg",
+    "percentage": "percent",
+    "dose_mass": "mg",
+    "concentration": "mmol/l",
+    "frequency": "times_per_day",
+    "duration": "days",
+    "age": "years",
 }
 
 
@@ -94,14 +79,6 @@ def _canonical_terms(
         for canonical, terms in aliases
         if any(term.casefold() in lowered for term in terms)
     ]
-
-
-def _topic(sentence: str) -> str:
-    topics = _canonical_terms(sentence, _TOPIC_ALIASES)
-    if topics:
-        return topics[0]
-    replaced = _NUMERIC_PATTERN.sub("numeric_value", sentence)
-    return _normalized(replaced) or "unknown"
 
 
 def _recommendation_polarity(sentence: str) -> RecommendationPolarity:
@@ -156,25 +133,6 @@ def _intervention(sentence: str) -> str:
     return _normalized(matched.group(1)) if matched is not None else ""
 
 
-def _canonical_unit(raw_unit: str) -> tuple[str, Decimal]:
-    unit = re.sub(r"\s+", "", raw_unit.casefold()).replace("μ", "u")
-    return _UNIT_DEFINITIONS[unit]
-
-
-def _format_decimal(value: Decimal) -> str:
-    rounded = value.quantize(Decimal("0.0001"))
-    return format(rounded.normalize(), "f")
-
-
-def _normalized_numeric_value(raw_value: str, *, factor: Decimal) -> str | None:
-    parts = re.split(r"[/／]", raw_value)
-    try:
-        normalized = [_format_decimal(Decimal(part.strip()) * factor) for part in parts]
-    except InvalidOperation:
-        return None
-    return "/".join(normalized)
-
-
 def extract_claim_frames(evidence_rows: list[Evidence]) -> list[EvidenceClaimFrame]:
     """从具有出版来源的 Evidence 中提取可比较数值 claim frame。"""
     frames: list[EvidenceClaimFrame] = []
@@ -196,15 +154,14 @@ def extract_claim_frames(evidence_rows: list[Evidence]) -> list[EvidenceClaimFra
             guideline_family, guideline_version = _guideline_metadata(
                 evidence, sentence
             )
-            for matched in _NUMERIC_PATTERN.finditer(sentence):
-                unit, factor = _canonical_unit(matched.group("unit"))
-                raw_value = re.sub(r"\s+", "", matched.group("value"))
-                normalized_value = _normalized_numeric_value(raw_value, factor=factor)
-                if normalized_value is None:
+            for index, numeric_claim in enumerate(
+                extract_structured_numeric_claims(sentence)
+            ):
+                if numeric_claim.role in {"applicability", "unknown"}:
                     continue
                 payload = (
-                    f"{evidence_identity(evidence)}|{sentence}|{matched.start()}|"
-                    f"{matched.end()}"
+                    f"{evidence_identity(evidence)}|{numeric_claim.local_text}|"
+                    f"{index}|{numeric_claim.model_dump_json()}"
                 )
                 digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
                 frames.append(
@@ -213,15 +170,21 @@ def extract_claim_frames(evidence_rows: list[Evidence]) -> list[EvidenceClaimFra
                         evidence_id=evidence_identity(evidence),
                         publication_id=publication,
                         citation=citation,
-                        sentence=sentence,
-                        topic=_topic(sentence),
-                        numeric_value=raw_value,
-                        normalized_value=normalized_value,
-                        unit=re.sub(r"\s+", "", matched.group("unit")).casefold(),
-                        normalized_unit=unit,
-                        population=population,
-                        measurement_context=measurement_context,
-                        intervention=intervention,
+                        sentence=numeric_claim.local_text,
+                        topic=numeric_claim.subject,
+                        subject=numeric_claim.subject,
+                        predicate=numeric_claim.predicate,
+                        comparator=numeric_claim.comparator,
+                        numeric_role=numeric_claim.role,
+                        numeric_value=numeric_claim.raw_value,
+                        normalized_value=numeric_claim.normalized_value,
+                        unit=numeric_claim.unit,
+                        normalized_unit=_NORMALIZED_UNIT_BY_FAMILY[
+                            numeric_claim.unit_family
+                        ],
+                        population=numeric_claim.population,
+                        measurement_context=numeric_claim.measurement_context,
+                        intervention=numeric_claim.intervention or intervention,
                         polarity=polarity,
                         treatment_priority=treatment_priority,
                         evidence_grade=evidence_grade,
@@ -259,11 +222,20 @@ def extract_claim_frames(evidence_rows: list[Evidence]) -> list[EvidenceClaimFra
 def _applicability_key(frame: EvidenceClaimFrame) -> str:
     population = ",".join(sorted(frame.population)) or "general"
     measurement = ",".join(sorted(frame.measurement_context)) or "general"
-    return f"{frame.topic}:population={population}:measurement={measurement}"
+    topic = (
+        f"{frame.subject}:{frame.predicate}:role={frame.numeric_role}"
+        if frame.numeric_value
+        else frame.topic
+    )
+    intervention = frame.intervention or "general"
+    return (
+        f"{topic}:population={population}:measurement={measurement}:"
+        f"intervention={intervention}"
+    )
 
 
 def _numeric_parts(value: str) -> list[Decimal]:
-    return [Decimal(part) for part in value.split("/")]
+    return [Decimal(part) for part in re.split(r"[/\-]", value)]
 
 
 def _values_equivalent(frames: list[EvidenceClaimFrame]) -> bool:
@@ -272,6 +244,8 @@ def _values_equivalent(frames: list[EvidenceClaimFrame]) -> bool:
         Decimal("1") if frames[0].normalized_unit == "mmhg" else Decimal("0.0001")
     )
     for frame in frames[1:]:
+        if frame.comparator != frames[0].comparator:
+            return False
         candidate = _numeric_parts(frame.normalized_value)
         if len(candidate) != len(reference):
             return False
@@ -304,6 +278,7 @@ def _build_conflict(
         values = sorted(
             {
                 (
+                    f"{'' if item.comparator == 'eq' else item.comparator}"
                     f"{item.numeric_value}{item.unit}"
                     if item.numeric_value
                     else item.polarity
@@ -331,7 +306,10 @@ def _build_conflict(
 
 def _conclusion_signature(frame: EvidenceClaimFrame) -> str:
     if frame.numeric_value:
-        return f"numeric:{frame.normalized_value}:{frame.normalized_unit}"
+        return (
+            f"numeric:{frame.comparator}:{frame.normalized_value}:"
+            f"{frame.normalized_unit}"
+        )
     return (
         f"semantic:{frame.polarity}:{frame.treatment_priority}:"
         f"{frame.evidence_grade}"
