@@ -90,6 +90,11 @@ def _claim_type(question: str) -> str:
 def _applicability_conditions(question: str) -> list[str]:
     """提取问题中明确出现的适用条件。"""
     lowered = str(question or "").lower()
+    lowered = lowered.replace("家庭测血压", "家庭血压")
+    lowered = lowered.replace("居家血压", "家庭血压")
+    lowered = lowered.replace("hbpm", "家庭血压")
+    lowered = lowered.replace("24小时血压", "动态血压")
+    lowered = lowered.replace("abpm", "动态血压")
     conditions = [term for term in _CONDITION_TERMS if term.lower() in lowered]
     conditions.extend(
         re.sub(r"\s+", "", matched.group())

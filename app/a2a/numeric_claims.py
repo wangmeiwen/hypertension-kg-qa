@@ -12,22 +12,22 @@ from app.a2a.models import (
     StructuredNumericClaim,
 )
 
-_SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?；;\n]+")
-_LOCAL_CLAUSE_SPLIT_PATTERN = re.compile(r"[，,]+")
+_SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?\n]+")
+_LOCAL_CLAUSE_SPLIT_PATTERN = re.compile(r"[，,；;]+")
 _NUMERIC_PATTERN = re.compile(
     r"(?P<comparator>≤|>=|≥|<=|＜|<|＞|>|低于|小于|不超过|以下|"
     r"高于|大于|至少|不低于|以上)?\s*"
     r"(?P<value>\d{2,3}\s*[/／]\s*\d{2,3}|"
     r"\d+(?:\.\d+)?\s*(?:-|—|~|～|至|到)\s*\d+(?:\.\d+)?|"
     r"\d+(?:\.\d+)?)\s*"
-    r"(?P<unit>mm\s*hg|毫米汞柱|kpa|mmol/l|mg|μg|ug|g|%|岁|年|天|"
-    r"次\s*[/／]\s*(?:日|天))",
+    r"(?P<unit>mm\s*hg|毫米汞柱|kpa|mmol/l|mg|μg|ug|g|%|岁|年|天|d|"
+    r"次\s*[/／]\s*(?:日|天)|次|个读数)",
     flags=re.IGNORECASE,
 )
 _MEASUREMENT_ALIASES = (
     ("clinic", ("诊室血压", "诊所血压")),
-    ("home", ("家庭血压", "居家血压", "家庭测血压")),
-    ("ambulatory", ("动态血压", "24小时血压", "夜间血压")),
+    ("home", ("家庭血压", "居家血压", "家庭测血压", "hbpm")),
+    ("ambulatory", ("动态血压", "24小时血压", "夜间血压", "abpm")),
 )
 _POPULATION_ALIASES = (
     ("older_adults", ("老年人", "高龄", "老年患者")),
@@ -53,8 +53,11 @@ _UNIT_DEFINITIONS = {
     "岁": ("age", Decimal("1")),
     "年": ("duration", Decimal("365")),
     "天": ("duration", Decimal("1")),
+    "d": ("duration", Decimal("1")),
     "次/日": ("frequency", Decimal("1")),
     "次/天": ("frequency", Decimal("1")),
+    "次": ("frequency", Decimal("1")),
+    "个读数": ("frequency", Decimal("1")),
 }
 
 
@@ -118,7 +121,9 @@ def _comparator(
     return "eq"
 
 
-def _subject_and_predicate(text: str, unit_family: str) -> tuple[str, str]:
+def _subject_and_predicate(
+    text: str, unit_family: str, predicate_context: str = ""
+) -> tuple[str, str]:
     if unit_family == "frequency":
         return "blood_pressure_monitoring", "frequency"
     if unit_family == "duration":
@@ -140,11 +145,31 @@ def _subject_and_predicate(text: str, unit_family: str) -> tuple[str, str]:
         subject = "blood_pressure"
     else:
         subject = ""
-    if any(term in text for term in ("诊断", "判断", "界值", "诊断标准")):
+    predicate_text = text
+    if not any(
+        term in predicate_text
+        for term in (
+            "诊断",
+            "判断",
+            "界值",
+            "诊断标准",
+            "目标",
+            "控制在",
+            "降至",
+            "定义",
+            "急症",
+        )
+    ):
+        predicate_text = predicate_context
+    if (
+        any(term in predicate_text for term in ("诊断", "判断", "界值", "诊断标准"))
+        or "高血压的定义" in predicate_text
+        and "急症" not in predicate_text
+    ):
         predicate = "diagnostic_threshold"
-    elif any(term in text for term in ("目标", "控制在", "降至")):
+    elif any(term in predicate_text for term in ("目标", "控制在", "降至")):
         predicate = "target"
-    elif any(term in text for term in ("定义", "急症")):
+    elif any(term in predicate_text for term in ("定义", "急症")):
         predicate = "definition_threshold"
     else:
         predicate = ""
@@ -193,7 +218,9 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                 normalized_value = _normalize_value(raw_value, factor)
                 if normalized_value is None:
                     continue
-                subject, predicate = _subject_and_predicate(clause, unit_family)
+                subject, predicate = _subject_and_predicate(
+                    clause, unit_family, sentence
+                )
                 role = _role(unit_family, subject, predicate)
                 claim = StructuredNumericClaim(
                     subject=subject,
@@ -211,10 +238,7 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                     role=role,
                     local_text=clause,
                 )
-                if (
-                    unit_family == "blood_pressure"
-                    and "/" in normalized_value
-                ):
+                if unit_family == "blood_pressure" and "/" in normalized_value:
                     systolic, diastolic = normalized_value.split("/", maxsplit=1)
                     claims.extend(
                         [

@@ -40,6 +40,10 @@ _RELATION_SPLIT_PATTERN = re.compile(
 def _matched_applicability(must_cover: MustCoverItem, evidence: Evidence) -> list[str]:
     def normalize(value: str) -> str:
         normalized = re.sub(r"\s+", "", value.casefold())
+        normalized = normalized.replace("家庭测血压", "家庭血压")
+        normalized = normalized.replace("居家血压", "家庭血压")
+        normalized = normalized.replace("hbpm", "家庭血压")
+        normalized = normalized.replace("abpm", "动态血压")
         normalized = re.sub(r"岁及以上", "岁以上", normalized)
         normalized = re.sub(r"岁及以下", "岁以下", normalized)
         normalized = re.sub(r"≥(\d{1,3})岁", r"\1岁以上", normalized)

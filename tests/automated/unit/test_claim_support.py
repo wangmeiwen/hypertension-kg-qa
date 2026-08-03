@@ -254,6 +254,55 @@ def test_multi_slot_monitoring_question_requires_duration_and_frequency() -> Non
     assert supported is not None and supported.support_status == "supported"
 
 
+def test_diagnostic_predicate_is_inherited_by_local_threshold_clause() -> None:
+    plan = build_question_plan(
+        "家庭血压达到多少可以判断为高血压？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+
+    assessment = deterministic_claim_support(
+        task=_task(plan, "rag"),
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="home-threshold",
+            content=(
+                "高血压的定义如下：在未使用降压药的情况下，"
+                "非同日3次测量诊室血压≥140/90mmHg；或连续5~7d测量"
+                "家庭血压≥135/85mmHg。"
+            ),
+        ),
+    )
+
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+    assert assessment.applicability_conditions == ["家庭血压"]
+
+
+def test_hbpm_duration_and_per_session_readings_support_monitoring_slots() -> None:
+    plan = build_question_plan(
+        "家庭测血压一般连续几天、每天测几次？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    evidence_text = "结合我国居民生活方式，建议进行5~7d的HBPM，早晚各测量2~3个读数。"
+
+    assessment = deterministic_claim_support(
+        task=_task(plan, "rag"),
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="home-monitoring",
+            content=evidence_text,
+        ),
+    )
+    claims = extract_structured_numeric_claims(evidence_text)
+
+    assert {claim.role for claim in claims} == {"temporal", "frequency"}
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+    assert assessment.applicability_conditions == ["家庭血压"]
+
+
 def test_comparison_claim_requires_each_numeric_subject() -> None:
     plan = build_question_plan(
         "收缩压和舒张压目标分别是多少？", MedicalRiskAssessment()
