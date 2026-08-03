@@ -75,6 +75,22 @@ def test_rag_hit_is_normalized_to_shared_evidence() -> None:
     assert evidence["retrieval_method"] == "dense_rerank"
 
 
+def test_rag_source_filename_is_publication_identity_for_legacy_collection() -> None:
+    evidence = Evidence.model_validate(
+        build_rag_evidence(
+            {
+                "source": "中国高血压防治指南2024.pdf",
+                "chunk_id": "chunk-1",
+                "page_num": 20,
+                "text": "指南原文",
+            }
+        )
+    )
+
+    assert evidence.origin_document_id == "中国高血压防治指南2024.pdf"
+    assert evidence.origin_status == "known"
+
+
 def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
     evidence = build_kg_evidence(
         {

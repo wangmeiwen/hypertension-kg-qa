@@ -144,6 +144,38 @@ def test_blood_pressure_target_requires_matching_semantic_slot() -> None:
     assert assessment.support_status == "supported"
 
 
+def test_ocr_spaced_target_and_equivalent_age_condition_are_supported() -> None:
+    plan = build_question_plan(
+        "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
+    )
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    assessment = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="ocr-target",
+            content=(
+                "8 0岁及以上高龄老年人降压目标<1 5 0 / 9 0mmH g，"
+                "如能耐受可降至<1 4 0 / 9 0mmH g。"
+            ),
+        ),
+    )
+    claims = extract_structured_numeric_claims(
+        "8 0岁及以上高龄老年人降压目标<1 5 0 / 9 0mmH g。"
+    )
+
+    assert {claim.subject for claim in claims if claim.role == "claim_value"} == {
+        "systolic_blood_pressure",
+        "diastolic_blood_pressure",
+    }
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+    assert assessment.applicability_conditions == ["老年人", "80岁以上"]
+
+
 def test_percentage_claim_is_not_confused_with_other_numbers() -> None:
     plan = build_question_plan("高血压患病率是多少？", MedicalRiskAssessment())
     item = plan.must_cover[0]

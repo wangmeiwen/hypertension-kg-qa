@@ -38,11 +38,19 @@ _RELATION_SPLIT_PATTERN = re.compile(
 
 
 def _matched_applicability(must_cover: MustCoverItem, evidence: Evidence) -> list[str]:
-    text = re.sub(r"\s+", "", evidence.content.casefold())
+    def normalize(value: str) -> str:
+        normalized = re.sub(r"\s+", "", value.casefold())
+        normalized = re.sub(r"岁及以上", "岁以上", normalized)
+        normalized = re.sub(r"岁及以下", "岁以下", normalized)
+        normalized = re.sub(r"≥(\d{1,3})岁", r"\1岁以上", normalized)
+        normalized = re.sub(r"≤(\d{1,3})岁", r"\1岁以下", normalized)
+        return normalized
+
+    text = normalize(evidence.content)
     return [
         condition
         for condition in must_cover.applicability_conditions
-        if re.sub(r"\s+", "", condition.casefold()) in text
+        if normalize(condition) in text
     ]
 
 

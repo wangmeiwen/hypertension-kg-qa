@@ -70,6 +70,7 @@ def build_rag_evidence(
             hit.get("origin_document_id"),
             hit.get("document_id"),
             hit.get("parent_id"),
+            source_id,
         ),
         source_hash=_first_text(hit.get("source_hash")),
         source_page=page,

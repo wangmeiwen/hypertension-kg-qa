@@ -58,6 +58,19 @@ _UNIT_DEFINITIONS = {
 }
 
 
+def normalize_numeric_ocr_text(text: str) -> str:
+    """仅归一化数值和单位内部的 OCR 空格，不改写普通自然语言。"""
+    normalized = str(text or "")
+    normalized = re.sub(r"(?<=\d)\s+(?=\d)", "", normalized)
+    normalized = re.sub(r"(?<=\d)\s*([/／])\s*(?=\d)", r"\1", normalized)
+    normalized = re.sub(r"m\s*m\s*h\s*g", "mmHg", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"k\s*p\s*a", "kPa", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"m\s*m\s*o\s*l\s*/\s*l", "mmol/l", normalized, flags=re.IGNORECASE
+    )
+    return normalized
+
+
 def _canonical_terms(
     text: str, aliases: tuple[tuple[str, tuple[str, ...]], ...]
 ) -> list[str]:
@@ -135,6 +148,8 @@ def _subject_and_predicate(text: str, unit_family: str) -> tuple[str, str]:
         predicate = "definition_threshold"
     else:
         predicate = ""
+    if not subject and unit_family == "blood_pressure" and predicate:
+        subject = "blood_pressure"
     return subject, predicate
 
 
@@ -161,7 +176,8 @@ def _role(unit_family: str, subject: str, predicate: str) -> NumericMentionRole:
 def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]:
     """按局部子句提取数值，避免把年龄、年份和频次当作目标值。"""
     claims: list[StructuredNumericClaim] = []
-    for sentence in _SENTENCE_SPLIT_PATTERN.split(str(text or "")):
+    normalized_text = normalize_numeric_ocr_text(text)
+    for sentence in _SENTENCE_SPLIT_PATTERN.split(normalized_text):
         sentence = sentence.strip()
         if not sentence:
             continue
