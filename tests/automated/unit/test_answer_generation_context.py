@@ -571,9 +571,15 @@ def test_post_validation_rejects_uncited_added_medical_fact() -> None:
         "另外，家庭血压监测还能降低死亡风险。",
         context,
     )
+    heading = validate_answer_generation(
+        "### 家庭血压监测\n\n" "推荐高血压患者进行家庭血压监测。[guide-a p8]",
+        context,
+    )
 
     assert result.valid is False
     assert result.uncited_claims == ["另外，家庭血压监测还能降低死亡风险。"]
+    assert heading.valid is True
+    assert heading.uncited_claims == []
 
 
 def test_post_validation_blocks_unresolved_conflict() -> None:

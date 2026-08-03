@@ -210,6 +210,8 @@ def _uncited_medical_claims(answer: str, context: AnswerGenerationContext) -> li
         text = segment.strip()
         if not text or any(citation in text for citation in citations):
             continue
+        if text.lstrip().startswith("#"):
+            continue
         normalized = text.strip(" \t-*#")
         if not normalized or normalized.endswith(("：", ":")):
             continue
