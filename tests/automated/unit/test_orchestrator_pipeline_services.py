@@ -131,7 +131,7 @@ def test_evidence_pipeline_returns_typed_claim_assessment() -> None:
         source_type="document",
         source_id="guide",
         origin_document_id="guide",
-        content="血压目标为130 mmHg。",
+        content="血压目标为130/80 mmHg。",
     )
 
     assessments, usage = asyncio.run(

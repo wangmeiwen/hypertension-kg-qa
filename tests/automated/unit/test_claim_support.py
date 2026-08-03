@@ -755,8 +755,11 @@ def test_controller_records_verifier_output_before_support_transition() -> None:
     controller._update_question_plan(plan, task, result)
 
     assert item.support_status == "supported"
-    assert item.status == "covered"
+    assert item.status == "pending"
     assert plan.claim_evidence_assessments == assessments
+    assert {row.status for row in plan.retrieval_tasks if row.target_agent == "kg"} == {
+        "needs_supplement"
+    }
 
 
 def test_relation_question_parses_path_endpoints_and_exact_hops() -> None:

@@ -1167,6 +1167,20 @@ class UnifiedOrchestratorController:
         return activated
 
     @staticmethod
+    def _supported_only_by_semantic_verifier(
+        question_plan: QuestionPlan, must_cover_id: str
+    ) -> bool:
+        supported = [
+            item
+            for item in question_plan.claim_evidence_assessments
+            if item.must_cover_id == must_cover_id
+            and item.support_status == "supported"
+        ]
+        return bool(supported) and all(
+            item.verifier_version == "claim_support.semantic.v1" for item in supported
+        )
+
+    @staticmethod
     def _update_question_plan(
         question_plan: QuestionPlan, task: SubTask, result: Any
     ) -> None:
@@ -1206,13 +1220,23 @@ class UnifiedOrchestratorController:
             and item.support_status == "supported"
             for item in question_plan.claim_evidence_assessments
         )
-        if not has_supported_assessment:
-            UnifiedOrchestratorController._activate_deferred_supplement(
+        semantic_only_support = (
+            UnifiedOrchestratorController._supported_only_by_semantic_verifier(
                 question_plan, must_cover_item.item_id
+            )
+        )
+        supplement_activated = False
+        if not has_supported_assessment or semantic_only_support:
+            supplement_activated = (
+                UnifiedOrchestratorController._activate_deferred_supplement(
+                    question_plan, must_cover_item.item_id
+                )
             )
         UnifiedOrchestratorController._refresh_must_cover_support(
             question_plan, must_cover_item.item_id
         )
+        if semantic_only_support and supplement_activated:
+            must_cover_item.status = "pending"
 
     @staticmethod
     def _update_question_plan_from_history(
@@ -1261,13 +1285,23 @@ class UnifiedOrchestratorController:
             and item.support_status == "supported"
             for item in question_plan.claim_evidence_assessments
         )
-        if not has_supported_assessment:
-            UnifiedOrchestratorController._activate_deferred_supplement(
+        semantic_only_support = (
+            UnifiedOrchestratorController._supported_only_by_semantic_verifier(
                 question_plan, matched_item.item_id
+            )
+        )
+        supplement_activated = False
+        if not has_supported_assessment or semantic_only_support:
+            supplement_activated = (
+                UnifiedOrchestratorController._activate_deferred_supplement(
+                    question_plan, matched_item.item_id
+                )
             )
         UnifiedOrchestratorController._refresh_must_cover_support(
             question_plan, matched_item.item_id
         )
+        if semantic_only_support and supplement_activated:
+            matched_item.status = "pending"
 
     @staticmethod
     def _mark_supplement_tasks(

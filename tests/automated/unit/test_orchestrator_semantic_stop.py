@@ -141,6 +141,79 @@ def test_insufficient_must_cover_reopens_only_its_tasks_for_supplement() -> None
     } == {"completed", "deferred"}
 
 
+def test_semantic_only_support_activates_optional_corroboration() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
+    rag_task = next(task for task in plan.retrieval_tasks if task.target_agent == "rag")
+    subtask = controller._build_subtask(
+        action={
+            "action": "call_rag",
+            "task_id": rag_task.task_id,
+            "must_cover_id": rag_task.must_cover_id,
+        },
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide",
+        origin_document_id="guide",
+        content="高血压患者应规律监测血压。",
+    )
+
+    controller._update_question_plan(
+        plan,
+        subtask,
+        SubAgentResult(
+            task_id=subtask.task_id,
+            must_cover_id=subtask.must_cover_id,
+            target_agent="rag",
+            evidence=[evidence],
+            claim_assessments=[
+                ClaimEvidenceAssessment(
+                    task_id=subtask.task_id,
+                    must_cover_id=subtask.must_cover_id,
+                    evidence_id=evidence_identity(evidence),
+                    support_status="supported",
+                    support_excerpt=evidence.content,
+                    verifier_version="claim_support.semantic.v1",
+                )
+            ],
+        ),
+    )
+
+    assert plan.must_cover[0].status == "pending"
+    assert {
+        task.status for task in plan.retrieval_tasks if task.target_agent == "kg"
+    } == {"needs_supplement"}
+
+    kg_task = next(task for task in plan.retrieval_tasks if task.target_agent == "kg")
+    kg_subtask = controller._build_subtask(
+        action={
+            "action": "call_kg",
+            "task_id": kg_task.task_id,
+            "must_cover_id": kg_task.must_cover_id,
+        },
+        max_tool_calls=3,
+        question_plan=plan,
+    )
+    controller._update_question_plan(
+        plan,
+        kg_subtask,
+        SubAgentResult(
+            task_id=kg_subtask.task_id,
+            must_cover_id=kg_subtask.must_cover_id,
+            target_agent="kg",
+            evidence=[],
+            claim_assessments=[],
+            no_signal=True,
+        ),
+    )
+
+    assert plan.must_cover[0].status == "covered"
+    assert kg_task.status == "completed"
+
+
 class _NoEvidenceSubagentClient:
     async def send_task(self, task: SubTask) -> SubAgentResult:
         return SubAgentResult(
