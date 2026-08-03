@@ -128,13 +128,13 @@ class UnifiedOrchestratorController:
             "如果历史检索里有高度相关的问题，先使用 call_history_read 读取 Evidence，再决定回答或补检索。\n"
             "必须遵循结构化问题计划，优先处理 status=pending 的 must-cover，且子问题不得偏离其要求。\n"
             "call_kg 和 call_rag 必须从问题计划中选择一个状态为 pending 或 needs_supplement 的 retrieval_task，"
-            "原样返回其 task_id 和 must_cover_id；call_history_read 必须返回目标 must_cover_id。\n"
+            "原样返回其 task_id 和 must_cover_id；call_history_read 也必须返回要补充的 task_id 和 must_cover_id。\n"
             "主控只负责拆分问题和选择子agent，不允许指定 MCP 工具名、Cypher、检索 payload 或底层工具参数。\n"
             "不要输出解释性文字，不要输出 Markdown，只返回一个 JSON 对象。\n"
             "JSON 格式必须满足：\n"
             "{"
             '"action":"final_answer|call_kg|call_rag|call_history_read",'
-            '"task_id":"仅 call_kg/call_rag 时填写计划中的 task_id",'
+            '"task_id":"检索或历史读取动作对应的计划 task_id",'
             '"must_cover_id":"检索或历史读取动作对应的问题点 ID",'
             '"reason":"简短原因",'
             '"question":"当需要子agent处理时拆分出的子问题，可为空",'
@@ -168,11 +168,6 @@ class UnifiedOrchestratorController:
             raise ValueError("action_must_cover_not_found")
         if must_cover_item.status == "missing":
             raise ValueError("action_must_cover_is_missing")
-        if action_name == "call_history_read":
-            if must_cover_item.status != "pending":
-                raise ValueError("history_must_cover_not_actionable")
-            return None, must_cover_item
-
         task_id = _sanitize_text(action.get("task_id"), 64)
         retrieval_task = next(
             (item for item in question_plan.retrieval_tasks if item.task_id == task_id),
@@ -182,9 +177,6 @@ class UnifiedOrchestratorController:
             raise ValueError("action_task_not_found")
         if retrieval_task.must_cover_id != must_cover_id:
             raise ValueError("action_task_must_cover_mismatch")
-        expected_agent = "kg" if action_name == "call_kg" else "rag"
-        if retrieval_task.target_agent != expected_agent:
-            raise ValueError("action_task_agent_mismatch")
         if retrieval_task.status not in {"pending", "needs_supplement"}:
             raise ValueError("action_task_not_actionable")
         covered_ids = {
@@ -196,6 +188,13 @@ class UnifiedOrchestratorController:
             dependency not in covered_ids for dependency in retrieval_task.dependency_on
         ):
             raise ValueError("action_task_dependency_unmet")
+        if action_name == "call_history_read":
+            if must_cover_item.status != "pending":
+                raise ValueError("history_must_cover_not_actionable")
+            return retrieval_task, must_cover_item
+        expected_agent = "kg" if action_name == "call_kg" else "rag"
+        if retrieval_task.target_agent != expected_agent:
+            raise ValueError("action_task_agent_mismatch")
         return retrieval_task, must_cover_item
 
     def _build_compression_system_prompt(self) -> str:
@@ -213,6 +212,8 @@ class UnifiedOrchestratorController:
             "{"
             '"agent":"kg|rag|history",'
             '"action":"call_kg|call_rag|call_history_read",'
+            '"task_id":"计划任务 ID",'
+            '"must_cover_id":"问题点 ID",'
             '"subquery":"相关的子问题",'
             '"summary":"该工具结果的压缩摘要",'
             '"evidence":['
@@ -419,6 +420,8 @@ class UnifiedOrchestratorController:
                 {
                     "agent": agent,
                     "action": action,
+                    "task_id": _sanitize_text(item.get("task_id"), 64),
+                    "must_cover_id": _sanitize_text(item.get("must_cover_id"), 64),
                     "tool_name": _sanitize_text(item.get("tool_name"), 64)
                     or (
                         "history_read"
@@ -451,6 +454,8 @@ class UnifiedOrchestratorController:
                 {
                     "agent": _sanitize_text(row.get("agent"), 32),
                     "action": _sanitize_text(row.get("action"), 32),
+                    "task_id": _sanitize_text(row.get("task_id"), 64),
+                    "must_cover_id": _sanitize_text(row.get("must_cover_id"), 64),
                     "subquery": _sanitize_text(
                         row.get("subquery") or row.get("question"), 240
                     ),
@@ -874,6 +879,7 @@ class UnifiedOrchestratorController:
         return {
             "agent": "history",
             "action": "call_history_read",
+            "task_id": _sanitize_text(action.get("task_id"), 64),
             "must_cover_id": _sanitize_text(action.get("must_cover_id"), 64),
             "tool_name": "history_read",
             "subquery": _sanitize_text(
@@ -1157,10 +1163,21 @@ class UnifiedOrchestratorController:
         )
         if matched_item is None:
             return
+        task_id = _sanitize_text(action.get("task_id"), 64)
+        matched_task = next(
+            (
+                item
+                for item in question_plan.retrieval_tasks
+                if item.task_id == task_id
+                and item.must_cover_id == matched_item.item_id
+                and item.status in {"pending", "needs_supplement"}
+            ),
+            None,
+        )
+        if matched_task is None:
+            return
         matched_item.status = "covered"
-        for retrieval_task in question_plan.retrieval_tasks:
-            if retrieval_task.must_cover_id == matched_item.item_id:
-                retrieval_task.status = "completed"
+        matched_task.status = "completed"
 
     @staticmethod
     def _mark_supplement_tasks(

@@ -54,6 +54,7 @@ def test_history_evidence_covers_only_unambiguous_plan_item() -> None:
         {
             "action": "call_history_read",
             "history_id": "history-1",
+            "task_id": single.retrieval_tasks[0].task_id,
             "must_cover_id": single.must_cover[0].item_id,
         },
         {"result": {"matched": True, "evidence": [_evidence()]}},
@@ -68,6 +69,7 @@ def test_history_evidence_covers_only_unambiguous_plan_item() -> None:
         {
             "action": "call_history_read",
             "history_id": "history-2",
+            "task_id": multiple.retrieval_tasks[0].task_id,
             "must_cover_id": "mc-not-found",
         },
         {"result": {"matched": True, "evidence": [_evidence()]}},

@@ -429,7 +429,11 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
 
     observation = controller._build_subagent_observation(
         subagent_result,
-        {"action": "call_rag"},
+        {
+            "action": "call_rag",
+            "task_id": "task-rag-1",
+            "must_cover_id": "mc-1",
+        },
     )
     assert observation["evidence"] == [evidence]
     evidence_summary = controller._build_evidence_summary([observation])
@@ -448,10 +452,19 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
 
     compact = controller._compact_tool_observations_for_compression([observation])
     assert compact[0]["evidence"] == [evidence]
+    assert compact[0]["task_id"] == "task-rag-1"
+    assert compact[0]["must_cover_id"] == "mc-1"
     assert "query_records" not in compact[0]
+    normalized_compact = controller._normalize_compressed_tool_observations(compact)
+    assert normalized_compact[0]["task_id"] == "task-rag-1"
+    assert normalized_compact[0]["must_cover_id"] == "mc-1"
 
     history_observation = controller._build_history_observation(
-        {"history_id": "h-1-2"},
+        {
+            "history_id": "h-1-2",
+            "task_id": "task-history-1",
+            "must_cover_id": "mc-1",
+        },
         {
             "ok": True,
             "result": {
@@ -463,6 +476,8 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
         },
     )
     assert history_observation["evidence"] == [evidence]
+    assert history_observation["task_id"] == "task-history-1"
+    assert history_observation["must_cover_id"] == "mc-1"
     assert "query_records" not in history_observation
 
 
@@ -502,6 +517,7 @@ def test_orchestrator_history_action_is_reachable() -> None:
             (
                 {
                     "action": "call_history_read",
+                    "task_id": plan.retrieval_tasks[0].task_id,
                     "must_cover_id": plan.must_cover[0].item_id,
                     "history_id": "h-1-2",
                     "reason": "复用历史证据",

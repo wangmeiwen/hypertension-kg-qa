@@ -89,9 +89,17 @@ def test_orchestrator_action_rejects_missing_required_fields() -> None:
         ValidationError, match="retrieval_action_requires_must_cover_id"
     ):
         OrchestratorAction.model_validate({"action": "call_rag", "task_id": "task-1"})
-    with pytest.raises(ValidationError, match="history_read_requires_must_cover_id"):
+    with pytest.raises(ValidationError, match="history_read_requires_task_id"):
         OrchestratorAction.model_validate(
             {"action": "call_history_read", "history_id": "history-1"}
+        )
+    with pytest.raises(ValidationError, match="history_read_requires_must_cover_id"):
+        OrchestratorAction.model_validate(
+            {
+                "action": "call_history_read",
+                "history_id": "history-1",
+                "task_id": "task-1",
+            }
         )
 
 

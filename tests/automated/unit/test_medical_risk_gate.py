@@ -11,6 +11,7 @@ import pytest
 from app.a2a.medical_risk import assess_medical_risk
 from app.a2a.models import Evidence
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
+from app.a2a.question_planner import build_question_plan
 
 
 @pytest.mark.parametrize(
@@ -70,6 +71,8 @@ def test_controller_redirects_before_calling_llm() -> None:
 
 
 def test_high_risk_question_abstains_with_only_one_source() -> None:
+    question = "孕妇高血压可以怎么调整药物？"
+    plan = build_question_plan(question, assess_medical_risk(question))
     evidence = Evidence(
         source_type="document",
         source_id="guide-1",
@@ -98,6 +101,8 @@ def test_high_risk_question_abstains_with_only_one_source() -> None:
             (
                 {
                     "action": "call_history_read",
+                    "task_id": plan.retrieval_tasks[0].task_id,
+                    "must_cover_id": plan.must_cover[0].item_id,
                     "history_id": "history-1",
                 },
                 {"total_tokens": 1},
@@ -131,7 +136,7 @@ def test_high_risk_question_abstains_with_only_one_source() -> None:
 
     result = asyncio.run(
         controller.run(
-            input_text="孕妇高血压可以怎么调整药物？",
+            input_text=question,
             session_id="session-1",
             max_turns=2,
         )

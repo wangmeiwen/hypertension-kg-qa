@@ -267,6 +267,8 @@ class OrchestratorAction(BaseModel):
             and not self.user_question.strip()
         ):
             raise ValueError("history_read_requires_locator")
+        if self.action == "call_history_read" and not self.task_id.strip():
+            raise ValueError("history_read_requires_task_id")
         if self.action == "call_history_read" and not self.must_cover_id.strip():
             raise ValueError("history_read_requires_must_cover_id")
         return self
