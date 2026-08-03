@@ -137,14 +137,6 @@ class SubAgentResult(BaseModel):
     telemetry: dict[str, Any] = Field(default_factory=dict)
 
 
-class EvidenceBundle(BaseModel):
-    """主代理证据池。"""
-
-    kg_evidence: list[Evidence] = Field(default_factory=list)
-    rag_evidence: list[Evidence] = Field(default_factory=list)
-    citations: list[str] = Field(default_factory=list)
-
-
 class EvidenceConflict(BaseModel):
     """融合证据中尚未解决的结构化冲突。"""
 
@@ -157,6 +149,22 @@ class EvidenceConflict(BaseModel):
     source_ids: list[str] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
     status: Literal["unresolved", "resolved"] = "unresolved"
+
+
+class EvidenceBundle(BaseModel):
+    """主控终止时输出的统一证据包。"""
+
+    bundle_id: str = Field(default="")
+    plan_id: str = Field(default="")
+    question: str = Field(default="")
+    evidence: list[Evidence] = Field(default_factory=list)
+    kg_evidence: list[Evidence] = Field(default_factory=list)
+    rag_evidence: list[Evidence] = Field(default_factory=list)
+    history_evidence: list[Evidence] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
+    conflicts: list[EvidenceConflict] = Field(default_factory=list)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    distinct_source_count: int = Field(default=0, ge=0)
 
 
 class OrchestratorDecision(BaseModel):

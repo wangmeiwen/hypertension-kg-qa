@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - dependency is enforced at runtime
 from app.a2a.agent.llm_client import LLMClient
 from app.a2a.client.subagent_client import SubAgentClientFactory
 from app.a2a.conflict_detection import detect_evidence_conflicts
+from app.a2a.evidence_bundle import build_evidence_bundle
 from app.a2a.evidence_fusion import EvidenceFusionResult, fuse_evidence
 from app.a2a.medical_risk import MedicalRiskAssessment, assess_medical_risk
 from app.a2a.models import (
@@ -1211,10 +1212,10 @@ class UnifiedOrchestratorController:
         }
 
     @staticmethod
-    def _fuse_tool_evidence(
+    def _tool_evidence_rows(
         tool_observations: list[dict[str, Any]],
-    ) -> EvidenceFusionResult:
-        """收集工具观测并执行统一 Evidence 融合。"""
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """从工具观测收集带代理来源的 Evidence。"""
         rows: list[tuple[str, dict[str, Any]]] = []
         for observation in tool_observations:
             if not isinstance(observation, dict):
@@ -1223,7 +1224,14 @@ class UnifiedOrchestratorController:
             for item in _coerce_list(observation.get("evidence")):
                 if isinstance(item, dict):
                     rows.append((agent, item))
-        return fuse_evidence(rows)
+        return rows
+
+    @classmethod
+    def _fuse_tool_evidence(
+        cls, tool_observations: list[dict[str, Any]]
+    ) -> EvidenceFusionResult:
+        """收集工具观测并执行统一 Evidence 融合。"""
+        return fuse_evidence(cls._tool_evidence_rows(tool_observations))
 
     def _assess_answer_readiness(
         self,
@@ -1582,6 +1590,33 @@ class UnifiedOrchestratorController:
         result["telemetry"] = telemetry
         return result
 
+    @classmethod
+    def _attach_evidence_bundle(
+        cls,
+        result: dict[str, Any],
+        *,
+        question: str,
+        question_plan: QuestionPlan,
+        tool_observations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """把最终 Evidence Bundle 写入终止结果和遥测。"""
+        bundle = build_evidence_bundle(
+            question=question,
+            plan_id=question_plan.plan_id,
+            rows=cls._tool_evidence_rows(tool_observations),
+            coverage=cls._question_plan_coverage(question_plan),
+        )
+        result["evidence_bundle"] = bundle.model_dump()
+        telemetry = _coerce_dict(result.get("telemetry"))
+        telemetry["evidence_bundle"] = {
+            "bundle_id": bundle.bundle_id,
+            "evidence_count": len(bundle.evidence),
+            "distinct_source_count": bundle.distinct_source_count,
+            "conflict_count": len(bundle.conflicts),
+        }
+        result["telemetry"] = telemetry
+        return result
+
     def _build_urgent_redirect_result(
         self,
         *,
@@ -1711,37 +1746,47 @@ class UnifiedOrchestratorController:
                     progress_callback=progress_callback,
                 )
             except PromptBudgetExceededError:
-                return self._attach_question_plan(
-                    self._attach_medical_risk_telemetry(
-                        self._build_over_budget_result(
-                            tool_observations=tool_observations,
-                            processing_steps=processing_steps,
-                            retrieval_round=retrieval_round,
-                            max_turns=safe_max_turns,
-                            token_usage=token_usage,
-                            trace_id=safe_trace_id,
-                            compression_state=compression_state,
+                return self._attach_evidence_bundle(
+                    self._attach_question_plan(
+                        self._attach_medical_risk_telemetry(
+                            self._build_over_budget_result(
+                                tool_observations=tool_observations,
+                                processing_steps=processing_steps,
+                                retrieval_round=retrieval_round,
+                                max_turns=safe_max_turns,
+                                token_usage=token_usage,
+                                trace_id=safe_trace_id,
+                                compression_state=compression_state,
+                            ),
+                            medical_risk,
                         ),
-                        medical_risk,
+                        question_plan,
                     ),
-                    question_plan,
+                    question=safe_question,
+                    question_plan=question_plan,
+                    tool_observations=tool_observations,
                 )
             except OrchestratorActionValidationError as exc:
-                return self._attach_question_plan(
-                    self._attach_medical_risk_telemetry(
-                        self._build_invalid_decision_result(
-                            tool_observations=tool_observations,
-                            processing_steps=processing_steps,
-                            retrieval_round=retrieval_round,
-                            max_turns=safe_max_turns,
-                            token_usage=token_usage,
-                            trace_id=safe_trace_id,
-                            compression_state=compression_state,
-                            error=str(exc),
+                return self._attach_evidence_bundle(
+                    self._attach_question_plan(
+                        self._attach_medical_risk_telemetry(
+                            self._build_invalid_decision_result(
+                                tool_observations=tool_observations,
+                                processing_steps=processing_steps,
+                                retrieval_round=retrieval_round,
+                                max_turns=safe_max_turns,
+                                token_usage=token_usage,
+                                trace_id=safe_trace_id,
+                                compression_state=compression_state,
+                                error=str(exc),
+                            ),
+                            medical_risk,
                         ),
-                        medical_risk,
+                        question_plan,
                     ),
-                    question_plan,
+                    question=safe_question,
+                    question_plan=question_plan,
+                    tool_observations=tool_observations,
                 )
             merge_token_usage(token_usage, tokens)
             action_name = str(action.get("action") or "").strip()
@@ -1897,6 +1942,12 @@ class UnifiedOrchestratorController:
                 ),
                 question_plan,
             )
+            insufficient_result = self._attach_evidence_bundle(
+                insufficient_result,
+                question=safe_question,
+                question_plan=question_plan,
+                tool_observations=tool_observations,
+            )
             result_telemetry = _coerce_dict(insufficient_result.get("telemetry"))
             result_telemetry["stop_reason"] = stop_reason
             result_telemetry["no_progress_rounds"] = no_progress_rounds
@@ -1924,7 +1975,12 @@ class UnifiedOrchestratorController:
             },
             "evidence_summary": evidence_summary,
         }
-        return self._attach_question_plan(
-            self._attach_medical_risk_telemetry(response_result, medical_risk),
-            question_plan,
+        return self._attach_evidence_bundle(
+            self._attach_question_plan(
+                self._attach_medical_risk_telemetry(response_result, medical_risk),
+                question_plan,
+            ),
+            question=safe_question,
+            question_plan=question_plan,
+            tool_observations=tool_observations,
         )
