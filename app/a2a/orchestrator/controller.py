@@ -37,6 +37,7 @@ from app.a2a.models import (
     ClaimSupportStatus,
     Evidence,
     MustCoverItem,
+    MustCoverProgressState,
     OrchestratorAction,
     QuestionPlan,
     RetrievalTask,
@@ -45,6 +46,11 @@ from app.a2a.models import (
     SubTask,
 )
 from app.a2a.question_planner import build_question_plan
+from app.a2a.retrieval_progress import (
+    build_retrieval_progress,
+    has_semantic_progress,
+    no_progress_reason,
+)
 from app.a2a.telemetry import (
     empty_token_usage,
     merge_token_usage,
@@ -1479,24 +1485,72 @@ class UnifiedOrchestratorController:
         self,
         tool_observations: list[dict[str, Any]],
         question_plan: QuestionPlan,
-    ) -> tuple[int, int]:
-        """生成用于判断检索是否取得语义进展的状态。"""
-        evidence_count = len(self._fuse_tool_evidence(tool_observations).evidence)
-        covered_count = int(self._question_plan_coverage(question_plan)["covered"])
-        return evidence_count, covered_count
+    ) -> dict[str, MustCoverProgressState]:
+        """生成逐 must-cover 的语义进展快照。"""
+        return build_retrieval_progress(
+            question_plan=question_plan,
+            evidence_by_item=self._evidence_by_must_cover(
+                tool_observations, question_plan
+            ),
+        )
 
     def _advance_retrieval_progress(
         self,
         *,
         tool_observations: list[dict[str, Any]],
         question_plan: QuestionPlan,
-        previous_state: tuple[int, int],
-        no_progress_rounds: int,
-    ) -> tuple[tuple[int, int], int]:
-        """更新连续无进展轮数。"""
+        previous_state: dict[str, MustCoverProgressState],
+        no_progress_rounds: dict[str, int],
+        no_progress_reasons: dict[str, str],
+        attempted_must_cover_ids: set[str],
+    ) -> tuple[dict[str, MustCoverProgressState], dict[str, int], dict[str, str]]:
+        """只更新本轮实际检索问题点的连续无进展状态。"""
         current_state = self._retrieval_progress_state(tool_observations, question_plan)
-        next_rounds = no_progress_rounds + 1 if current_state == previous_state else 0
-        return current_state, next_rounds
+        next_rounds = dict(no_progress_rounds)
+        next_reasons = dict(no_progress_reasons)
+        for item_id in attempted_must_cover_ids:
+            previous = previous_state.get(item_id)
+            current = current_state.get(item_id)
+            if previous is None or current is None:
+                continue
+            if has_semantic_progress(previous, current):
+                next_rounds[item_id] = 0
+                next_reasons.pop(item_id, None)
+                continue
+            next_rounds[item_id] = next_rounds.get(item_id, 0) + 1
+            next_reasons[item_id] = no_progress_reason(previous, current)
+        return current_state, next_rounds, next_reasons
+
+    @classmethod
+    def _all_unresolved_items_stalled(
+        cls, question_plan: QuestionPlan, no_progress_rounds: dict[str, int]
+    ) -> bool:
+        """仅当所有未覆盖问题点都连续无进展时终止检索。"""
+        unresolved_ids = [
+            item.item_id
+            for item in question_plan.must_cover
+            if item.status != "covered"
+        ]
+        return bool(unresolved_ids) and all(
+            no_progress_rounds.get(item_id, 0) >= cls._MAX_NO_PROGRESS_ROUNDS
+            for item_id in unresolved_ids
+        )
+
+    @staticmethod
+    def _build_progress_telemetry(
+        progress_state: dict[str, MustCoverProgressState],
+        no_progress_rounds: dict[str, int],
+        no_progress_reasons: dict[str, str],
+    ) -> dict[str, Any]:
+        """输出可追踪的逐问题点语义进展。"""
+        return {
+            "must_cover_progress": {
+                item_id: state.model_dump() for item_id, state in progress_state.items()
+            },
+            "no_progress_rounds_by_must_cover": dict(no_progress_rounds),
+            "no_progress_reasons": dict(no_progress_reasons),
+            "no_progress_rounds": max(no_progress_rounds.values(), default=0),
+        }
 
     def _build_evidence_summary(
         self, tool_observations: list[dict[str, Any]]
@@ -2051,7 +2105,8 @@ class UnifiedOrchestratorController:
         retrieval_round = 0
         final_answer = ""
         confidence = 0.2
-        no_progress_rounds = 0
+        no_progress_rounds = {item.item_id: 0 for item in question_plan.must_cover}
+        no_progress_reasons: dict[str, str] = {}
         previous_progress_state = self._retrieval_progress_state(
             tool_observations, question_plan
         )
@@ -2233,18 +2288,26 @@ class UnifiedOrchestratorController:
                 tool_observations.append(
                     self._build_history_observation(action, history_result)
                 )
-                previous_progress_state, no_progress_rounds = (
-                    self._advance_retrieval_progress(
-                        tool_observations=tool_observations,
-                        question_plan=question_plan,
-                        previous_state=previous_progress_state,
-                        no_progress_rounds=no_progress_rounds,
-                    )
+                (
+                    previous_progress_state,
+                    no_progress_rounds,
+                    no_progress_reasons,
+                ) = self._advance_retrieval_progress(
+                    tool_observations=tool_observations,
+                    question_plan=question_plan,
+                    previous_state=previous_progress_state,
+                    no_progress_rounds=no_progress_rounds,
+                    no_progress_reasons=no_progress_reasons,
+                    attempted_must_cover_ids={
+                        _sanitize_text(action.get("must_cover_id"), 64)
+                    },
                 )
-                if no_progress_rounds >= self._MAX_NO_PROGRESS_ROUNDS:
+                if self._all_unresolved_items_stalled(
+                    question_plan, no_progress_rounds
+                ):
                     stop_reason = "no_retrieval_progress"
                     processing_steps.append(
-                        "连续检索未增加有效 Evidence 或 must-cover 覆盖，提前停止"
+                        "所有未覆盖 must-cover 连续未提升支持状态、来源独立性、适用条件或冲突状态，提前停止"
                     )
                     break
                 continue
@@ -2293,18 +2356,24 @@ class UnifiedOrchestratorController:
                     tool_observations.append(
                         self._build_subagent_observation(result, result_action)
                     )
-                previous_progress_state, no_progress_rounds = (
-                    self._advance_retrieval_progress(
-                        tool_observations=tool_observations,
-                        question_plan=question_plan,
-                        previous_state=previous_progress_state,
-                        no_progress_rounds=no_progress_rounds,
-                    )
+                (
+                    previous_progress_state,
+                    no_progress_rounds,
+                    no_progress_reasons,
+                ) = self._advance_retrieval_progress(
+                    tool_observations=tool_observations,
+                    question_plan=question_plan,
+                    previous_state=previous_progress_state,
+                    no_progress_rounds=no_progress_rounds,
+                    no_progress_reasons=no_progress_reasons,
+                    attempted_must_cover_ids={task.must_cover_id for task in tasks},
                 )
-                if no_progress_rounds >= self._MAX_NO_PROGRESS_ROUNDS:
+                if self._all_unresolved_items_stalled(
+                    question_plan, no_progress_rounds
+                ):
                     stop_reason = "no_retrieval_progress"
                     processing_steps.append(
-                        "连续检索未增加有效 Evidence 或 must-cover 覆盖，提前停止"
+                        "所有未覆盖 must-cover 连续未提升支持状态、来源独立性、适用条件或冲突状态，提前停止"
                     )
                     break
                 continue
@@ -2344,7 +2413,13 @@ class UnifiedOrchestratorController:
             )
             result_telemetry = _coerce_dict(insufficient_result.get("telemetry"))
             result_telemetry["stop_reason"] = stop_reason
-            result_telemetry["no_progress_rounds"] = no_progress_rounds
+            result_telemetry.update(
+                self._build_progress_telemetry(
+                    previous_progress_state,
+                    no_progress_rounds,
+                    no_progress_reasons,
+                )
+            )
             if answer_validation is not None:
                 result_telemetry["answer_validation"] = answer_validation.model_dump()
             insufficient_result["telemetry"] = result_telemetry
@@ -2371,7 +2446,11 @@ class UnifiedOrchestratorController:
                 **token_usage,
                 "final_source": "controller",
                 "stop_reason": stop_reason,
-                "no_progress_rounds": no_progress_rounds,
+                **self._build_progress_telemetry(
+                    previous_progress_state,
+                    no_progress_rounds,
+                    no_progress_reasons,
+                ),
                 **self._build_budget_telemetry(compression_state),
             },
             "evidence_summary": evidence_summary,

@@ -196,4 +196,16 @@ def test_run_stops_after_two_retrieval_rounds_without_progress() -> None:
     assert result["output_type"] == "orchestrator_abstained_insufficient_evidence"
     assert result["telemetry"]["stop_reason"] == "no_retrieval_progress"
     assert result["telemetry"]["no_progress_rounds"] == 2
+    assert result["telemetry"]["no_progress_rounds_by_must_cover"] == {
+        plan.must_cover[0].item_id: 2
+    }
+    assert result["telemetry"]["no_progress_reasons"] == {
+        plan.must_cover[0].item_id: "support_not_improved"
+    }
+    assert (
+        result["telemetry"]["must_cover_progress"][plan.must_cover[0].item_id][
+            "supported_evidence_count"
+        ]
+        == 0
+    )
     assert result["evidence_summary"]["plan_coverage"]["complete"] is False

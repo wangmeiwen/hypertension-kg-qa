@@ -193,6 +193,20 @@ class EvidenceSufficiencyAssessment(BaseModel):
     items: list[MustCoverSufficiency] = Field(default_factory=list)
 
 
+class MustCoverProgressState(BaseModel):
+    """单个 must-cover 的语义检索进展快照。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    support_status: ClaimSupportStatus
+    supported_evidence_count: int = Field(default=0, ge=0)
+    distinct_publication_count: int = Field(default=0, ge=0)
+    applicability_completeness: float = Field(default=0.0, ge=0.0, le=1.0)
+    conflict_status: Literal["none", "unresolved"] = "none"
+    best_support_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class SubTask(BaseModel):
     """主代理派发给子代理的任务单元。"""
 
