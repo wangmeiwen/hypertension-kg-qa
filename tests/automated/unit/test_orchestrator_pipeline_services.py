@@ -6,12 +6,23 @@ import asyncio
 
 from app.a2a.medical_risk import MedicalRiskAssessment
 from app.a2a.models import AnswerGenerationContext, Evidence
+from app.a2a.agent.graph_subagent import GraphSubAgent
+from app.a2a.agent.rag_subagent import RagSubAgent
 from app.a2a.orchestrator.answer_pipeline import AnswerPipeline
 from app.a2a.orchestrator.evidence_pipeline import EvidencePipeline
 from app.a2a.orchestrator.planning_service import PlanningService
 from app.a2a.orchestrator.retrieval_scheduler import RetrievalScheduler
 from app.a2a.question_planner import build_question_plan
 from app.a2a.subagents.rag.query_builder import build_rag_payload
+
+
+class _CapturingExecutor:
+    def __init__(self) -> None:
+        self.request: dict = {}
+
+    async def run_request(self, request: dict) -> dict:
+        self.request = request
+        return {"evidence": [], "no_signal": True}
 
 
 def test_planning_service_binds_action_to_exact_plan_task() -> None:
@@ -63,6 +74,25 @@ def test_planning_service_enriches_home_monitoring_retrieval_query() -> None:
         "家庭测血压一般连续几天、每天测几次 家庭血压 HBPM 连续测量 "
         "天数 早晚 测量次数 读数"
     )
+
+
+def test_subagent_adapters_preserve_structured_query_terms() -> None:
+    rag_executor = _CapturingExecutor()
+    rag = object.__new__(RagSubAgent)
+    rag.executor = rag_executor
+    graph_executor = _CapturingExecutor()
+    graph = object.__new__(GraphSubAgent)
+    graph.executor = graph_executor
+    request = {
+        "subquery": "家庭血压怎么测量",
+        "query_terms": ["HBPM", "早晚", "读数"],
+    }
+
+    asyncio.run(rag._run_single_request(1, request))
+    asyncio.run(graph._run_single_request(1, request))
+
+    assert rag_executor.request["query_terms"] == ["HBPM", "早晚", "读数"]
+    assert graph_executor.request["query_terms"] == ["HBPM", "早晚", "读数"]
 
 
 def test_retrieval_scheduler_selects_ready_primary_wave_without_execution() -> None:
