@@ -135,6 +135,9 @@ class AgentRunService:
                 "tool_observations": result.get("tool_observations", []),
                 "reflection_events": result.get("reflection_events", []),
                 "telemetry": result.get("telemetry", {}),
+                "evidence_summary": result.get("evidence_summary", {}),
+                "question_plan": result.get("question_plan", {}),
+                "evidence_bundle": result.get("evidence_bundle", {}),
                 "confidence": result.get("confidence", 0.0),
                 "trace_id": trace_id,
                 "run_path": "a2a",
@@ -300,6 +303,16 @@ class AgentRunService:
         )
         telemetry_obj = extract_a2a_artifact(snapshot, "telemetry")
         telemetry = telemetry_obj if isinstance(telemetry_obj, dict) else {}
+        evidence_summary_obj = extract_a2a_artifact(snapshot, "evidence_summary")
+        evidence_summary = (
+            evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
+        )
+        question_plan_obj = extract_a2a_artifact(snapshot, "question_plan")
+        question_plan = question_plan_obj if isinstance(question_plan_obj, dict) else {}
+        evidence_bundle_obj = extract_a2a_artifact(snapshot, "evidence_bundle")
+        evidence_bundle = (
+            evidence_bundle_obj if isinstance(evidence_bundle_obj, dict) else {}
+        )
         progress_events_obj = extract_a2a_artifact(snapshot, "progress_events")
         progress_events = (
             progress_events_obj if isinstance(progress_events_obj, list) else []
@@ -314,5 +327,8 @@ class AgentRunService:
             "reflection_events": progress_events,
             "processing_steps": processing_steps,
             "telemetry": telemetry,
+            "evidence_summary": evidence_summary,
+            "question_plan": question_plan,
+            "evidence_bundle": evidence_bundle,
             "a2a_task_id": task_id,
         }

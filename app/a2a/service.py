@@ -257,6 +257,12 @@ class A2AService:
         evidence_summary = (
             evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
         )
+        question_plan_obj = result.get("question_plan")
+        question_plan = question_plan_obj if isinstance(question_plan_obj, dict) else {}
+        evidence_bundle_obj = result.get("evidence_bundle")
+        evidence_bundle = (
+            evidence_bundle_obj if isinstance(evidence_bundle_obj, dict) else {}
+        )
         processing_steps_obj = result.get("processing_steps")
         processing_steps = (
             processing_steps_obj if isinstance(processing_steps_obj, list) else []
@@ -294,6 +300,18 @@ class A2AService:
                 "artifactId": f"art-{uuid.uuid4().hex}",
                 "name": "evidence_summary",
                 "parts": [{"kind": "data", "data": evidence_summary}],
+                "metadata": {},
+            },
+            {
+                "artifactId": f"art-{uuid.uuid4().hex}",
+                "name": "question_plan",
+                "parts": [{"kind": "data", "data": question_plan}],
+                "metadata": {},
+            },
+            {
+                "artifactId": f"art-{uuid.uuid4().hex}",
+                "name": "evidence_bundle",
+                "parts": [{"kind": "data", "data": evidence_bundle}],
                 "metadata": {},
             },
             {

@@ -156,6 +156,18 @@ async def test_agent_run_service_maps_completed_a2a_task(monkeypatch) -> None:
                         "name": "telemetry",
                         "parts": [{"kind": "data", "data": {"llm_calls": 1}}],
                     },
+                    {
+                        "name": "evidence_summary",
+                        "parts": [{"kind": "data", "data": {"evidence_count": 1}}],
+                    },
+                    {
+                        "name": "question_plan",
+                        "parts": [{"kind": "data", "data": {"plan_id": "plan-1"}}],
+                    },
+                    {
+                        "name": "evidence_bundle",
+                        "parts": [{"kind": "data", "data": {"bundle_id": "bundle-1"}}],
+                    },
                 ],
             }
 
@@ -179,6 +191,9 @@ async def test_agent_run_service_maps_completed_a2a_task(monkeypatch) -> None:
     assert result["answer"] == "answer"
     assert result["traces"] == [{"step": 1, "action": "search"}]
     assert result["a2a_task_id"] == "task-1"
+    assert result["evidence_summary"] == {"evidence_count": 1}
+    assert result["question_plan"] == {"plan_id": "plan-1"}
+    assert result["evidence_bundle"] == {"bundle_id": "bundle-1"}
 
 
 async def test_sessions_history_service_validates_and_mutates(
