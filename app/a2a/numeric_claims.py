@@ -41,6 +41,17 @@ _INTERVENTION_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _INTERVENTION_STOP_WORDS = {"推荐", "起始", "常用", "每日", "药物", "用药"}
+_NUMERIC_PREDICATE_TERMS = (
+    "诊断",
+    "判断",
+    "界值",
+    "诊断标准",
+    "目标",
+    "控制在",
+    "降至",
+    "定义",
+    "急症",
+)
 _UNIT_DEFINITIONS = {
     "mmhg": ("blood_pressure", Decimal("1")),
     "毫米汞柱": ("blood_pressure", Decimal("1")),
@@ -148,20 +159,7 @@ def _subject_and_predicate(
     else:
         subject = ""
     predicate_text = text
-    if not any(
-        term in predicate_text
-        for term in (
-            "诊断",
-            "判断",
-            "界值",
-            "诊断标准",
-            "目标",
-            "控制在",
-            "降至",
-            "定义",
-            "急症",
-        )
-    ):
+    if not any(term in predicate_text for term in _NUMERIC_PREDICATE_TERMS):
         predicate_text = predicate_context
     if (
         any(term in predicate_text for term in ("诊断", "判断", "界值", "诊断标准"))
@@ -216,10 +214,20 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
     """按局部子句提取数值，避免把年龄、年份和频次当作目标值。"""
     claims: list[StructuredNumericClaim] = []
     normalized_text = normalize_numeric_ocr_text(text)
+    pending_predicate_context = ""
     for sentence in _SENTENCE_SPLIT_PATTERN.split(normalized_text):
         sentence = sentence.strip()
         if not sentence:
             continue
+        sentence_has_predicate = any(
+            term in sentence for term in _NUMERIC_PREDICATE_TERMS
+        )
+        sentence_has_numeric_value = _NUMERIC_PATTERN.search(sentence) is not None
+        predicate_context = (
+            sentence
+            if sentence_has_predicate
+            else pending_predicate_context or sentence
+        )
         population = _canonical_terms(sentence, _POPULATION_ALIASES)
         sentence_measurement_context = _canonical_terms(sentence, _MEASUREMENT_ALIASES)
         for clause in _LOCAL_CLAUSE_SPLIT_PATTERN.split(sentence):
@@ -237,7 +245,7 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                 if normalized_value is None:
                     continue
                 subject, predicate = _subject_and_predicate(
-                    clause, unit_family, sentence
+                    clause, unit_family, predicate_context
                 )
                 if unit_family == "blood_pressure":
                     subject = _nearest_blood_pressure_subject(
@@ -282,6 +290,11 @@ def extract_structured_numeric_claims(text: str) -> list[StructuredNumericClaim]
                     )
                 else:
                     claims.append(claim)
+        pending_predicate_context = (
+            sentence
+            if sentence_has_predicate and not sentence_has_numeric_value
+            else ""
+        )
     return claims
 
 

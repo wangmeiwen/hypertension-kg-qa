@@ -175,6 +175,30 @@ def test_generic_blood_pressure_threshold_requires_both_dimensions() -> None:
     assert supported is not None and supported.support_status == "supported"
 
 
+def test_numeric_table_rows_inherit_diagnostic_predicate_from_heading() -> None:
+    plan = build_question_plan("动态血压诊断阈值是多少？", MedicalRiskAssessment())
+    item = plan.must_cover[0]
+    task = _task(plan, "rag")
+
+    assessment = deterministic_claim_support(
+        task=task,
+        must_cover=item,
+        evidence=Evidence(
+            source_type="document",
+            source_id="ambulatory-threshold-table",
+            content=(
+                "基于诊室血压、家庭血压和动态血压的高血压诊断标准。"
+                "家庭血压平均值≥135/85mmHg；"
+                "动态血压24h平均值≥130/80mmHg，"
+                "白天平均值≥135/85mmHg，夜晚平均值≥120/70mmHg。"
+            ),
+        ),
+    )
+
+    assert assessment is not None
+    assert assessment.support_status == "supported"
+
+
 def test_ocr_spaced_target_and_equivalent_age_condition_are_supported() -> None:
     plan = build_question_plan(
         "80岁以上老年人的收缩压目标是多少？", MedicalRiskAssessment()
