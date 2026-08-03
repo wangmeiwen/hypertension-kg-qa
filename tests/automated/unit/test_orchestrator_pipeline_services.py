@@ -161,3 +161,10 @@ def test_answer_pipeline_accepts_only_structured_answer_context() -> None:
     assert "AnswerGenerationContext" in prompt
     assert '"plan_id": "plan-1"' in prompt
     assert "tool_observations" not in prompt
+
+
+def test_answer_pipeline_forbids_uncited_summary_sentences() -> None:
+    prompt = AnswerPipeline.system_prompt()
+
+    assert "每一个包含医学事实的完整句子" in prompt
+    assert "禁止输出没有 citation 的开场概括句" in prompt

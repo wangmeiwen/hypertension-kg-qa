@@ -22,12 +22,15 @@ class AnswerPipeline:
             "要求：\n"
             "1. 直接回答问题，不要输出 JSON，不要解释推理过程。\n"
             "2. 按 must_cover 数组顺序逐项回答，不得遗漏或合并问题点。\n"
-            "3. 每项结论只能使用该项 supporting_evidence，并在同一句末尾附带对应 citation。\n"
+            "3. 每项结论只能使用该项 supporting_evidence；每一个包含医学事实的完整句子"
+            "都必须在同一句末尾附带对应 citation。\n"
             "4. 明确写出 evidence_policy.required_applicability_fields 中的适用条件。\n"
             "5. 数值、比较符、单位和测量场景必须与所引 Evidence 完全一致。\n"
             "6. 不得增加 Evidence 未明示的次数、总数、换算值或推导值。\n"
             "7. 不得编造事实、来源、引用或确定性；存在未解决冲突时不得选择结论。\n"
-            "8. 使用 Markdown 正常排版即可，允许列表和简短小标题。"
+            "8. 禁止输出没有 citation 的开场概括句、总结句或列表项；如果先给结论，"
+            "结论句本身必须引用。\n"
+            "9. 使用 Markdown 正常排版即可，允许不含医学断言的简短小标题。"
         )
 
     @staticmethod
