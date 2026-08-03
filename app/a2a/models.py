@@ -439,6 +439,7 @@ class AnswerValidationResult(BaseModel):
     unresolved_conflict_ids: list[str] = Field(default_factory=list)
     unsupported_claim_ids: list[str] = Field(default_factory=list)
     numeric_mismatch_ids: list[str] = Field(default_factory=list)
+    uncited_claims: list[str] = Field(default_factory=list)
     answer_claims: list[StructuredAnswerClaim] = Field(default_factory=list)
 
 

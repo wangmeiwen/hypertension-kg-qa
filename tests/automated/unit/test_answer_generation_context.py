@@ -540,6 +540,42 @@ def test_citation_must_be_locally_bound_to_answer_claim() -> None:
     assert result.missing_citation_ids == [task.must_cover_id]
 
 
+def test_post_validation_rejects_uncited_added_medical_fact() -> None:
+    plan = build_question_plan("是否推荐家庭血压监测？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        source_page=8,
+        content="推荐高血压患者进行家庭血压监测。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "推荐高血压患者进行家庭血压监测。[guide-a p8]"
+        "另外，家庭血压监测还能降低死亡风险。",
+        context,
+    )
+
+    assert result.valid is False
+    assert result.uncited_claims == ["另外，家庭血压监测还能降低死亡风险。"]
+
+
 def test_post_validation_blocks_unresolved_conflict() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")

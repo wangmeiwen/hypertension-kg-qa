@@ -48,6 +48,11 @@ _MEASUREMENT_CONTEXT_APPLICABILITY = {
 _DIRECTIONAL_RELATION_PATTERN = re.compile(
     r"(?:导致|引起|造成|诱发|促进|增加|降低|升高|减少|->|→)"
 )
+_MEDICAL_ASSERTION_PATTERN = re.compile(
+    r"(?:推荐|建议|不推荐|不建议|禁忌|应当|应该|需要|可以|可考虑|"
+    r"导致|引起|造成|诱发|促进|增加|降低|升高|减少|风险|目标|阈值|"
+    r"诊断|治疗|用药|停药|监测|死亡|并发症|\d)"
+)
 
 
 def _evidence_relation_direction(evidence: Evidence) -> tuple[str, str, str]:
@@ -193,6 +198,26 @@ def extract_structured_answer_claims(
     return claims
 
 
+def _uncited_medical_claims(answer: str, context: AnswerGenerationContext) -> list[str]:
+    citations = {
+        evidence.citation
+        for item in context.must_cover
+        for evidence in item.supporting_evidence
+        if evidence.citation
+    }
+    uncited: list[str] = []
+    for segment in _ANSWER_SEGMENT_PATTERN.findall(str(answer or "")):
+        text = segment.strip()
+        if not text or any(citation in text for citation in citations):
+            continue
+        normalized = text.strip(" \t-*#")
+        if not normalized or normalized.endswith(("：", ":")):
+            continue
+        if _MEDICAL_ASSERTION_PATTERN.search(normalized):
+            uncited.append(normalized)
+    return list(dict.fromkeys(uncited))
+
+
 def _numeric_claims_are_faithful(
     *,
     item: AnswerMustCoverContext,
@@ -336,6 +361,7 @@ def validate_answer_generation(
 ) -> AnswerValidationResult:
     """检查终答逐项覆盖、引用、数值忠实度、适用条件和冲突。"""
     answer_claims = extract_structured_answer_claims(answer, context)
+    uncited_claims = _uncited_medical_claims(answer, context)
     covered_ids: list[str] = []
     missing_ids: list[str] = []
     missing_citation_ids: list[str] = []
@@ -434,6 +460,7 @@ def validate_answer_generation(
             and not unresolved_conflict_ids
             and not unsupported_claim_ids
             and not numeric_mismatch_ids
+            and not uncited_claims
         ),
         covered_must_cover_ids=covered_ids,
         missing_must_cover_ids=missing_ids,
@@ -442,5 +469,6 @@ def validate_answer_generation(
         unresolved_conflict_ids=unresolved_conflict_ids,
         unsupported_claim_ids=list(dict.fromkeys(unsupported_claim_ids)),
         numeric_mismatch_ids=list(dict.fromkeys(numeric_mismatch_ids)),
+        uncited_claims=uncited_claims,
         answer_claims=answer_claims,
     )
