@@ -96,6 +96,51 @@ def test_incompatible_units_are_reported_separately() -> None:
     }
 
 
+def test_detects_recommendation_polarity_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "老年人推荐使用 ACEI 治疗。"),
+        _evidence("guide-b", "老年人不推荐使用 ACEI 治疗。"),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    assert len(conflicts) == 1
+    assert conflicts[0].conflict_type == "recommendation"
+    assert conflicts[0].values == ["discourage", "recommend"]
+    assert {frame.intervention for frame in conflicts[0].claim_frames} == {"acei"}
+
+
+def test_contraindication_conflicts_with_positive_recommendation() -> None:
+    rows = [
+        _evidence("guide-a", "孕妇可考虑使用 ACEI。"),
+        _evidence("guide-b", "孕妇禁忌使用 ACEI。"),
+    ]
+
+    conflicts = detect_evidence_conflicts(rows)
+
+    assert len(conflicts) == 1
+    assert conflicts[0].conflict_type == "contraindication"
+    assert conflicts[0].values == ["consider", "contraindicated"]
+
+
+def test_recommendations_for_different_populations_do_not_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "老年人推荐使用 ACEI 治疗。"),
+        _evidence("guide-b", "孕妇不推荐使用 ACEI 治疗。"),
+    ]
+
+    assert detect_evidence_conflicts(rows) == []
+
+
+def test_same_source_recommendation_difference_is_not_cross_source_conflict() -> None:
+    rows = [
+        _evidence("guide-a", "推荐使用 ACEI 治疗。"),
+        _evidence("GUIDE A", "不推荐使用 ACEI 治疗。"),
+    ]
+
+    assert detect_evidence_conflicts(rows) == []
+
+
 def test_different_values_from_same_canonical_source_are_not_cross_source_conflict() -> (
     None
 ):
@@ -126,3 +171,22 @@ def test_controller_exposes_structured_conflict_details() -> None:
     assert readiness["unresolved_conflicts"] == ["numeric_conflict"]
     assert len(readiness["conflict_details"]) == 1
     assert summary["conflicts"] == readiness["conflict_details"]
+
+
+def test_controller_blocks_recommendation_conflict() -> None:
+    controller = object.__new__(UnifiedOrchestratorController)
+    observations = [
+        {
+            "agent": "rag",
+            "evidence": [
+                _evidence("guide-a", "推荐使用 ACEI 治疗。").model_dump(),
+                _evidence("guide-b", "不推荐使用 ACEI 治疗。").model_dump(),
+            ],
+        }
+    ]
+
+    readiness = controller._assess_answer_readiness(observations)
+
+    assert readiness["ready"] is False
+    assert readiness["unresolved_conflicts"] == ["recommendation_conflict"]
+    assert readiness["conflict_details"][0]["conflict_type"] == "recommendation"

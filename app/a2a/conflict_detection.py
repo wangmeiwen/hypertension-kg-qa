@@ -12,6 +12,10 @@ from app.a2a.answer_context import evidence_citation
 from app.a2a.evidence_fusion import evidence_identity, publication_identity
 from app.a2a.models import Evidence, EvidenceClaimFrame, EvidenceConflict
 
+RecommendationPolarity = Literal[
+    "unknown", "recommend", "consider", "discourage", "contraindicated"
+]
+
 _NUMERIC_PATTERN = re.compile(
     r"(?P<value>\d{2,3}\s*[/／]\s*\d{2,3}|\d+(?:\.\d+)?)\s*"
     r"(?P<unit>%|mm\s*hg|kpa|mg|μg|ug|g|mmol/l|次/天)",
@@ -38,6 +42,21 @@ _MEASUREMENT_ALIASES = (
     ("clinic", ("诊室血压", "诊所血压")),
     ("home", ("家庭血压", "居家血压")),
     ("ambulatory", ("动态血压", "24小时血压")),
+)
+_INTERVENTION_ALIASES = (
+    ("acei", ("acei", "普利类")),
+    ("arb", ("arb", "沙坦类")),
+    ("ccb", ("ccb", "钙通道阻滞剂")),
+    ("beta_blocker", ("β受体阻滞剂", "β阻滞剂", "beta受体阻滞剂")),
+    ("diuretic", ("利尿剂",)),
+    ("combination_therapy", ("联合治疗", "联合用药")),
+    ("monotherapy", ("单药治疗", "单药用药")),
+)
+_POLARITY_PATTERNS: tuple[tuple[RecommendationPolarity, re.Pattern[str]], ...] = (
+    ("contraindicated", re.compile(r"(?:禁忌|禁止|不得使用|应避免|避免使用)")),
+    ("discourage", re.compile(r"(?:不推荐|不建议|不应使用)")),
+    ("consider", re.compile(r"(?:可考虑|可以考虑)")),
+    ("recommend", re.compile(r"(?:推荐|建议|应使用|首选)")),
 )
 _UNIT_DEFINITIONS = {
     "mmhg": ("mmhg", Decimal("1")),
@@ -72,6 +91,26 @@ def _topic(sentence: str) -> str:
         return topics[0]
     replaced = _NUMERIC_PATTERN.sub("numeric_value", sentence)
     return _normalized(replaced) or "unknown"
+
+
+def _recommendation_polarity(sentence: str) -> RecommendationPolarity:
+    for polarity, pattern in _POLARITY_PATTERNS:
+        if pattern.search(sentence):
+            return polarity
+    return "unknown"
+
+
+def _intervention(sentence: str) -> str:
+    interventions = _canonical_terms(sentence, _INTERVENTION_ALIASES)
+    if interventions:
+        return interventions[0]
+    matched = re.search(
+        r"(?:禁忌|禁止|不得|不推荐|不建议|不应|可考虑|可以考虑|推荐|建议|首选)"
+        r"(?:使用|采用)?\s*([A-Za-z][A-Za-z0-9-]{1,20})",
+        sentence,
+        flags=re.IGNORECASE,
+    )
+    return _normalized(matched.group(1)) if matched is not None else ""
 
 
 def _canonical_unit(raw_unit: str) -> tuple[str, Decimal]:
@@ -134,6 +173,26 @@ def extract_claim_frames(evidence_rows: list[Evidence]) -> list[EvidenceClaimFra
                         measurement_context=measurement_context,
                     )
                 )
+            polarity = _recommendation_polarity(sentence)
+            intervention = _intervention(sentence)
+            if polarity == "unknown" or not intervention:
+                continue
+            payload = f"{evidence_identity(evidence)}|{sentence}|recommendation"
+            digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+            frames.append(
+                EvidenceClaimFrame(
+                    frame_id=f"frame-{digest}",
+                    evidence_id=evidence_identity(evidence),
+                    publication_id=publication,
+                    citation=citation,
+                    sentence=sentence,
+                    topic=f"intervention:{intervention}",
+                    population=population,
+                    measurement_context=measurement_context,
+                    intervention=intervention,
+                    polarity=polarity,
+                )
+            )
     return frames
 
 
@@ -165,12 +224,24 @@ def _values_equivalent(frames: list[EvidenceClaimFrame]) -> bool:
 
 def _build_conflict(
     *,
-    conflict_type: Literal["numeric", "unit", "population", "measurement_context"],
+    conflict_type: Literal[
+        "numeric",
+        "unit",
+        "population",
+        "measurement_context",
+        "recommendation",
+        "contraindication",
+    ],
     claim_key: str,
     frames: list[EvidenceClaimFrame],
 ) -> EvidenceConflict:
     ordered_frames = sorted(frames, key=lambda item: item.frame_id)
-    values = sorted({f"{item.numeric_value}{item.unit}" for item in ordered_frames})
+    values = sorted(
+        {
+            f"{item.numeric_value}{item.unit}" if item.numeric_value else item.polarity
+            for item in ordered_frames
+        }
+    )
     sources = sorted({item.publication_id for item in ordered_frames})
     citations = sorted({item.citation for item in ordered_frames if item.citation})
     digest = hashlib.sha256(
@@ -192,8 +263,10 @@ def _build_conflict(
 def detect_evidence_conflicts(evidence_rows: list[Evidence]) -> list[EvidenceConflict]:
     """只在主题和适用条件对齐后检测跨出版来源数值与单位冲突。"""
     grouped: dict[str, list[EvidenceClaimFrame]] = defaultdict(list)
-    for frame in extract_claim_frames(evidence_rows):
-        grouped[_applicability_key(frame)].append(frame)
+    extracted_frames = extract_claim_frames(evidence_rows)
+    for frame in extracted_frames:
+        if frame.numeric_value:
+            grouped[_applicability_key(frame)].append(frame)
 
     conflicts: list[EvidenceConflict] = []
     for applicability_key, frames in sorted(grouped.items()):
@@ -225,4 +298,33 @@ def detect_evidence_conflicts(evidence_rows: list[Evidence]) -> list[EvidenceCon
                     frames=comparable_frames,
                 )
             )
+    recommendation_groups: dict[str, list[EvidenceClaimFrame]] = defaultdict(list)
+    for frame in extracted_frames:
+        if frame.polarity != "unknown" and frame.intervention:
+            recommendation_groups[_applicability_key(frame)].append(frame)
+    for applicability_key, frames in sorted(recommendation_groups.items()):
+        if len({item.publication_id for item in frames}) < 2:
+            continue
+        positive = {
+            item.polarity
+            for item in frames
+            if item.polarity in {"recommend", "consider"}
+        }
+        negative = {
+            item.polarity
+            for item in frames
+            if item.polarity in {"discourage", "contraindicated"}
+        }
+        if not positive or not negative:
+            continue
+        conflict_type: Literal["recommendation", "contraindication"] = (
+            "contraindication" if "contraindicated" in negative else "recommendation"
+        )
+        conflicts.append(
+            _build_conflict(
+                conflict_type=conflict_type,
+                claim_key=applicability_key,
+                frames=frames,
+            )
+        )
     return sorted(conflicts, key=lambda item: item.conflict_id)

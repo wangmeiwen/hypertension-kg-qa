@@ -282,6 +282,10 @@ class EvidenceClaimFrame(BaseModel):
     normalized_unit: str = ""
     population: list[str] = Field(default_factory=list)
     measurement_context: list[str] = Field(default_factory=list)
+    intervention: str = ""
+    polarity: Literal[
+        "unknown", "recommend", "consider", "discourage", "contraindicated"
+    ] = "unknown"
 
 
 class EvidenceConflict(BaseModel):
@@ -290,9 +294,14 @@ class EvidenceConflict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     conflict_id: str
-    conflict_type: Literal["numeric", "unit", "population", "measurement_context"] = (
-        "numeric"
-    )
+    conflict_type: Literal[
+        "numeric",
+        "unit",
+        "population",
+        "measurement_context",
+        "recommendation",
+        "contraindication",
+    ] = "numeric"
     claim_key: str
     values: list[str] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
