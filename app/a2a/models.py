@@ -34,7 +34,10 @@ class MinimumEvidencePolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    policy_version: Literal["minimum_evidence.v1"] = "minimum_evidence.v1"
+    policy_version: Literal["minimum_evidence.v1", "minimum_evidence.v2"] = (
+        "minimum_evidence.v2"
+    )
+    publication_scope: Literal["single_guideline"] = "single_guideline"
     minimum_supported_evidence: int = Field(default=1, ge=1, le=5)
     minimum_distinct_publications: int = Field(default=1, ge=1, le=3)
     required_support_statuses: list[ClaimSupportStatus] = Field(

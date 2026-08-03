@@ -87,35 +87,21 @@ def test_evidence_presence_cannot_replace_claim_support() -> None:
     assert "claim_not_supported" in assessment.items[0].missing_reasons
 
 
-def test_numeric_claim_requires_two_distinct_publications() -> None:
+def test_numeric_claim_accepts_one_supported_guideline_publication() -> None:
     plan = build_question_plan("血压目标是多少？", MedicalRiskAssessment())
     item = plan.must_cover[0]
     guide_a = _document("guide-a", "目标为130 mmHg")
-    guide_b = _document("guide-b", "目标为130 mmHg")
-    _mark_supported(plan, item, [guide_a, guide_b])
+    _mark_supported(plan, item, [guide_a])
     one_source = {item.item_id: [("rag", guide_a)]}
-    two_sources = {
-        item.item_id: [
-            ("rag", guide_a),
-            ("rag", guide_b),
-        ]
-    }
 
-    insufficient = assess_evidence_sufficiency(
+    assessment = assess_evidence_sufficiency(
         question_plan=plan,
         evidence_by_item=one_source,
     )
-    sufficient = assess_evidence_sufficiency(
-        question_plan=plan,
-        evidence_by_item=two_sources,
-    )
 
-    assert insufficient.sufficient is False
-    assert insufficient.items[0].missing_reasons == [
-        "supported_evidence",
-        "distinct_publications",
-    ]
-    assert sufficient.sufficient is True
+    assert assessment.sufficient is True
+    assert assessment.items[0].required_publication_count == 1
+    assert assessment.items[0].distinct_publication_count == 1
 
 
 def test_relation_claim_requires_knowledge_graph_evidence() -> None:
@@ -138,7 +124,7 @@ def test_relation_claim_requires_knowledge_graph_evidence() -> None:
     assert graph.sufficient is True
 
 
-def test_high_risk_gate_raises_source_requirement_for_fact_claim() -> None:
+def test_high_risk_gate_keeps_single_guide_and_requires_applicability() -> None:
     plan = build_question_plan(
         "孕妇如何监测血压？",
         MedicalRiskAssessment(risk_level="high", action="evidence_required"),
@@ -152,12 +138,9 @@ def test_high_risk_gate_raises_source_requirement_for_fact_claim() -> None:
         evidence_by_item={item.item_id: [("rag", evidence)]},
     )
 
-    assert assessment.sufficient is False
-    assert assessment.items[0].required_publication_count == 2
-    assert assessment.items[0].missing_reasons == [
-        "supported_evidence",
-        "distinct_publications",
-    ]
+    assert assessment.sufficient is True
+    assert assessment.items[0].required_publication_count == 1
+    assert assessment.items[0].applicability_complete is True
 
 
 def test_high_risk_policy_requires_applicability_match() -> None:

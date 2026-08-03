@@ -55,8 +55,9 @@ def test_question_plan_separates_optional_retrievers_from_evidence_minimums() ->
     numeric = build_question_plan("血压目标是多少？", MedicalRiskAssessment())
     numeric_policy = numeric.must_cover[0].evidence_policy
     assert numeric_policy.required_retrievers == []
-    assert numeric_policy.minimum_supported_evidence == 2
-    assert numeric_policy.minimum_distinct_publications == 2
+    assert numeric_policy.minimum_supported_evidence == 1
+    assert numeric_policy.minimum_distinct_publications == 1
+    assert numeric_policy.publication_scope == "single_guideline"
 
 
 def test_subtask_uses_plan_fields_and_updates_coverage() -> None:

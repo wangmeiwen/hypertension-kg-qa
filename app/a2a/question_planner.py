@@ -105,16 +105,15 @@ def _evidence_policy(
     else:
         required_retrievers = []
         optional_retrievers = ["rag", "kg"]
-    conservative_multi_source = medical_risk.risk_level == "high" or claim_type in {
+    strict_applicability = medical_risk.risk_level == "high" or claim_type in {
         "numeric",
         "comparison",
     }
-    minimum_evidence = 2 if conservative_multi_source else 1
     return MinimumEvidencePolicy(
-        minimum_supported_evidence=minimum_evidence,
-        minimum_distinct_publications=minimum_evidence,
+        minimum_supported_evidence=1,
+        minimum_distinct_publications=1,
         required_applicability_fields=(
-            list(applicability_conditions) if conservative_multi_source else []
+            list(applicability_conditions) if strict_applicability else []
         ),
         conflict_policy="block_unresolved",
         required_retrievers=required_retrievers,
