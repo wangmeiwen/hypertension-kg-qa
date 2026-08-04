@@ -570,7 +570,7 @@ class DeterministicSessionsHistoryService:
             },
         }
 
-    async def upload_file(self, file: Any) -> dict[str, Any]:
+    async def upload_file(self, file: Any, *, user_id: str) -> dict[str, Any]:
         """模拟文件上传并返回固定结构。"""
         filename = str(getattr(file, "filename", "") or "upload.bin")
         content_type = str(getattr(file, "content_type", "") or "")
@@ -578,6 +578,7 @@ class DeterministicSessionsHistoryService:
             "ok": True,
             "data": {
                 "filename": filename,
+                "owner_user_id": user_id,
                 "is_image": content_type.startswith("image/"),
                 "base64": "",
             },

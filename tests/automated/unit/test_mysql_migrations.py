@@ -129,8 +129,9 @@ def test_apply_mysql_migrations_upgrades_legacy_schema_once() -> None:
     )
 
     executed_sql = [sql for sql, _params in connection.executed]
-    assert applied == (2, 3, 4)
+    assert applied == (2, 3, 4, 5)
     assert sum("ALTER TABLE graph_import_runs" in sql for sql in executed_sql) == 4
+    assert any("CREATE TABLE IF NOT EXISTS user_uploads" in sql for sql in executed_sql)
     insert_params = [
         params
         for sql, params in connection.executed

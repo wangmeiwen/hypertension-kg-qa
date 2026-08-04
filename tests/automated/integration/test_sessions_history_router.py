@@ -32,8 +32,11 @@ class SessionsHistoryServiceStub:
     async def rollback_to_question(self, session_id, data):
         return {"ok": True, "data": {"session_id": session_id, **data}}
 
-    async def upload_file(self, file):
-        return {"ok": True, "data": {"filename": file.filename}}
+    async def upload_file(self, file, user_id):
+        return {
+            "ok": True,
+            "data": {"filename": file.filename, "owner_user_id": user_id},
+        }
 
     async def cancel_qa_job(self, job_id, data):
         return {"ok": True, "data": {"job_id": job_id, **data}}
@@ -76,6 +79,7 @@ def test_sessions_history_router_core_routes():
     )
     assert uploaded.status_code == 200
     assert uploaded.json()["data"]["filename"] == "note.png"
+    assert uploaded.json()["data"]["owner_user_id"] == "u1"
 
     cancelled = client.post("/qa/jobs/job-1/cancel", json={"session_id": "s1"})
     assert cancelled.status_code == 200

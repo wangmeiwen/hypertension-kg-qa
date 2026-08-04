@@ -284,6 +284,25 @@ MYSQL_MIGRATIONS = (
             """,
         ),
     ),
+    MySQLMigration(
+        version=5,
+        name="user_upload_ownership",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS user_uploads (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                storage_filename VARCHAR(255) NOT NULL,
+                original_filename VARCHAR(512) NOT NULL,
+                provider VARCHAR(32) NOT NULL,
+                provider_file_id VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                INDEX idx_user_uploads_user_id (user_id),
+                UNIQUE KEY uk_user_uploads_storage_filename (storage_filename)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """,
+        ),
+    ),
 )
 MYSQL_SCHEMA_VERSION = MYSQL_MIGRATIONS[-1].version
 

@@ -78,6 +78,7 @@ from app.backend.services.storage_schema_service import StorageSchemaService
 from app.backend.services.user_auth_service import UserAuthService
 from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 from app.backend.repositories.database import fetch_all
+from app.backend.repositories.user_upload_repository import UserUploadRepository
 from app.core.config import Config
 from app.rag_core.document_pipeline import DOCUMENT_EMBEDDING_DENSE_DIM
 
@@ -243,6 +244,7 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
             is_session_owner=is_session_owner,
             get_a2a=a2a_runtime_service.get_a2a,
             get_session_memory_service=a2a_runtime_service.get_session_memory_service,
+            record_user_upload=UserUploadRepository().create_upload,
             upload_dir=backend_config.upload_dir,
             log_api_error=_log_api_error,
         )

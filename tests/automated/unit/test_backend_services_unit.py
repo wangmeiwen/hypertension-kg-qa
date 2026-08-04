@@ -271,6 +271,11 @@ async def test_sessions_history_service_validates_and_mutates(
     monkeypatch.setattr(module, "SessionManager", FakeSessionManager)
     monkeypatch.setattr(module, "MessageManager", FakeMessageManager)
 
+    recorded_uploads: list[dict[str, Any]] = []
+
+    async def record_user_upload(**data: Any) -> None:
+        recorded_uploads.append(data)
+
     service = SessionsHistoryService(
         await_call=await_call,
         is_session_owner=lambda session_id, user_id: _is_session_owner(
@@ -278,6 +283,7 @@ async def test_sessions_history_service_validates_and_mutates(
         ),
         get_a2a=lambda: None,
         get_session_memory_service=lambda: memory_service_stub,
+        record_user_upload=record_user_upload,
         upload_dir=temp_upload_dir,
         log_api_error=log_api_error,
     )
@@ -326,14 +332,22 @@ async def test_sessions_history_service_validates_and_mutates(
         )
     )["ok"] is True
 
-    uploaded = await service.upload_file(upload_file("note.txt", b"hello"))
+    uploaded = await service.upload_file(
+        upload_file("note.txt", b"hello"), user_id="user-1"
+    )
     assert uploaded["ok"] is True
     assert Path(temp_upload_dir / uploaded["data"]["filename"]).exists()
     assert uploaded["data"]["file_id"] == "file-txt"
-    assert (await service.upload_file(upload_file("sheet.xlsx", ooxml_file("xl"))))[
-        "ok"
-    ] is True
-    assert (await service.upload_file(upload_file("bad.exe", b"x")))["ok"] is False
+    assert uploaded["data"]["owner_user_id"] == "user-1"
+    assert recorded_uploads[0]["user_id"] == "user-1"
+    assert (
+        await service.upload_file(
+            upload_file("sheet.xlsx", ooxml_file("xl")), user_id="user-1"
+        )
+    )["ok"] is True
+    assert (
+        await service.upload_file(upload_file("bad.exe", b"x"), user_id="user-1")
+    )["ok"] is False
 
     session_detail = await service.get_session("session-1", user_id="user-1")
     assert session_detail["ok"] is True

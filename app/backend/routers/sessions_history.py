@@ -94,10 +94,10 @@ def create_sessions_router(service: SessionsHistoryService) -> APIRouter:
     @router.post("/upload_file")
     async def upload_file(
         file: UploadFile = File(...),
-        _user: dict[str, Any] = Depends(require_user_login),
+        user: dict[str, Any] = Depends(require_user_login),
     ) -> dict[str, Any]:
         """上传聊天文件并返回 URL。"""
-        return await service.upload_file(file)
+        return await service.upload_file(file, user_id=str(user["user_id"]))
 
     @router.post("/qa/jobs/{job_id}/cancel")
     async def cancel_qa_job(
