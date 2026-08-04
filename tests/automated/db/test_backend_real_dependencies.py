@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import uuid
 
 import httpx
 import pytest
@@ -17,8 +18,9 @@ from app.backend.testing.deterministic_support import (
 )
 from app.core.config import Config
 from app.backend.infrastructure.database_health import check_databases
-from app.backend.repositories.database import close_database
+from app.backend.repositories.database import close_database, execute, fetch_one
 from app.backend.repositories.database import initialize_database
+from app.backend.repositories.user_upload_repository import UserUploadRepository
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.rag_core.kg_milvus_store import KgMilvusStore
 
@@ -169,6 +171,53 @@ async def test_mysql_session_and_admin_routes_roundtrip(
     finally:
         await client.aclose()
         cleanup_session_artifacts(session_id)
+        await cleanup_mysql_prefix(test_data_prefix)
+        await close_database()
+
+
+@pytest.mark.asyncio
+async def test_mysql_disabled_user_and_upload_ownership(
+    test_data_prefix,
+    cleanup_mysql_prefix,
+) -> None:
+    username = f"{test_data_prefix}auth"
+    password = "Password123"
+    upload_id = str(uuid.uuid4())
+    await initialize_database(force=True)
+    app = _build_real_fastapi_app()
+    transport = httpx.ASGITransport(app=app)
+    client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    try:
+        registered = await client.post(
+            "/auth/register",
+            json={"username": username, "password": password},
+        )
+        assert registered.status_code == 200
+        token = registered.json()["data"]["token"]
+        user_id = registered.json()["data"]["user"]["id"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        await execute(
+            "UPDATE users SET status='disabled' WHERE id=:id", {"id": user_id}
+        )
+        assert (await client.get("/auth/me", headers=headers)).status_code == 401
+        await execute("UPDATE users SET status='active' WHERE id=:id", {"id": user_id})
+
+        await UserUploadRepository().create_upload(
+            upload_id=upload_id,
+            user_id=user_id,
+            storage_filename=f"{upload_id}.pdf",
+            original_filename="guide.pdf",
+            provider="local",
+            provider_file_id=upload_id,
+        )
+        upload = await fetch_one(
+            "SELECT user_id, original_filename FROM user_uploads WHERE id=:id",
+            {"id": upload_id},
+        )
+        assert upload == {"user_id": user_id, "original_filename": "guide.pdf"}
+    finally:
+        await client.aclose()
         await cleanup_mysql_prefix(test_data_prefix)
         await close_database()
 

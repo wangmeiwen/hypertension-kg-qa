@@ -30,6 +30,10 @@ def test_mysql_migration_contract_is_ordered_and_checksummed() -> None:
     assert plan_mysql_migrations([]) == MYSQL_MIGRATIONS
     assert plan_mysql_migrations([_applied_row(1)]) == MYSQL_MIGRATIONS[1:]
     assert (
+        plan_mysql_migrations([_applied_row(version) for version in range(1, 4)])
+        == MYSQL_MIGRATIONS[3:]
+    )
+    assert (
         plan_mysql_migrations(
             [_applied_row(version) for version in range(1, MYSQL_SCHEMA_VERSION + 1)]
         )
