@@ -325,6 +325,7 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     app = FastAPI(lifespan=app_lifespan)
     app.state.runtime = runtime_container
     app.state.test_overrides = overrides
+    app.state.user_auth_service = user_auth_service
     if overrides.authenticated_user is not None:
         authenticated_user = dict(overrides.authenticated_user)
         app.dependency_overrides[require_user_login] = lambda: authenticated_user

@@ -7,8 +7,18 @@ import pytest
 from app.backend.testing.deterministic_support import (
     build_deterministic_test_overrides,
 )
+from app.backend.services.user_auth_service import UserAuthService
 
 pytestmark = pytest.mark.integration
+
+
+class TrackingUserAuthService(UserAuthService):
+    def __init__(self) -> None:
+        self.authenticated_tokens: list[str] = []
+
+    async def authenticate_token(self, token: str):
+        self.authenticated_tokens.append(token)
+        return {"user_id": "override-user", "username": "override-name"}
 
 
 def test_user_routes_reject_missing_login(app_client_factory) -> None:
@@ -20,6 +30,22 @@ def test_user_routes_reject_missing_login(app_client_factory) -> None:
 
     assert response.status_code == 401
     assert response.json()["error"] == "用户未登录或登录已过期"
+
+
+def test_user_login_dependency_reuses_app_factory_service(app_client_factory) -> None:
+    overrides = build_deterministic_test_overrides()
+    overrides.authenticated_user = None
+    service = TrackingUserAuthService()
+    overrides.user_auth_service = service
+    client = app_client_factory(overrides=overrides)
+
+    response = client.get(
+        "/sessions", headers={"Authorization": "Bearer override-token"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+    assert service.authenticated_tokens == ["override-token"]
 
 
 def test_create_app_mounts_real_routes_and_deterministic_overrides(
