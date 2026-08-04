@@ -93,6 +93,18 @@ describe("http client", () => {
     expect(getAdminToken()).toBe("");
   });
 
+  it("clears user token on unauthorized responses", async () => {
+    setUserToken("expired");
+    mockFetchJson({ ok: false, error: "登录已过期" }, { status: 401 });
+
+    await expect(fetchJson("/auth/me", z.object({}), {}, { auth: "user" })).rejects.toMatchObject({
+      code: "unauthorized",
+      message: "登录已过期",
+      status: 401,
+    });
+    expect(getUserToken()).toBe("");
+  });
+
   it("keeps user and admin token scopes isolated", async () => {
     setAdminToken("admin-token");
     setUserToken("user-token");

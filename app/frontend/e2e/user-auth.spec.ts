@@ -9,9 +9,16 @@ test("用户可以注册、访问聊天并退出登录", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/chat$/);
   await expect(page.getByRole("textbox", { name: "问题输入" })).toBeVisible();
+
+  const peerPage = await page.context().newPage();
+  await peerPage.goto("/chat");
+  await expect(peerPage.getByRole("textbox", { name: "问题输入" })).toBeVisible();
+
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page).toHaveURL(/\/login$/);
+  await expect(peerPage).toHaveURL(/\/login$/);
 
   await page.goto("/chat");
   await expect(page).toHaveURL(/\/login$/);
+  await peerPage.close();
 });

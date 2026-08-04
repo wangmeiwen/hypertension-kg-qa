@@ -5,6 +5,7 @@ import { apiEnvelopeSchema, type ApiError } from "./contracts";
 const BASE_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 const ADMIN_TOKEN_KEY = "admin_token";
 const USER_TOKEN_KEY = "user_token";
+const USER_TOKEN_CHANGE_EVENT = "user-token-change";
 
 export type AuthKind = "admin" | "user";
 
@@ -32,15 +33,34 @@ export function getUserToken(): string {
   return window.localStorage.getItem(USER_TOKEN_KEY) || "";
 }
 
+const emitUserTokenChange = (): void => {
+  window.dispatchEvent(new Event(USER_TOKEN_CHANGE_EVENT));
+};
+
 export function setUserToken(token: string): void {
   if (token) {
     window.localStorage.setItem(USER_TOKEN_KEY, token);
+    emitUserTokenChange();
   }
 }
 
 export function clearUserToken(): void {
   window.localStorage.removeItem(USER_TOKEN_KEY);
+  emitUserTokenChange();
 }
+
+export const subscribeUserTokenChanges = (listener: () => void): (() => void) => {
+  const handleLocalChange = () => listener();
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key === USER_TOKEN_KEY || event.key === null) listener();
+  };
+  window.addEventListener(USER_TOKEN_CHANGE_EVENT, handleLocalChange);
+  window.addEventListener("storage", handleStorageChange);
+  return () => {
+    window.removeEventListener(USER_TOKEN_CHANGE_EVENT, handleLocalChange);
+    window.removeEventListener("storage", handleStorageChange);
+  };
+};
 
 function getToken(auth: AuthKind): string {
   return auth === "admin" ? getAdminToken() : getUserToken();
