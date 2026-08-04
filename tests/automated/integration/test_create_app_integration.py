@@ -61,9 +61,14 @@ def test_create_app_mounts_real_routes_and_deterministic_overrides(
 def test_create_app_process_stream_uses_single_backend_entry(admin_app_client) -> None:
     """验证 /process 流式入口统一输出 job/reply/done 事件序列。"""
     response = admin_app_client.post(
-        "/process", json={"input": "如何控制血压？", "user_id": "user-stream"}
+        "/process",
+        json={"input": "如何控制血压？", "user_id": "user-stream"},
+        headers={"Origin": "http://localhost:5173"},
     )
     assert response.status_code == 200
+    assert (
+        response.headers["access-control-expose-headers"] == "X-Stream-Schema-Version"
+    )
     rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     assert rows[0]["type"] == "job"
     assert any(row["type"] == "reply" for row in rows)

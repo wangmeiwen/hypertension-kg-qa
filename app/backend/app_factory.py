@@ -368,6 +368,7 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+        expose_headers=["X-Stream-Schema-Version"],
     )
 
     app.middleware("http")(request_timing_middleware)
