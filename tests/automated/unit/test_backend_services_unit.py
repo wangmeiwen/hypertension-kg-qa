@@ -345,9 +345,9 @@ async def test_sessions_history_service_validates_and_mutates(
             upload_file("sheet.xlsx", ooxml_file("xl")), user_id="user-1"
         )
     )["ok"] is True
-    assert (
-        await service.upload_file(upload_file("bad.exe", b"x"), user_id="user-1")
-    )["ok"] is False
+    assert (await service.upload_file(upload_file("bad.exe", b"x"), user_id="user-1"))[
+        "ok"
+    ] is False
 
     session_detail = await service.get_session("session-1", user_id="user-1")
     assert session_detail["ok"] is True

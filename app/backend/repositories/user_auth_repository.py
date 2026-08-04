@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -12,7 +13,7 @@ from app.backend.repositories.database import execute, fetch_one
 
 def _is_duplicate_key_error(exc: IntegrityError) -> bool:
     """只识别 MySQL 唯一键冲突，不吞掉其他完整性异常。"""
-    args = getattr(exc.orig, "args", ())
+    args: Sequence[Any] = getattr(exc.orig, "args", ())
     return bool(args) and args[0] == 1062
 
 

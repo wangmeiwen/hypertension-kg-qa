@@ -28,9 +28,7 @@ def test_logout_is_idempotent_for_revoked_and_invalid_tokens() -> None:
     app.include_router(create_user_auth_router(service))
     client = TestClient(app)
 
-    first = client.post(
-        "/auth/logout", headers={"Authorization": "Bearer valid-token"}
-    )
+    first = client.post("/auth/logout", headers={"Authorization": "Bearer valid-token"})
     second = client.post(
         "/auth/logout", headers={"Authorization": "Bearer valid-token"}
     )

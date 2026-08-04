@@ -63,7 +63,9 @@ class UserAuthRepositoryStub:
         session = self.sessions.get(token_hash)
         if session is None:
             return None
-        user = next(row for row in self.users.values() if row["id"] == session["user_id"])
+        user = next(
+            row for row in self.users.values() if row["id"] == session["user_id"]
+        )
         if user["status"] != "active":
             return None
         return {**session, "status": user["status"]}
