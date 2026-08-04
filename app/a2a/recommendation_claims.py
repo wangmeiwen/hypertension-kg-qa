@@ -15,7 +15,8 @@ _POLARITY_PATTERNS: tuple[tuple[RecommendationPolarity, re.Pattern[str]], ...] =
         "discourage",
         re.compile(
             r"(?:不推荐|不建议|不应使用|无益|未见获益|没有获益|不利于|有害|"
-            r"不能改善|增加[^。；，,]{0,20}风险|恶化)"
+            r"无效|没有效果|未见效果|无疗效|不能起效|不能改善|"
+            r"增加[^。；，,]{0,20}风险|恶化)"
         ),
     ),
     ("consider", re.compile(r"(?:可考虑|可以考虑)")),
@@ -23,7 +24,7 @@ _POLARITY_PATTERNS: tuple[tuple[RecommendationPolarity, re.Pattern[str]], ...] =
     (
         "recommend",
         re.compile(
-            r"(?:有助于|有益于?|获益|改善|提升|提高|可用于|"
+            r"(?:有效|有疗效|奏效|有助于|有益于?|获益|改善|提升|提高|可用于|"
             r"降低[^。；，,]{0,20}风险|减少[^。；，,]{0,20}风险)"
         ),
     ),

@@ -306,6 +306,39 @@ def test_post_validation_rejects_reversal_of_implicit_positive_recommendation() 
     assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
 
 
+def test_post_validation_rejects_effective_to_ineffective_reversal() -> None:
+    plan = build_question_plan("家庭血压监测是否有效？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        content="家庭血压监测对改善血压控制有效。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "家庭血压监测对改善血压控制无效。[guide-a]", context
+    )
+
+    assert result.valid is False
+    assert result.unsupported_claim_ids == [result.answer_claims[0].claim_id]
+
+
 def test_post_validation_rejects_explicit_polarity_when_evidence_is_directionless() -> (
     None
 ):
