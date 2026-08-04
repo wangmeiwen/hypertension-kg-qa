@@ -49,7 +49,7 @@ describe("API clients", () => {
       ]),
     );
 
-    await expect(sessionClient.createSession("u1", "标题")).resolves.toEqual({ id: "s1" });
+    await expect(sessionClient.createSession("标题")).resolves.toEqual({ id: "s1" });
     expect(httpMocks.fetchJson).toHaveBeenCalledWith(
       "/sessions",
       expect.any(Object),
@@ -57,19 +57,13 @@ describe("API clients", () => {
       expect.objectContaining({ fallbackMessage: "创建会话失败" }),
     );
 
-    await expect(sessionClient.listSessions("u1", 20)).resolves.toEqual([{ id: "s1" }]);
-    await expect(sessionClient.rollbackToQuestion("s1", "u1", 1)).resolves.toEqual({
+    await expect(sessionClient.listSessions(20)).resolves.toEqual([{ id: "s1" }]);
+    await expect(sessionClient.rollbackToQuestion("s1", 1)).resolves.toEqual({
       question: "问题",
     });
 
     const events = [];
-    for await (const event of sessionClient.streamProcessWithSession(
-      "高血压",
-      "u1",
-      "s1",
-      null,
-      "",
-    )) {
+    for await (const event of sessionClient.streamProcessWithSession("高血压", "s1", null, "")) {
       events.push(event);
     }
     expect(events).toEqual([
@@ -85,7 +79,7 @@ describe("API clients", () => {
     );
 
     const collect = async () => {
-      for await (const event of sessionClient.streamProcessWithSession("高血压", "u1", "s1")) {
+      for await (const event of sessionClient.streamProcessWithSession("高血压", "s1")) {
         void event;
       }
     };

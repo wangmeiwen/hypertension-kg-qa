@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import { loginUser } from "./helpers";
+
 test("聊天支持新建、发送、重发、回滚和重命名", async ({ page }) => {
-  await page.goto("/chat");
+  await loginUser(page);
 
   await page.getByRole("button", { name: "新建会话" }).first().click();
   await expect(page.getByText("新建会话").first()).toBeVisible();

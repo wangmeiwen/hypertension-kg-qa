@@ -19,9 +19,42 @@ from app.backend.domain.stream_events import (
     stream_event_json_line,
 )
 from app.backend.services.startup_runtime_service import StartupRuntimeBehavior
+from app.backend.services.user_auth_service import UserAuthService
 from app.knowledge_graph.graph_quality import GRAPH_QUALITY_POLICY_VERSION
 
 MEDICAL_DISCLAIMER = "以上内容仅供参考，不构成诊断或治疗建议，不能替代专业医生意见；如有不适或紧急情况，请及时就医。"
+
+
+class DeterministicUserAuthService(UserAuthService):
+    """前端端到端测试使用的固定用户认证服务。"""
+
+    def __init__(self) -> None:
+        """确定性服务不连接用户数据库。"""
+
+    async def register(self, data: dict[str, Any]) -> dict[str, Any]:
+        """模拟注册并直接签发固定测试会话。"""
+        return self._auth_result(data)
+
+    async def login(self, data: dict[str, Any]) -> dict[str, Any]:
+        """模拟账号登录并签发固定测试会话。"""
+        return self._auth_result(data)
+
+    @staticmethod
+    def _auth_result(data: dict[str, Any]) -> dict[str, Any]:
+        username = str(data.get("username") or "test-user")
+        return {
+            "ok": True,
+            "data": {
+                "token": "test-user-token",
+                "expires_at": "2026-12-31T23:59:59+00:00",
+                "user": {"id": "user-test", "username": username},
+            },
+        }
+
+    async def logout(self, token: str) -> dict[str, Any]:
+        """模拟撤销当前测试登录会话。"""
+        _ = token
+        return {"ok": True, "message": "已退出登录"}
 
 
 class DeterministicMcpServer:
@@ -1387,6 +1420,7 @@ def build_deterministic_test_overrides() -> BackendAppTestOverrides:
         graph_public_service=DeterministicGraphPublicService(graph_state),
         graph_admin_service=DeterministicGraphAdminService(graph_state),
         admin_documents_service=DeterministicAdminDocumentsService(),
+        user_auth_service=DeterministicUserAuthService(),
         authenticated_user={
             "user_id": "user-test",
             "username": "test-user",

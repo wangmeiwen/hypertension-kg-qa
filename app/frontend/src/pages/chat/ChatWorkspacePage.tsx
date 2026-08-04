@@ -72,7 +72,7 @@ export default function ChatWorkspacePage() {
 
   const sessionDetailQuery = useQuery({
     queryKey: queryKeys.sessions.detail(userId, currentSessionId),
-    queryFn: () => getSession(currentSessionId, userId),
+    queryFn: () => getSession(currentSessionId),
     enabled: Boolean(userId && currentSessionId) && !loading,
   });
 
@@ -103,7 +103,7 @@ export default function ChatWorkspacePage() {
   async function ensureSession(): Promise<string> {
     // 用户首次发送时自动创建会话，并刷新侧栏列表。
     if (currentSessionId) return currentSessionId;
-    const session = await createSession(userId, t("chat.newSession"));
+    const session = await createSession(t("chat.newSession"));
     setCurrentSessionId(session.id);
     await queryClient.invalidateQueries({ queryKey: queryKeys.sessions.list(userId) });
     return session.id;
@@ -211,7 +211,6 @@ export default function ChatWorkspacePage() {
 
       for await (const event of streamProcessWithSession(
         normalizedQuestion,
-        userId,
         streamSessionId,
         imageBase64,
         fileName,
@@ -287,7 +286,7 @@ export default function ChatWorkspacePage() {
     if (!currentJobId || !currentSessionId) return;
     try {
       setStoppingJob(true);
-      await cancelQaJob(currentJobId, userId, currentSessionId);
+      await cancelQaJob(currentJobId, currentSessionId);
       trackEvent("chat_stop", { sessionId: currentSessionId, jobId: currentJobId });
     } catch (stopError) {
       reportFrontendError(stopError, "chat_stop");
@@ -322,7 +321,7 @@ export default function ChatWorkspacePage() {
     // 回滚后把历史问题写回输入框，便于用户调整后重新发送。
     if (!message.id || !currentSessionId) return;
     try {
-      const result = await rollbackToQuestion(currentSessionId, userId, message.id);
+      const result = await rollbackToQuestion(currentSessionId, message.id);
       if (result.question) {
         setDraft(result.question);
       }

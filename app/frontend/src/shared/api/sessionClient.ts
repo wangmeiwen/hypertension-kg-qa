@@ -18,73 +18,70 @@ import { fetchJson, fetchStream } from "./http";
 const sessionListSchema = z.array(sessionRecordSchema);
 
 // 创建普通用户会话，title 默认为聊天侧栏展示名称。
-export async function createSession(userId: string, title = "新建会话"): Promise<SessionRecord> {
+export async function createSession(title = "新建会话"): Promise<SessionRecord> {
   return fetchJson(
     "/sessions",
     sessionRecordSchema,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, title }),
+      body: JSON.stringify({ title }),
     },
-    { fallbackMessage: "创建会话失败" },
+    { auth: "user", fallbackMessage: "创建会话失败" },
   );
 }
 
-export async function listSessions(userId: string, limit = 50): Promise<SessionRecord[]> {
+export async function listSessions(limit = 50): Promise<SessionRecord[]> {
   return fetchJson(
-    `/sessions?user_id=${encodeURIComponent(userId)}&limit=${limit}`,
+    `/sessions?limit=${limit}`,
     sessionListSchema,
     {},
     {
+      auth: "user",
       fallbackMessage: "加载会话列表失败",
     },
   );
 }
 
-export async function getSession(sessionId: string | null, userId: string): Promise<SessionDetail> {
+export async function getSession(sessionId: string | null): Promise<SessionDetail> {
   if (!sessionId) {
     throw new Error("缺少会话 ID");
   }
   return fetchJson(
-    `/sessions/${sessionId}?user_id=${encodeURIComponent(userId)}`,
+    `/sessions/${sessionId}`,
     sessionDetailSchema,
     {},
     {
+      auth: "user",
       fallbackMessage: "加载会话失败",
     },
   );
 }
 
-export async function updateSession(
-  sessionId: string,
-  userId: string,
-  title: string,
-): Promise<void> {
+export async function updateSession(sessionId: string, title: string): Promise<void> {
   await fetchJson(
     `/sessions/${sessionId}`,
     z.record(z.string(), z.unknown()),
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, title }),
+      body: JSON.stringify({ title }),
     },
-    { fallbackMessage: "重命名会话失败" },
+    { auth: "user", fallbackMessage: "重命名会话失败" },
   );
 }
 
-export async function deleteSession(sessionId: string, userId: string): Promise<void> {
+export async function deleteSession(sessionId: string): Promise<void> {
   await fetchJson(
-    `/sessions/${sessionId}?user_id=${encodeURIComponent(userId)}`,
+    `/sessions/${sessionId}`,
     z.record(z.string(), z.unknown()),
     { method: "DELETE" },
-    { fallbackMessage: "删除会话失败" },
+    { auth: "user", fallbackMessage: "删除会话失败" },
   );
 }
 
 export async function rollbackToQuestion(
   sessionId: string,
-  userId: string,
   messageId: number,
 ): Promise<RollbackResult> {
   return fetchJson(
@@ -93,22 +90,22 @@ export async function rollbackToQuestion(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, message_id: messageId }),
+      body: JSON.stringify({ message_id: messageId }),
     },
-    { fallbackMessage: "回滚会话失败" },
+    { auth: "user", fallbackMessage: "回滚会话失败" },
   );
 }
 
-export async function cancelQaJob(jobId: string, userId: string, sessionId: string): Promise<void> {
+export async function cancelQaJob(jobId: string, sessionId: string): Promise<void> {
   await fetchJson(
     `/qa/jobs/${jobId}/cancel`,
     z.record(z.string(), z.unknown()),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, session_id: sessionId }),
+      body: JSON.stringify({ session_id: sessionId }),
     },
-    { fallbackMessage: "停止任务失败" },
+    { auth: "user", fallbackMessage: "停止任务失败" },
   );
 }
 
@@ -119,13 +116,12 @@ export async function uploadChatFile(file: File): Promise<UploadFileResult> {
     "/upload_file",
     uploadFileResultSchema,
     { method: "POST", body: formData },
-    { fallbackMessage: "文件上传失败" },
+    { auth: "user", fallbackMessage: "文件上传失败" },
   );
 }
 
 export async function* streamProcessWithSession(
   input: string,
-  userId: string,
   sessionId: string | null,
   imageData: string | null = null,
   fileName = "",
@@ -134,7 +130,6 @@ export async function* streamProcessWithSession(
   // 组装会话流式问答 payload，图片和文件名只在用户上传附件时传递。
   const payload: Record<string, unknown> = {
     input,
-    user_id: userId,
     session_id: sessionId,
   };
   if (imageData) payload.image = imageData;
@@ -146,6 +141,7 @@ export async function* streamProcessWithSession(
     payload,
     "问答流式请求失败",
     STREAM_EVENT_SCHEMA_VERSION,
+    "user",
   )) {
     const json = JSON.parse(line) as unknown;
     yield streamEventSchema.parse(json);

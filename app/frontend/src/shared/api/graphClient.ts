@@ -50,7 +50,7 @@ export async function getGraphLabels(): Promise<string[]> {
     "/admin/graph/labels",
     graphLabelListSchema,
     {},
-    { auth: true, fallbackMessage: "加载标签失败" },
+    { auth: "admin", fallbackMessage: "加载标签失败" },
   );
   return result.data;
 }
@@ -60,7 +60,7 @@ export async function getGraphRelationshipTypes(): Promise<string[]> {
     "/admin/graph/relationship-types",
     graphLabelListSchema,
     {},
-    { auth: true, fallbackMessage: "加载关系类型失败" },
+    { auth: "admin", fallbackMessage: "加载关系类型失败" },
   );
   return result.data;
 }
@@ -70,7 +70,7 @@ export async function getGraphQualityReport(): Promise<GraphQualityReport> {
     "/admin/graph/quality-report",
     graphQualityReportSchema,
     {},
-    { auth: true, fallbackMessage: "加载图谱质量报告失败" },
+    { auth: "admin", fallbackMessage: "加载图谱质量报告失败" },
   );
 }
 
@@ -90,7 +90,7 @@ export async function getGraphNodes(params: {
     `/admin/graph/nodes?${search.toString()}`,
     graphNodesResponseSchema,
     {},
-    { auth: true, fallbackMessage: "加载图谱节点失败" },
+    { auth: "admin", fallbackMessage: "加载图谱节点失败" },
   );
 }
 
@@ -99,7 +99,7 @@ export async function getGraphNode(nodeId: string | number): Promise<AdminGraphN
     `/admin/graph/nodes/${nodeId}`,
     adminGraphNodeDetailSchema,
     {},
-    { auth: true, fallbackMessage: "加载节点详情失败" },
+    { auth: "admin", fallbackMessage: "加载节点详情失败" },
   );
 }
 
@@ -115,7 +115,7 @@ export async function createGraphNode(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label, properties }),
     },
-    { auth: true, fallbackMessage: "创建节点失败" },
+    { auth: "admin", fallbackMessage: "创建节点失败" },
   );
   return result;
 }
@@ -132,7 +132,7 @@ export async function updateGraphNode(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ properties }),
     },
-    { auth: true, fallbackMessage: "更新节点失败" },
+    { auth: "admin", fallbackMessage: "更新节点失败" },
   );
 }
 
@@ -141,7 +141,7 @@ export async function deleteGraphNode(nodeId: string | number): Promise<void> {
     `/admin/graph/nodes/${nodeId}`,
     z.record(z.string(), z.unknown()),
     { method: "DELETE" },
-    { auth: true, fallbackMessage: "删除节点失败" },
+    { auth: "admin", fallbackMessage: "删除节点失败" },
   );
 }
 
@@ -164,7 +164,7 @@ export async function createGraphRelationship(
         properties,
       }),
     },
-    { auth: true, fallbackMessage: "创建关系失败" },
+    { auth: "admin", fallbackMessage: "创建关系失败" },
   );
 }
 
@@ -173,7 +173,7 @@ export async function deleteGraphRelationship(relId: string | number): Promise<v
     `/admin/graph/relationships/${relId}`,
     z.record(z.string(), z.unknown()),
     { method: "DELETE" },
-    { auth: true, fallbackMessage: "删除关系失败" },
+    { auth: "admin", fallbackMessage: "删除关系失败" },
   );
 }
 
@@ -186,7 +186,7 @@ export async function executeCypherQuery(query: string): Promise<Record<string, 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
     },
-    { auth: true, fallbackMessage: "执行 Cypher 失败" },
+    { auth: "admin", fallbackMessage: "执行 Cypher 失败" },
   );
 }
 
@@ -197,7 +197,7 @@ export async function submitGraphExtractImport(file: File): Promise<GraphJob> {
     "/admin/graph/jobs/extract-import",
     graphJobSchema,
     { method: "POST", body: formData },
-    { auth: true, fallbackMessage: "提交图谱导入任务失败" },
+    { auth: "admin", fallbackMessage: "提交图谱导入任务失败" },
   );
 }
 
@@ -206,7 +206,7 @@ export async function getGraphJobStatus(jobId: string): Promise<GraphJob> {
     `/admin/graph/jobs/${jobId}`,
     graphJobSchema,
     {},
-    { auth: true, fallbackMessage: "加载图谱任务失败" },
+    { auth: "admin", fallbackMessage: "加载图谱任务失败" },
   );
 }
 
@@ -215,7 +215,7 @@ export async function getRecentGraphJobs(limit = 10): Promise<GraphJob[]> {
     `/admin/graph/jobs?limit=${limit}`,
     z.array(graphJobSchema),
     {},
-    { auth: true, fallbackMessage: "加载最近图谱任务失败" },
+    { auth: "admin", fallbackMessage: "加载最近图谱任务失败" },
   );
 }
 
@@ -234,7 +234,7 @@ export async function submitGraphEmbedMilvus(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
-    { auth: true, fallbackMessage: "提交图谱向量化任务失败" },
+    { auth: "admin", fallbackMessage: "提交图谱向量化任务失败" },
   );
 }
 
@@ -243,7 +243,7 @@ export async function getGraphEmbedStatus(): Promise<Record<string, unknown>> {
     "/admin/graph/embed-status",
     z.record(z.string(), z.unknown()),
     {},
-    { auth: true, fallbackMessage: "加载图谱向量化状态失败" },
+    { auth: "admin", fallbackMessage: "加载图谱向量化状态失败" },
   );
 }
 
@@ -254,7 +254,7 @@ export async function submitTextEmbeddingJob(file: File): Promise<GraphJob> {
     "/admin/text-embedding/jobs/embed",
     graphJobSchema,
     { method: "POST", body: formData },
-    { auth: true, fallbackMessage: "提交文档向量化任务失败" },
+    { auth: "admin", fallbackMessage: "提交文档向量化任务失败" },
   );
 }
 
@@ -263,7 +263,7 @@ export async function getTextEmbeddingJobStatus(jobId: string): Promise<GraphJob
     `/admin/text-embedding/jobs/${jobId}`,
     graphJobSchema,
     {},
-    { auth: true, fallbackMessage: "加载文档任务失败" },
+    { auth: "admin", fallbackMessage: "加载文档任务失败" },
   );
 }
 
@@ -272,7 +272,7 @@ export async function getRecentTextEmbeddingJobs(limit = 10): Promise<GraphJob[]
     `/admin/text-embedding/jobs?limit=${limit}`,
     z.array(graphJobSchema),
     {},
-    { auth: true, fallbackMessage: "加载最近文档任务失败" },
+    { auth: "admin", fallbackMessage: "加载最近文档任务失败" },
   );
 }
 
@@ -281,6 +281,6 @@ export async function getDocumentStats(): Promise<Record<string, unknown>> {
     "/admin/documents/stats",
     documentStatsSchema,
     {},
-    { auth: true, fallbackMessage: "加载文档统计失败" },
+    { auth: "admin", fallbackMessage: "加载文档统计失败" },
   );
 }

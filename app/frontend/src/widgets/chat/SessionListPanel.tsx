@@ -30,11 +30,11 @@ export default function SessionListPanel() {
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.sessions.list(userId),
-    queryFn: () => listSessions(userId),
+    queryFn: () => listSessions(),
   });
 
   const createMutation = useMutation({
-    mutationFn: () => createSession(userId),
+    mutationFn: () => createSession(),
     onSuccess: async (session) => {
       // 新会话创建后立即选中，并清空当前消息展示。
       trackEvent("chat_new_session", { sessionId: session.id });
@@ -50,7 +50,7 @@ export default function SessionListPanel() {
 
   const updateMutation = useMutation({
     mutationFn: ({ sessionId, title }: { sessionId: string; title: string }) =>
-      updateSession(sessionId, userId, title),
+      updateSession(sessionId, title),
     onSuccess: async () => {
       setEditingId(null);
       setDraftTitle("");
@@ -63,7 +63,7 @@ export default function SessionListPanel() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (sessionId: string) => deleteSession(sessionId, userId),
+    mutationFn: (sessionId: string) => deleteSession(sessionId),
     onSuccess: async (_, sessionId) => {
       if (sessionId === currentSessionId) {
         setCurrentSessionId(null);

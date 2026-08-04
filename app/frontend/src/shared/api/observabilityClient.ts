@@ -18,7 +18,7 @@ export async function getAdminAgentObservabilitySummary(
     `/admin/agent/observability-summary?limit=${limit}`,
     observabilitySummarySchema,
     {},
-    { auth: true, fallbackMessage: "加载 Agent 观测汇总失败" },
+    { auth: "admin", fallbackMessage: "加载 Agent 观测汇总失败" },
   );
 }
 
@@ -27,7 +27,7 @@ export async function getAdminAgentObservabilityRuns(limit = 50): Promise<Observ
     `/admin/agent/observability-runs?limit=${limit}`,
     z.array(observabilityRunSchema),
     {},
-    { auth: true, fallbackMessage: "加载 Agent 运行记录失败" },
+    { auth: "admin", fallbackMessage: "加载 Agent 运行记录失败" },
   );
 }
 
@@ -39,7 +39,7 @@ export async function getAdminSessionObservability(
     `/admin/sessions/${sessionId}/observability`,
     observabilitySessionResponseSchema,
     {},
-    { auth: true, fallbackMessage: "加载会话观测详情失败" },
+    { auth: "admin", fallbackMessage: "加载会话观测详情失败" },
   );
   return result.turns;
 }
