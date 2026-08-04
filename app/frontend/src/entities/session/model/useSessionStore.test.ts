@@ -9,19 +9,22 @@ describe("useSessionStore", () => {
     vi.resetModules();
   });
 
-  it("creates and persists user and session ids", async () => {
+  it("binds persisted session selection to the authenticated user", async () => {
     const { useSessionStore } = await import("./useSessionStore");
-    const userId = useSessionStore.getState().userId;
-
+    useSessionStore.getState().setUserId("user-1");
     useSessionStore.getState().setCurrentSessionId("session-1");
 
-    expect(userId).toMatch(/^user_/);
-    expect(window.localStorage.getItem(`current_session_${userId}`)).toBe("session-1");
+    expect(useSessionStore.getState().userId).toBe("user-1");
+    expect(window.localStorage.getItem("current_session_user-1")).toBe("session-1");
     expect(useSessionStore.getState().currentSessionId).toBe("session-1");
+
+    useSessionStore.getState().setUserId("user-2");
+    expect(useSessionStore.getState().currentSessionId).toBeNull();
   });
 
   it("updates messages and clears attachments", async () => {
     const { useSessionStore } = await import("./useSessionStore");
+    useSessionStore.getState().setUserId("user-1");
     const file = new File(["data"], "report.txt", { type: "text/plain" });
 
     useSessionStore.getState().appendMessages({ role: "user", content: "问题" });

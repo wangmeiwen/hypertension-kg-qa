@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import styles from "./AppLayout.module.css";
+import { useSessionStore } from "../../entities/session/model/useSessionStore";
+import { useUserAuthStore } from "../../features/user_auth/model/useUserAuthStore";
+import { logoutUser } from "../../shared/api/userAuthClient";
+import { queryClient } from "../../shared/queries/queryClient";
 import { Button } from "../../shared/ui/primitives";
 
 const NAV_COLLAPSE_KEY = "workspace_nav_collapsed";
@@ -16,6 +20,11 @@ function getInitialCollapsed(): boolean {
 export default function AppLayout() {
   const { t, i18n } = useTranslation();
   const location = useLocation();
+  const navigate = useNavigate();
+  const user = useUserAuthStore((state) => state.user);
+  const isAuthenticated = useUserAuthStore((state) => state.isAuthenticated);
+  const clearUser = useUserAuthStore((state) => state.clearUser);
+  const setUserId = useSessionStore((state) => state.setUserId);
   const [collapsed, setCollapsed] = useState(getInitialCollapsed);
   const isChatRoute = location.pathname === "/chat";
 
@@ -25,6 +34,19 @@ export default function AppLayout() {
     setCollapsed(next);
     window.localStorage.setItem(NAV_COLLAPSE_KEY, String(next));
   }
+
+  const logout = async () => {
+    try {
+      await logoutUser();
+    } catch {
+      // 本地会话必须退出，服务端撤销失败时令牌仍会被丢弃。
+    } finally {
+      queryClient.clear();
+      clearUser();
+      setUserId("");
+      navigate("/login", { replace: true });
+    }
+  };
 
   return (
     <div className={`${styles.shell} ${collapsed ? styles.collapsed : ""}`.trim()}>
@@ -57,6 +79,15 @@ export default function AppLayout() {
             </NavLink>
           ))}
         </nav>
+
+        {isAuthenticated ? (
+          <div className={styles.userPanel}>
+            <span className={styles.username}>{user?.username ?? "已登录用户"}</span>
+            <Button tone="secondary" onClick={() => void logout()}>
+              退出登录
+            </Button>
+          </div>
+        ) : null}
       </aside>
 
       <main className={`${styles.content} ${isChatRoute ? styles.chatContent : ""}`.trim()}>

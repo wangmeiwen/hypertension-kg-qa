@@ -43,6 +43,7 @@ class SessionsHistoryService:
         is_session_owner: Callable[[str, str], Awaitable[bool]],
         get_a2a: Callable[[], Any],
         get_session_memory_service: Callable[[], Any],
+        record_user_upload: Callable[..., Awaitable[None]],
         upload_dir: Path,
         log_api_error: Callable[..., None],
     ) -> None:
@@ -53,6 +54,7 @@ class SessionsHistoryService:
             is_session_owner: 校验会话归属的回调。
             get_a2a: 延迟获取 A2A 服务实例的回调。
             get_session_memory_service: 延迟获取会话记忆服务的回调。
+            record_user_upload: 持久化上传资源归属的回调。
             upload_dir: 聊天上传文件保存目录。
             log_api_error: 统一记录会话历史接口错误的回调。
 
@@ -63,6 +65,7 @@ class SessionsHistoryService:
         self._is_session_owner = is_session_owner
         self._get_a2a = get_a2a
         self._get_session_memory_service = get_session_memory_service
+        self._record_user_upload = record_user_upload
         self._upload_dir = upload_dir
         self._log_api_error = log_api_error
 
@@ -315,17 +318,20 @@ class SessionsHistoryService:
             },
         }
 
-    async def upload_file(self, file: UploadFile) -> dict[str, Any]:
+    async def upload_file(self, file: UploadFile, *, user_id: str) -> dict[str, Any]:
         """上传聊天文件到阿里 File API，并返回前端和模型可用的文件信息。
 
         Args:
             file: FastAPI 上传文件对象。
+            user_id: 服务端认证得到的资源所有者 ID。
 
         Returns:
             dict[str, Any]: 本地备份信息、阿里 file_id、原始名和可选图片 base64。
         """
         if not file.filename:
             return {"ok": False, "error": "文件名不能为空"}
+        if not user_id:
+            return {"ok": False, "error": "user_id_required"}
 
         file_ext = Path(file.filename).suffix.lower()
 
@@ -355,6 +361,14 @@ class SessionsHistoryService:
             filename = f"{local_file_id}{file_ext}"
             file_path = self._upload_dir / filename
             await self._await_call(file_path.write_bytes, content)
+            await self._record_user_upload(
+                upload_id=local_file_id,
+                user_id=user_id,
+                storage_filename=filename,
+                original_filename=str(file.filename),
+                provider="dashscope",
+                provider_file_id=aliyun_file_id,
+            )
 
             base64_data = ""
             mime_type = "application/octet-stream"
@@ -368,6 +382,8 @@ class SessionsHistoryService:
                 "ok": True,
                 "data": {
                     "filename": filename,
+                    "upload_id": local_file_id,
+                    "owner_user_id": user_id,
                     "original_name": str(file.filename),
                     "url": f"/uploads/{filename}",
                     "base64": (

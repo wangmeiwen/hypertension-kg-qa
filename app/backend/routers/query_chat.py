@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.backend.domain.stream_events import (
     STREAM_EVENT_SCHEMA_VERSION,
     stream_event_json_schema,
 )
+from app.backend.dependencies.user_auth import require_user_login
 from app.backend.infrastructure.responses import ndjson_streaming_response
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.agent_run_service import AgentRunService
@@ -81,14 +81,18 @@ def create_query_chat_router(
         return stream_event_json_schema()
 
     @router.post("/process", responses=_NDJSON_STREAM_RESPONSE)
-    async def process(data: dict, request: Request):
+    async def process(
+        data: dict,
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_login),
+    ):
         """处理不落库的兼容流式问答请求入口。"""
         readiness_error = await readiness_service.ensure_core_ready("/process")
         if readiness_error is not None:
             return readiness_error
 
         input_text = str(data.get("input") or "")
-        user_id = str(data.get("user_id") or "") or str(uuid.uuid4())
+        user_id = str(user["user_id"])
         session_id = str(data.get("session_id") or "")
 
         return ndjson_streaming_response(
@@ -101,7 +105,11 @@ def create_query_chat_router(
         )
 
     @router.post("/agent/run")
-    async def agent_run(data: dict, request: Request):
+    async def agent_run(
+        data: dict,
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_login),
+    ):
         """运行一次非流式 Agent 问答并返回结构化结果。"""
         trace_id = get_trace_id(request)
         readiness_error = await readiness_service.ensure_core_ready("/agent/run")
@@ -110,7 +118,7 @@ def create_query_chat_router(
 
         input_text = str(data.get("input") or "").strip()
         session_id = str(data.get("session_id") or "")
-        user_id = str(data.get("user_id") or "")
+        user_id = str(user["user_id"])
         strategy = str(data.get("strategy") or "iterative").strip().lower()
         try:
             a2a_mode = agent_run_service.resolve_agent_run_mode(data)
@@ -168,7 +176,11 @@ def create_query_chat_router(
         )
 
     @router.post("/process_with_session", responses=_NDJSON_STREAM_RESPONSE)
-    async def process_with_session(data: dict, request: Request):
+    async def process_with_session(
+        data: dict,
+        request: Request,
+        user: dict[str, Any] = Depends(require_user_login),
+    ):
         """处理流式问答请求，并将用户问题和助手回答写入会话历史。"""
         trace_id = get_trace_id(request)
         readiness_error = await readiness_service.ensure_core_ready(
@@ -179,7 +191,7 @@ def create_query_chat_router(
 
         input_text = str(data.get("input") or "")
         session_id = str(data.get("session_id") or "")
-        user_id = str(data.get("user_id") or "")
+        user_id = str(user["user_id"])
         image_data = data.get("image", None)
         file_name = str(data.get("file_name") or "").strip()
         file_id = str(data.get("file_id") or "").strip()

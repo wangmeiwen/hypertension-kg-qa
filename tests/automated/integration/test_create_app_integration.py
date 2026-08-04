@@ -4,7 +4,48 @@ import json
 
 import pytest
 
+from app.backend.testing.deterministic_support import (
+    build_deterministic_test_overrides,
+)
+from app.backend.services.user_auth_service import UserAuthService
+
 pytestmark = pytest.mark.integration
+
+
+class TrackingUserAuthService(UserAuthService):
+    def __init__(self) -> None:
+        self.authenticated_tokens: list[str] = []
+
+    async def authenticate_token(self, token: str):
+        self.authenticated_tokens.append(token)
+        return {"user_id": "override-user", "username": "override-name"}
+
+
+def test_user_routes_reject_missing_login(app_client_factory) -> None:
+    overrides = build_deterministic_test_overrides()
+    overrides.authenticated_user = None
+    client = app_client_factory(overrides=overrides)
+
+    response = client.get("/sessions")
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "用户未登录或登录已过期"
+
+
+def test_user_login_dependency_reuses_app_factory_service(app_client_factory) -> None:
+    overrides = build_deterministic_test_overrides()
+    overrides.authenticated_user = None
+    service = TrackingUserAuthService()
+    overrides.user_auth_service = service
+    client = app_client_factory(overrides=overrides)
+
+    response = client.get(
+        "/sessions", headers={"Authorization": "Bearer override-token"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+    assert service.authenticated_tokens == ["override-token"]
 
 
 def test_create_app_mounts_real_routes_and_deterministic_overrides(
@@ -46,9 +87,14 @@ def test_create_app_mounts_real_routes_and_deterministic_overrides(
 def test_create_app_process_stream_uses_single_backend_entry(admin_app_client) -> None:
     """验证 /process 流式入口统一输出 job/reply/done 事件序列。"""
     response = admin_app_client.post(
-        "/process", json={"input": "如何控制血压？", "user_id": "user-stream"}
+        "/process",
+        json={"input": "如何控制血压？", "user_id": "user-stream"},
+        headers={"Origin": "http://localhost:5173"},
     )
     assert response.status_code == 200
+    assert (
+        response.headers["access-control-expose-headers"] == "X-Stream-Schema-Version"
+    )
     rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     assert rows[0]["type"] == "job"
     assert any(row["type"] == "reply" for row in rows)

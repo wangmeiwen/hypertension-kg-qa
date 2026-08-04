@@ -38,7 +38,7 @@ export async function checkAdminStatus(): Promise<boolean> {
       "/admin/status",
       statusSchema,
       {},
-      { auth: true, fallbackMessage: "管理员状态校验失败" },
+      { auth: "admin", fallbackMessage: "管理员状态校验失败" },
     );
     return result.logged_in;
   } catch {
@@ -53,7 +53,7 @@ export async function logoutAdmin(): Promise<void> {
       "/admin/logout",
       z.record(z.string(), z.unknown()),
       { method: "POST" },
-      { auth: true },
+      { auth: "admin" },
     );
   } finally {
     clearAdminToken();

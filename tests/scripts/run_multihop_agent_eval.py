@@ -35,6 +35,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-passed", type=int, default=4)
     parser.add_argument("--snapshot-manifest", type=Path)
     parser.add_argument("--snapshot-output", type=Path)
+    parser.add_argument("--auth-token", default=os.getenv("USER_AUTH_TOKEN", ""))
     return parser.parse_args()
 
 
@@ -62,6 +63,8 @@ def main() -> None:
             raise ValueError("live_replay_canary_dataset_mismatch")
     if args.snapshot_output is not None and manifest is None:
         raise ValueError("snapshot_output_requires_manifest")
+    if not args.auth_token:
+        raise ValueError("USER_AUTH_TOKEN or --auth-token is required")
 
     results = []
     replay_records: list[AgentReplayRecord] = []
@@ -71,10 +74,10 @@ def main() -> None:
                 continue
             response = client.post(
                 "/agent/run",
+                headers={"Authorization": f"Bearer {args.auth_token}"},
                 json={
                     "input": str(case["question"]),
                     "session_id": f"multihop-eval-{uuid4().hex}",
-                    "user_id": os.environ["ADMIN_USERNAME"],
                     "strategy": "iterative",
                     "max_turns": args.max_turns,
                 },

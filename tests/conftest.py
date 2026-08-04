@@ -223,8 +223,35 @@ def cleanup_mysql_prefix() -> Callable[[str], Awaitable[None]]:
         try:
             async with conn.cursor() as cursor:
                 await cursor.execute(
-                    "DELETE FROM sessions WHERE user_id LIKE %s OR id LIKE %s",
-                    (like_prefix, like_prefix),
+                    """
+                    DELETE FROM sessions
+                    WHERE user_id IN (
+                        SELECT id FROM users WHERE username_key LIKE %s
+                    ) OR user_id LIKE %s OR id LIKE %s
+                    """,
+                    (like_prefix, like_prefix, like_prefix),
+                )
+                await cursor.execute(
+                    """
+                    DELETE FROM user_uploads
+                    WHERE user_id IN (
+                        SELECT id FROM users WHERE username_key LIKE %s
+                    )
+                    """,
+                    (like_prefix,),
+                )
+                await cursor.execute(
+                    """
+                    DELETE FROM user_sessions
+                    WHERE user_id IN (
+                        SELECT id FROM users WHERE username_key LIKE %s
+                    )
+                    """,
+                    (like_prefix,),
+                )
+                await cursor.execute(
+                    "DELETE FROM users WHERE username_key LIKE %s",
+                    (like_prefix,),
                 )
         finally:
             conn.close()

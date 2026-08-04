@@ -1,6 +1,5 @@
 import { create } from "zustand";
 
-const USER_ID_KEY = "hypertensionkg_user_id";
 const CURRENT_SESSION_KEY_PREFIX = "current_session_";
 
 // UI 层消息模型同时承载后端消息 ID、前端临时 ID、思考内容和附件预览。
@@ -14,17 +13,8 @@ export interface UiMessage {
   createdAt?: string;
 }
 
-function getOrCreateUserId(): string {
-  // 本地匿名用户 ID 用于把普通会话和浏览器实例绑定。
-  const cached = window.localStorage.getItem(USER_ID_KEY);
-  if (cached) return cached;
-  const next = `user_${Math.random().toString(36).slice(2, 10)}`;
-  window.localStorage.setItem(USER_ID_KEY, next);
-  return next;
-}
-
 function getStoredSessionId(userId: string): string | null {
-  return window.localStorage.getItem(`${CURRENT_SESSION_KEY_PREFIX}${userId}`) || null;
+  return userId ? window.localStorage.getItem(`${CURRENT_SESSION_KEY_PREFIX}${userId}`) : null;
 }
 
 function persistSessionId(userId: string, sessionId: string | null): void {
@@ -35,8 +25,6 @@ function persistSessionId(userId: string, sessionId: string | null): void {
   }
   window.localStorage.removeItem(key);
 }
-
-const initialUserId = getOrCreateUserId();
 
 interface SessionState {
   userId: string;
@@ -49,6 +37,7 @@ interface SessionState {
   filePreview: string | null;
   currentJobId: string;
   stoppingJob: boolean;
+  setUserId: (userId: string) => void;
   setCurrentSessionId: (sessionId: string | null) => void;
   setMessages: (messages: UiMessage[]) => void;
   updateMessages: (updater: (messages: UiMessage[]) => UiMessage[]) => void;
@@ -67,8 +56,8 @@ interface SessionState {
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   // Zustand store 管理聊天页跨组件共享的会话、输入框、附件和任务状态。
-  userId: initialUserId,
-  currentSessionId: getStoredSessionId(initialUserId),
+  userId: "",
+  currentSessionId: null,
   messages: [],
   draft: "",
   copiedMessageKey: "",
@@ -77,6 +66,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   filePreview: null,
   currentJobId: "",
   stoppingJob: false,
+  setUserId: (userId) => {
+    if (userId === get().userId) return;
+    set({ userId, currentSessionId: getStoredSessionId(userId), messages: [] });
+  },
   setCurrentSessionId: (sessionId) => {
     persistSessionId(get().userId, sessionId);
     set({ currentSessionId: sessionId });

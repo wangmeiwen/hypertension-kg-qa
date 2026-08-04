@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from app.backend.dependencies.admin_auth import require_admin_access
+from app.backend.dependencies.user_auth import require_user_login
 from app.backend.infrastructure.errors import UnauthorizedError
 
 pytestmark = pytest.mark.integration
@@ -256,6 +257,7 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
                 "ok": True,
                 "answer": kwargs["input_text"],
                 "trace_id": kwargs["trace_id"],
+                "user_id": kwargs["user_id"],
             }
 
     class SessionTurnServiceStub:
@@ -299,6 +301,11 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
             window_seconds=60,
         )
     )
+    app.dependency_overrides[require_user_login] = lambda: {
+        "user_id": "user-1",
+        "username": "alice",
+        "token": "token-1",
+    }
     client = TestClient(app)
 
     process = client.post("/process", json={"input": "question", "user_id": "user-1"})
@@ -311,8 +318,10 @@ def test_query_chat_router_agent_and_streaming_routes() -> None:
         == "input_required"
     )
     assert (
-        client.post("/agent/run", json={"input": "question"}).json()["answer"]
-        == "question"
+        client.post(
+            "/agent/run", json={"input": "question", "user_id": "spoofed-user"}
+        ).json()["user_id"]
+        == "user-1"
     )
     assert (
         client.post("/agent/run", json={"input": "question", "a2a_mode": "bad"}).json()[

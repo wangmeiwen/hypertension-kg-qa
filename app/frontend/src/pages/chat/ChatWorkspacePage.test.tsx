@@ -143,7 +143,6 @@ describe("ChatWorkspacePage", () => {
     expect(await screen.findByText("基于当前知识库，建议规律监测血压。")).toBeVisible();
     expect(sessionClientMocks.streamProcessWithSession).toHaveBeenCalledWith(
       "高血压怎么管理？",
-      expect.any(String),
       "s1",
       null,
       "",
@@ -172,7 +171,6 @@ describe("ChatWorkspacePage", () => {
     await waitFor(() => {
       expect(sessionClientMocks.streamProcessWithSession).toHaveBeenCalledWith(
         "总结这个文件",
-        expect.any(String),
         "s1",
         null,
         "guide.pdf",

@@ -3,11 +3,14 @@ import { z } from "zod";
 
 import {
   clearAdminToken,
+  clearUserToken,
   fetchJson,
   fetchJsonEnvelope,
   fetchStream,
   getAdminToken,
+  getUserToken,
   setAdminToken,
+  setUserToken,
 } from "./http";
 import {
   clearTestStorage,
@@ -70,7 +73,7 @@ describe("http client", () => {
     setAdminToken("token-1");
     const fetchMock = mockFetchJson({ ok: true, data: { logged_in: true } });
 
-    await fetchJson("/admin/status", z.object({ logged_in: z.boolean() }), {}, { auth: true });
+    await fetchJson("/admin/status", z.object({ logged_in: z.boolean() }), {}, { auth: "admin" });
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer token-1");
@@ -81,13 +84,39 @@ describe("http client", () => {
     mockFetchJson({ ok: false, error: "登录已过期" }, { status: 401 });
 
     await expect(
-      fetchJson("/admin/status", z.object({}), {}, { auth: true }),
+      fetchJson("/admin/status", z.object({}), {}, { auth: "admin" }),
     ).rejects.toMatchObject({
       code: "unauthorized",
       message: "登录已过期",
       status: 401,
     });
     expect(getAdminToken()).toBe("");
+  });
+
+  it("clears user token on unauthorized responses", async () => {
+    setUserToken("expired");
+    mockFetchJson({ ok: false, error: "登录已过期" }, { status: 401 });
+
+    await expect(fetchJson("/auth/me", z.object({}), {}, { auth: "user" })).rejects.toMatchObject({
+      code: "unauthorized",
+      message: "登录已过期",
+      status: 401,
+    });
+    expect(getUserToken()).toBe("");
+  });
+
+  it("keeps user and admin token scopes isolated", async () => {
+    setAdminToken("admin-token");
+    setUserToken("user-token");
+    const fetchMock = mockFetchJson({ ok: true, data: { id: "u1" } });
+
+    await fetchJson("/auth/me", z.object({ id: z.string() }), {}, { auth: "user" });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer user-token");
+    clearUserToken();
+    expect(getUserToken()).toBe("");
+    expect(getAdminToken()).toBe("admin-token");
   });
 
   it("turns schema mismatches into schema_error", async () => {

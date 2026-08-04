@@ -30,6 +30,10 @@ def test_mysql_migration_contract_is_ordered_and_checksummed() -> None:
     assert plan_mysql_migrations([]) == MYSQL_MIGRATIONS
     assert plan_mysql_migrations([_applied_row(1)]) == MYSQL_MIGRATIONS[1:]
     assert (
+        plan_mysql_migrations([_applied_row(version) for version in range(1, 4)])
+        == MYSQL_MIGRATIONS[3:]
+    )
+    assert (
         plan_mysql_migrations(
             [_applied_row(version) for version in range(1, MYSQL_SCHEMA_VERSION + 1)]
         )
@@ -129,8 +133,9 @@ def test_apply_mysql_migrations_upgrades_legacy_schema_once() -> None:
     )
 
     executed_sql = [sql for sql, _params in connection.executed]
-    assert applied == (2, 3)
+    assert applied == (2, 3, 4, 5)
     assert sum("ALTER TABLE graph_import_runs" in sql for sql in executed_sql) == 4
+    assert any("CREATE TABLE IF NOT EXISTS user_uploads" in sql for sql in executed_sql)
     insert_params = [
         params
         for sql, params in connection.executed

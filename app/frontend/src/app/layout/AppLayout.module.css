@@ -60,6 +60,19 @@
   gap: 12px;
 }
 
+.userPanel {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.username {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .link {
   display: grid;
   gap: 6px;
@@ -108,7 +121,8 @@
 }
 
 .collapsed .brandMeta,
-.collapsed .linkDescription {
+.collapsed .linkDescription,
+.collapsed .username {
   display: none;
 }
 

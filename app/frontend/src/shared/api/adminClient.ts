@@ -32,7 +32,7 @@ export async function getAdminSessions(
     `/admin/sessions?limit=${limit}&offset=${offset}`,
     adminSessionListSchema,
     {},
-    { auth: true, fallbackMessage: "加载后台会话失败" },
+    { auth: "admin", fallbackMessage: "加载后台会话失败" },
   );
 }
 
@@ -47,7 +47,7 @@ export async function getAdminSessionMessages(sessionId: string): Promise<{
       messages: z.array(adminSessionMessageSchema).default([]),
     }),
     {},
-    { auth: true, fallbackMessage: "加载会话消息失败" },
+    { auth: "admin", fallbackMessage: "加载会话消息失败" },
   );
 }
 
@@ -56,7 +56,7 @@ export async function deleteAdminSession(sessionId: string): Promise<void> {
     `/admin/sessions/${sessionId}`,
     z.record(z.string(), z.unknown()),
     { method: "DELETE" },
-    { auth: true, fallbackMessage: "删除会话失败" },
+    { auth: "admin", fallbackMessage: "删除会话失败" },
   );
 }
 
@@ -65,7 +65,7 @@ export async function clearAdminSessionMessages(sessionId: string): Promise<void
     `/admin/sessions/${sessionId}/messages`,
     z.record(z.string(), z.unknown()),
     { method: "DELETE" },
-    { auth: true, fallbackMessage: "清空会话消息失败" },
+    { auth: "admin", fallbackMessage: "清空会话消息失败" },
   );
 }
 
@@ -74,6 +74,6 @@ export async function getAdminStats(): Promise<AdminStats> {
     "/admin/stats",
     adminStatsSchema,
     {},
-    { auth: true, fallbackMessage: "加载统计数据失败" },
+    { auth: "admin", fallbackMessage: "加载统计数据失败" },
   );
 }

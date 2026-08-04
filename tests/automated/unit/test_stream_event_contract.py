@@ -130,7 +130,7 @@ def test_ragas_stream_reader_accumulates_deltas_and_reports_explicit_errors(
     )
 
     succeeded = run_eval_dataset.run_stream_request(
-        "http://localhost", "/process", "问题", 1.0
+        "http://localhost", "/process", "问题", 1.0, "test-token"
     )
     assert succeeded["answer"] == "第一段第二段"
     assert succeeded["status"] == "done"
@@ -147,7 +147,7 @@ def test_ragas_stream_reader_accumulates_deltas_and_reports_explicit_errors(
         ),
     )
     failed = run_eval_dataset.run_stream_request(
-        "http://localhost", "/process", "问题", 1.0
+        "http://localhost", "/process", "问题", 1.0, "test-token"
     )
     assert failed["status"] == "failed"
     assert failed["error"] == "模型失败"

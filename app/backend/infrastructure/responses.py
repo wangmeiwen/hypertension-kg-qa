@@ -24,6 +24,16 @@ def not_found_response(message: str = "资源不存在") -> JSONResponse:
     return JSONResponse(status_code=404, content={"ok": False, "error": message})
 
 
+def invalid_request_response(message: str = "请求参数错误") -> JSONResponse:
+    """构造 400 响应。"""
+    return JSONResponse(status_code=400, content={"ok": False, "error": message})
+
+
+def conflict_response(message: str = "资源冲突") -> JSONResponse:
+    """构造 409 响应。"""
+    return JSONResponse(status_code=409, content={"ok": False, "error": message})
+
+
 def rate_limited_response(
     endpoint: str,
     dimension: str,
