@@ -129,7 +129,7 @@ def test_apply_mysql_migrations_upgrades_legacy_schema_once() -> None:
     )
 
     executed_sql = [sql for sql, _params in connection.executed]
-    assert applied == (2, 3)
+    assert applied == (2, 3, 4)
     assert sum("ALTER TABLE graph_import_runs" in sql for sql in executed_sql) == 4
     insert_params = [
         params

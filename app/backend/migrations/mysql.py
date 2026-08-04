@@ -253,6 +253,37 @@ MYSQL_MIGRATIONS = (
             ),
         ),
     ),
+    MySQLMigration(
+        version=4,
+        name="user_auth_foundation",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id VARCHAR(36) PRIMARY KEY,
+                username VARCHAR(32) NOT NULL,
+                username_key VARCHAR(32) NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                    ON UPDATE CURRENT_TIMESTAMP(6),
+                UNIQUE KEY uk_users_username_key (username_key),
+                INDEX idx_users_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                token_hash CHAR(64) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                expires_at TIMESTAMP(6) NOT NULL,
+                revoked_at TIMESTAMP(6) NULL DEFAULT NULL,
+                created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                INDEX idx_user_sessions_user_id (user_id),
+                INDEX idx_user_sessions_expires_at (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """,
+        ),
+    ),
 )
 MYSQL_SCHEMA_VERSION = MYSQL_MIGRATIONS[-1].version
 

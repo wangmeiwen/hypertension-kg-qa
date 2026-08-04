@@ -19,6 +19,10 @@ class InvalidRequestError(Exception):
     """非法请求异常。"""
 
 
+class ConflictError(Exception):
+    """资源状态冲突异常。"""
+
+
 class RateLimitedError(Exception):
     """包含标准限流响应字段的异常。"""
 

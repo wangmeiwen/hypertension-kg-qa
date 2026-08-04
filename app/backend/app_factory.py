@@ -26,12 +26,16 @@ from app.backend.dependencies.request_context import (
     get_trace_id as _resolve_trace_id_from_request,
 )
 from app.backend.infrastructure.errors import (
+    ConflictError,
     ForbiddenError,
+    InvalidRequestError,
     RateLimitedError,
     UnauthorizedError,
 )
 from app.backend.infrastructure.responses import (
+    conflict_response,
     forbidden_response,
+    invalid_request_response,
     rate_limited_response,
     unauthorized_response,
 )
@@ -49,6 +53,7 @@ from app.backend.routers.graph_public import create_graph_public_router
 from app.backend.routers.query_chat import create_query_chat_router
 from app.backend.routers.sessions_history import create_sessions_router
 from app.backend.routers.system_mcp import create_system_mcp_router
+from app.backend.routers.user_auth import create_user_auth_router
 from app.backend.services.a2a_dispatch_service import A2ADispatchService
 from app.backend.services.a2a_event_stream_service import A2AEventStreamService
 from app.backend.services.a2a_runtime_service import A2ARuntimeService
@@ -69,6 +74,7 @@ from app.backend.services.startup_runtime_service import (
     StartupRuntimeService,
 )
 from app.backend.services.storage_schema_service import StorageSchemaService
+from app.backend.services.user_auth_service import UserAuthService
 from app.backend.infrastructure.rate_limiter import InMemorySlidingWindowRateLimiter
 from app.backend.repositories.database import fetch_all
 from app.core.config import Config
@@ -98,6 +104,7 @@ class BackendAppTestOverrides:
     session_stream_service: Any = None
     sessions_history_service: Any = None
     admin_auth_service: AdminAuthService | None = None
+    user_auth_service: UserAuthService | None = None
     admin_runtime_service: Any = None
     storage_schema_service: Any = None
     admin_sessions_service: Any = None
@@ -240,6 +247,11 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     )
 
     admin_auth_service = overrides.admin_auth_service or AdminAuthService()
+    user_auth_service = (
+        overrides.user_auth_service
+        if overrides.user_auth_service is not None
+        else UserAuthService()
+    )
 
     admin_runtime_service = overrides.admin_runtime_service or AdminRuntimeService(
         get_a2a=a2a_runtime_service.get_a2a,
@@ -322,6 +334,16 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     async def _handle_forbidden_error(_: Request, exc: ForbiddenError) -> JSONResponse:
         return forbidden_response(str(exc))
 
+    @app.exception_handler(InvalidRequestError)
+    async def _handle_invalid_request_error(
+        _: Request, exc: InvalidRequestError
+    ) -> JSONResponse:
+        return invalid_request_response(str(exc))
+
+    @app.exception_handler(ConflictError)
+    async def _handle_conflict_error(_: Request, exc: ConflictError) -> JSONResponse:
+        return conflict_response(str(exc))
+
     @app.exception_handler(RateLimitedError)
     async def _handle_rate_limited_error(
         _: Request, exc: RateLimitedError
@@ -385,6 +407,7 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
         )
     )
     app.include_router(create_sessions_router(service=sessions_history_service))
+    app.include_router(create_user_auth_router(service=user_auth_service))
     app.include_router(create_admin_auth_router(service=admin_auth_service))
     app.include_router(create_admin_runtime_router(service=admin_runtime_service))
     app.include_router(create_admin_storage_router(service=storage_schema_service))

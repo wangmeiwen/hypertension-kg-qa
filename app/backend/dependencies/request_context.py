@@ -7,6 +7,14 @@ from typing import Optional
 from fastapi import Request
 
 
+def extract_bearer_token(authorization: str) -> str:
+    """从 Authorization 请求头提取 Bearer token。"""
+    parts = str(authorization or "").strip().split(" ", 1)
+    if len(parts) != 2 or parts[0].casefold() != "bearer":
+        return ""
+    return parts[1].strip()
+
+
 def get_trace_id(request: Optional[Request]) -> str:
     """从请求对象提取 trace_id。"""
     if request is None:

@@ -10,7 +10,10 @@ from typing import Any, AsyncIterator, Callable, Optional
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
-from app.backend.dependencies.request_context import resolve_api_identity
+from app.backend.dependencies.request_context import (
+    extract_bearer_token,
+    resolve_api_identity,
+)
 from app.backend.security.admin_audit import log_admin_audit_event
 from app.backend.security.admin_auth import (
     get_current_admin_user,
@@ -27,20 +30,6 @@ from app.backend.observability.session_logger import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_bearer_token(authorization: str) -> Optional[str]:
-    """从 Authorization 头提取 Bearer Token。"""
-    auth_text = str(authorization or "").strip()
-    if not auth_text:
-        return None
-    parts = auth_text.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return None
-    token = parts[1].strip()
-    if not token:
-        return None
-    return token
 
 
 async def _wrap_stream_body_iterator(
@@ -81,8 +70,8 @@ async def request_timing_middleware(request: Request, call_next):
     request.state.request_id = request_id
     request.state.trace_id = request_id
     request_token = set_request_context(request_id)
-    bearer_token = _extract_bearer_token(request.headers.get("Authorization", ""))
-    token_handle = set_current_admin_token(bearer_token)
+    bearer_token = extract_bearer_token(request.headers.get("Authorization", ""))
+    token_handle = set_current_admin_token(bearer_token if bearer_token else None)
     current_admin_user = get_current_admin_user()
     request.state.admin_actor = (
         current_admin_user if current_admin_user is not None else ""
