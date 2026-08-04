@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
-import uuid
 from typing import Any, Iterable
 
 import requests
@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeout", type=float, default=180.0, help="Per-request timeout in seconds."
+    )
+    parser.add_argument(
+        "--auth-token",
+        default=os.getenv("USER_AUTH_TOKEN", ""),
+        help="User bearer token. Defaults to USER_AUTH_TOKEN.",
     )
     return parser.parse_args()
 
@@ -188,12 +193,12 @@ def extract_retrieved_contexts(payload: dict[str, Any]) -> list[str]:
 
 
 def run_stream_request(
-    base_url: str, endpoint: str, question: str, timeout: float
+    base_url: str, endpoint: str, question: str, timeout: float, auth_token: str
 ) -> dict[str, Any]:
-    user_id = f"eval_{uuid.uuid4().hex[:10]}"
     response = requests.post(
         f"{base_url.rstrip('/')}{endpoint}",
-        json={"input": question, "user_id": user_id},
+        headers={"Authorization": f"Bearer {auth_token}"},
+        json={"input": question},
         timeout=timeout,
         stream=True,
     )
@@ -242,12 +247,12 @@ def run_stream_request(
 
 
 def run_json_request(
-    base_url: str, endpoint: str, question: str, timeout: float
+    base_url: str, endpoint: str, question: str, timeout: float, auth_token: str
 ) -> dict[str, Any]:
-    user_id = f"eval_{uuid.uuid4().hex[:10]}"
     response = requests.post(
         f"{base_url.rstrip('/')}{endpoint}",
-        json={"input": question, "user_id": user_id, "strategy": "iterative"},
+        headers={"Authorization": f"Bearer {auth_token}"},
+        json={"input": question, "strategy": "iterative"},
         timeout=timeout,
     )
     response.raise_for_status()
@@ -293,6 +298,8 @@ def main() -> None:
     args = parse_args()
     dataset_path = Path(args.dataset)
     rows = load_dataset(dataset_path)
+    if not args.auth_token:
+        raise ValueError("USER_AUTH_TOKEN or --auth-token is required")
     if args.limit and args.limit > 0:
         rows = rows[: args.limit]
 
@@ -307,7 +314,11 @@ def main() -> None:
         print(f"[{row['index'] + 1}/{len(rows)}] {row['question']}")
         try:
             result = request_fn(
-                args.base_url, args.endpoint, row["question"], args.timeout
+                args.base_url,
+                args.endpoint,
+                row["question"],
+                args.timeout,
+                args.auth_token,
             )
         except requests.RequestException as exc:
             result = {
