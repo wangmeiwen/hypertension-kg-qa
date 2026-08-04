@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from app.backend.dependencies.user_auth import require_user_login
+from app.backend.dependencies.request_context import extract_bearer_token
 from app.backend.services.user_auth_service import UserAuthService
 
 
@@ -38,9 +39,8 @@ def create_user_auth_router(service: UserAuthService) -> APIRouter:
         }
 
     @router.post("/logout")
-    async def logout(
-        user: dict[str, Any] = Depends(require_user_login),
-    ) -> dict[str, Any]:
-        return await service.logout(str(user["token"]))
+    async def logout(request: Request) -> dict[str, Any]:
+        token = extract_bearer_token(request.headers.get("Authorization", ""))
+        return await service.logout(token)
 
     return router

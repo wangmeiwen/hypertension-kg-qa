@@ -20,7 +20,7 @@ from app.backend.security.user_password import (
     verify_user_password,
 )
 
-_USERNAME_PATTERN = re.compile(r"[A-Za-z0-9_]{3,32}")
+_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,32}$")
 _SESSION_TTL = timedelta(days=7)
 _DUMMY_PASSWORD_HASH = hash_user_password("invalid-password-0000")
 

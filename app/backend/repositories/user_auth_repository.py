@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
+
 from app.backend.repositories.database import execute, fetch_one
+
+
+def _is_duplicate_key_error(exc: IntegrityError) -> bool:
+    """只识别 MySQL 唯一键冲突，不吞掉其他完整性异常。"""
+    args = getattr(exc.orig, "args", ())
+    return bool(args) and args[0] == 1062
 
 
 class UserAuthRepository:
@@ -19,21 +27,26 @@ class UserAuthRepository:
         username_key: str,
         password_hash: str,
     ) -> bool:
-        affected = await execute(
-            """
-            INSERT IGNORE INTO users (
-                id, username, username_key, password_hash, status
-            ) VALUES (
-                :id, :username, :username_key, :password_hash, 'active'
+        try:
+            affected = await execute(
+                """
+                INSERT INTO users (
+                    id, username, username_key, password_hash, status
+                ) VALUES (
+                    :id, :username, :username_key, :password_hash, 'active'
+                )
+                """,
+                {
+                    "id": user_id,
+                    "username": username,
+                    "username_key": username_key,
+                    "password_hash": password_hash,
+                },
             )
-            """,
-            {
-                "id": user_id,
-                "username": username,
-                "username_key": username_key,
-                "password_hash": password_hash,
-            },
-        )
+        except IntegrityError as exc:
+            if _is_duplicate_key_error(exc):
+                return False
+            raise
         return affected == 1
 
     async def get_user_by_username_key(

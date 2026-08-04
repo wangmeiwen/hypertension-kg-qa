@@ -60,7 +60,13 @@ class UserAuthRepositoryStub:
         }
 
     async def get_active_session(self, token_hash: str) -> dict[str, Any] | None:
-        return self.sessions.get(token_hash)
+        session = self.sessions.get(token_hash)
+        if session is None:
+            return None
+        user = next(row for row in self.users.values() if row["id"] == session["user_id"])
+        if user["status"] != "active":
+            return None
+        return {**session, "status": user["status"]}
 
     async def revoke_session(self, token_hash: str) -> bool:
         return self.sessions.pop(token_hash, None) is not None
@@ -96,7 +102,13 @@ def test_user_register_login_authenticate_and_logout() -> None:
         )
         assert logged_in["data"]["user"] == registered["data"]["user"]
 
-        await service.logout(token)
+        repository.users["alice_01"]["status"] = "disabled"
+        assert await service.authenticate_token(token) is None
+        repository.users["alice_01"]["status"] = "active"
+
+        assert (await service.logout(token))["ok"] is True
+        assert (await service.logout(token))["ok"] is True
+        assert (await service.logout("invalid-token"))["ok"] is True
         assert await service.authenticate_token(token) is None
 
     asyncio.run(scenario())
