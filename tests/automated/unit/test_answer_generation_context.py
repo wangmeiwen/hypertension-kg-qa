@@ -1022,6 +1022,40 @@ def test_post_validation_rejects_uncited_fact_without_legacy_keywords() -> None:
     assert result.uncited_claims == ["此外，它对依从性有益。"]
 
 
+def test_post_validation_rejects_uncited_outcome_claim() -> None:
+    plan = build_question_plan("是否推荐家庭血压监测？", MedicalRiskAssessment())
+    task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
+    evidence = Evidence(
+        source_type="document",
+        source_id="guide-a",
+        origin_document_id="guide-a",
+        content="推荐高血压患者进行家庭血压监测。",
+    )
+    plan.must_cover[0].support_status = "supported"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
+            evidence_id=evidence_identity(evidence),
+            support_status="supported",
+            support_excerpt=evidence.content,
+        )
+    )
+    context = build_answer_generation_context(
+        question_plan=plan,
+        evidence_by_item={task.must_cover_id: [("rag", evidence)]},
+        conflicts=[],
+    )
+
+    result = validate_answer_generation(
+        "推荐高血压患者进行家庭血压监测。[guide-a]这会延长寿命。",
+        context,
+    )
+
+    assert result.valid is False
+    assert result.uncited_claims == ["这会延长寿命。"]
+
+
 def test_post_validation_blocks_unresolved_conflict() -> None:
     plan = build_question_plan("高血压患者如何监测？", MedicalRiskAssessment())
     task = next(item for item in plan.retrieval_tasks if item.target_agent == "rag")
