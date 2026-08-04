@@ -21,7 +21,7 @@ _PUBLICATION_REGISTRY: tuple[tuple[str, frozenset[str]], ...] = (
                 "中国指南2024",
                 "guidelinepdf2024",
                 "guideline_pdf_2024",
-                "669d02309aec874e5f707ff3a2c23399619d8d041e1608f19d8dd81ae6819f93",
+                "669d02309aec874e5f707ff3a2c23399619d8d041e1608f19d8dd81ae6819f93",  # pragma: allowlist secret
             }
         ),
     ),
