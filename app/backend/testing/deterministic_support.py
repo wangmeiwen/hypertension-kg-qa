@@ -1387,4 +1387,9 @@ def build_deterministic_test_overrides() -> BackendAppTestOverrides:
         graph_public_service=DeterministicGraphPublicService(graph_state),
         graph_admin_service=DeterministicGraphAdminService(graph_state),
         admin_documents_service=DeterministicAdminDocumentsService(),
+        authenticated_user={
+            "user_id": "user-test",
+            "username": "test-user",
+            "token": "test-token",
+        },
     )

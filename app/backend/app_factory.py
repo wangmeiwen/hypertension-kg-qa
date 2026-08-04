@@ -32,6 +32,7 @@ from app.backend.infrastructure.errors import (
     RateLimitedError,
     UnauthorizedError,
 )
+from app.backend.dependencies.user_auth import require_user_login
 from app.backend.infrastructure.responses import (
     conflict_response,
     forbidden_response,
@@ -105,6 +106,7 @@ class BackendAppTestOverrides:
     sessions_history_service: Any = None
     admin_auth_service: AdminAuthService | None = None
     user_auth_service: UserAuthService | None = None
+    authenticated_user: dict[str, str] | None = None
     admin_runtime_service: Any = None
     storage_schema_service: Any = None
     admin_sessions_service: Any = None
@@ -323,6 +325,9 @@ def create_app(*, test_overrides: BackendAppTestOverrides | None = None) -> Fast
     app = FastAPI(lifespan=app_lifespan)
     app.state.runtime = runtime_container
     app.state.test_overrides = overrides
+    if overrides.authenticated_user is not None:
+        authenticated_user = dict(overrides.authenticated_user)
+        app.dependency_overrides[require_user_login] = lambda: authenticated_user
 
     @app.exception_handler(UnauthorizedError)
     async def _handle_unauthorized_error(

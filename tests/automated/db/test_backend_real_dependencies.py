@@ -18,6 +18,7 @@ from app.backend.testing.deterministic_support import (
 from app.core.config import Config
 from app.backend.infrastructure.database_health import check_databases
 from app.backend.repositories.database import close_database
+from app.backend.repositories.database import initialize_database
 from app.knowledge_graph.neo4j_manager import neo4j_client
 from app.rag_core.kg_milvus_store import KgMilvusStore
 
@@ -92,38 +93,59 @@ async def test_mysql_session_and_admin_routes_roundtrip(
     cleanup_mysql_prefix,
     cleanup_session_artifacts,
 ) -> None:
-    user_id = f"{test_data_prefix}user"
+    username = f"{test_data_prefix}user"
+    password = "Password123"
+    await initialize_database(force=True)
     app = _build_real_fastapi_app()
     transport = httpx.ASGITransport(app=app)
     client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
     session_id = ""
     try:
+        registered = await client.post(
+            "/auth/register",
+            json={"username": username, "password": password},
+        )
+        assert registered.status_code == 200
+        token = registered.json()["data"]["token"]
+        user_id = registered.json()["data"]["user"]["id"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        current_user = await client.get("/auth/me", headers=headers)
+        assert current_user.json()["data"] == {
+            "id": user_id,
+            "username": username,
+        }
+
         created = await client.post(
-            "/sessions", json={"user_id": user_id, "title": "测试会话"}
+            "/sessions",
+            headers=headers,
+            json={"user_id": "spoofed-user", "title": "测试会话"},
         )
         assert created.status_code == 200
         session_id = created.json()["data"]["id"]
+        assert created.json()["data"]["user_id"] == user_id
 
         add_user = await client.post(
             f"/sessions/{session_id}/messages",
-            json={"user_id": user_id, "role": "user", "content": "第一问"},
+            headers=headers,
+            json={"user_id": "spoofed-user", "role": "user", "content": "第一问"},
         )
         assert add_user.status_code == 200
 
         add_assistant = await client.post(
             f"/sessions/{session_id}/messages",
+            headers=headers,
             json={"user_id": user_id, "role": "assistant", "content": "第一答"},
         )
         assert add_assistant.status_code == 200
 
-        messages = await client.get(
-            f"/sessions/{session_id}/messages", params={"user_id": user_id}
-        )
+        messages = await client.get(f"/sessions/{session_id}/messages", headers=headers)
         assert messages.status_code == 200
         assert len(messages.json()["data"]) == 2
 
         rollback = await client.post(
             f"/sessions/{session_id}/rollback-to-question",
+            headers=headers,
             json={"user_id": user_id, "message_id": messages.json()["data"][0]["id"]},
         )
         assert rollback.status_code == 200
@@ -140,6 +162,10 @@ async def test_mysql_session_and_admin_routes_roundtrip(
         deleted = await client.delete(f"/admin/sessions/{session_id}")
         assert deleted.status_code == 200
         assert deleted.json()["ok"] is True
+
+        logged_out = await client.post("/auth/logout", headers=headers)
+        assert logged_out.status_code == 200
+        assert (await client.get("/sessions", headers=headers)).status_code == 401
     finally:
         await client.aclose()
         cleanup_session_artifacts(session_id)

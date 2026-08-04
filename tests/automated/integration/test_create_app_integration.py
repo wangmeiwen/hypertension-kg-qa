@@ -4,7 +4,22 @@ import json
 
 import pytest
 
+from app.backend.testing.deterministic_support import (
+    build_deterministic_test_overrides,
+)
+
 pytestmark = pytest.mark.integration
+
+
+def test_user_routes_reject_missing_login(app_client_factory) -> None:
+    overrides = build_deterministic_test_overrides()
+    overrides.authenticated_user = None
+    client = app_client_factory(overrides=overrides)
+
+    response = client.get("/sessions")
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "用户未登录或登录已过期"
 
 
 def test_create_app_mounts_real_routes_and_deterministic_overrides(
