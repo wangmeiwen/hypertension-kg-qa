@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional
 
 from app.a2a.agent.graph_subagent import GraphSubAgent
 from app.a2a.agent.rag_subagent import RagSubAgent
-from app.a2a.client.subagent_client import SubAgentClientFactory
+from app.a2a.client.subagent_client import SubAgentClient
 from app.a2a.orchestrator.executor import OrchestratorExecutor
 from app.core.config import Config
 from app.mcp.tools import get_mcp_server
@@ -36,9 +36,7 @@ class IterativeAgent:
         self.rag_subagent = (
             rag_subagent if rag_subagent is not None else RagSubAgent(mcp)
         )
-        self.subagent_client = SubAgentClientFactory(
-            self.graph_subagent, self.rag_subagent
-        )
+        self.subagent_client = SubAgentClient(self.graph_subagent, self.rag_subagent)
         self.executor = OrchestratorExecutor(self.subagent_client)
 
     async def aclose(self) -> None:

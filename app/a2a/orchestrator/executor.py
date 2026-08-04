@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from app.a2a.client.subagent_client import SubAgentClientFactory
+from app.a2a.client.subagent_client import SubAgentClient
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
 from app.core.config import Config
 
@@ -12,7 +12,7 @@ from app.core.config import Config
 class OrchestratorExecutor:
     """执行新的统一主控决策循环。"""
 
-    def __init__(self, subagent_client: SubAgentClientFactory):
+    def __init__(self, subagent_client: SubAgentClient):
         """初始化执行器并绑定主控控制器与配置。"""
         self.subagent_client = subagent_client
         self.conf = Config()

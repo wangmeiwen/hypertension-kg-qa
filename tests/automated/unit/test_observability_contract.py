@@ -129,6 +129,9 @@ def test_a2a_task_preserves_trace_and_records_duration() -> None:
                 "output_type": "final",
                 "confidence": 0.9,
                 "tool_observations": [{"tool_name": "rag_search"}],
+                "evidence_summary": {"evidence_count": 1},
+                "question_plan": {"plan_id": "plan-1"},
+                "evidence_bundle": {"bundle_id": "bundle-1"},
                 "telemetry": {
                     "prompt_tokens": 8,
                     "completion_tokens": 2,
@@ -168,6 +171,10 @@ def test_a2a_task_preserves_trace_and_records_duration() -> None:
         assert telemetry["trace_id"] == "trace-1"
         assert telemetry["duration_ms"] >= 0
         assert tools[0]["trace_id"] == "trace-1"
+        artifact_names = {artifact["name"] for artifact in completed["artifacts"]}
+        assert {"question_plan", "evidence_bundle", "evidence_summary"}.issubset(
+            artifact_names
+        )
         assert any(
             event.get("trace_id") == "trace-1"
             for event in completed["events"]

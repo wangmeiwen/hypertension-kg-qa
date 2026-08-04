@@ -46,6 +46,13 @@ class GraphSubAgent:
         tool_name = str(req.get("tool_name") or "kg_auto").strip() or "kg_auto"
         arguments_obj = req.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+        query_terms_obj = req.get("query_terms")
+        query_terms = (
+            [str(value or "").strip() for value in query_terms_obj]
+            if isinstance(query_terms_obj, list)
+            else []
+        )
+        query_terms = [value for value in query_terms if value]
         constraints_obj = req.get("constraints")
         constraints = (
             constraints_obj
@@ -58,6 +65,7 @@ class GraphSubAgent:
             "subquery": subquery,
             "tool_name": tool_name,
             "arguments": arguments,
+            "query_terms": query_terms,
             "constraints": constraints,
         }
         try:
@@ -67,6 +75,7 @@ class GraphSubAgent:
                     "subquery": subquery,
                     "tool_name": tool_name,
                     "arguments": arguments,
+                    "query_terms": query_terms,
                     "constraints": constraints,
                 }
             )
@@ -97,6 +106,11 @@ class GraphSubAgent:
                         else []
                     ),
                     "evidence": evidence,
+                    "claim_assessments": (
+                        result.get("claim_assessments")
+                        if isinstance(result.get("claim_assessments"), list)
+                        else []
+                    ),
                     "signal": str(result.get("signal") or "none"),
                     "coverage": (
                         result.get("coverage")

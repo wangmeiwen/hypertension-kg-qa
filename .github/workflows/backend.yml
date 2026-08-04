@@ -59,6 +59,12 @@ jobs:
         run: python -m ruff check app tests
       - name: Run mypy checks
         run: python -m mypy app
+      - name: Run deterministic Agent contract replay
+        run: >-
+          python tests/scripts/run_agent_snapshot_replay.py
+          tests/ragas/data/agent_replay_contract_canary_v1.json
+          tests/ragas/data/agent_replay_contract_v1.json
+          --require-all-passed
       - name: Initialize MySQL schema
         run: python -c "import asyncio; from app.backend.repositories.database import initialize_database; assert asyncio.run(initialize_database(force=True))"
       - name: Run fast tests with coverage

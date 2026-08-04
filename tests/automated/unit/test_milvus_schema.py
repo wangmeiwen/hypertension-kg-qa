@@ -42,7 +42,7 @@ def test_milvus_schema_contract_accepts_exact_document_and_kg_schemas() -> None:
         == KG_MILVUS_SCHEMA.fingerprint
     )
     assert document_contract.version == 1
-    assert KG_MILVUS_SCHEMA.version == 1
+    assert KG_MILVUS_SCHEMA.version == 2
 
 
 @pytest.mark.parametrize(

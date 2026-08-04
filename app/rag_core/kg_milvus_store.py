@@ -360,6 +360,25 @@ class KgMilvusStore:
                 field_name="timestamp", datatype=DataType.VARCHAR, max_length=64
             )
             schema.add_field(
+                field_name="origin_guideline_id",
+                datatype=DataType.VARCHAR,
+                max_length=256,
+            )
+            schema.add_field(
+                field_name="origin_document_id",
+                datatype=DataType.VARCHAR,
+                max_length=512,
+            )
+            schema.add_field(
+                field_name="source_hash", datatype=DataType.VARCHAR, max_length=128
+            )
+            schema.add_field(field_name="source_page", datatype=DataType.INT64)
+            schema.add_field(
+                field_name="source_chunk_id",
+                datatype=DataType.VARCHAR,
+                max_length=128,
+            )
+            schema.add_field(
                 field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=1024
             )
 
@@ -631,6 +650,13 @@ class KgMilvusStore:
                         "target_label": "",
                         "text": text,
                         "timestamp": timestamp,
+                        "origin_guideline_id": str(
+                            node.get("origin_guideline_id") or ""
+                        ),
+                        "origin_document_id": str(node.get("source_name") or ""),
+                        "source_hash": str(node.get("source_hash") or ""),
+                        "source_page": int(node.get("source_page") or 0),
+                        "source_chunk_id": str(node.get("source_chunk_index") or ""),
                     }
                 )
         return rows
@@ -700,6 +726,13 @@ class KgMilvusStore:
                     "target_label": to_label,
                     "text": text,
                     "timestamp": timestamp,
+                    "origin_guideline_id": str(
+                        rel_props.get("origin_guideline_id") or ""
+                    ),
+                    "origin_document_id": str(rel_props.get("source_name") or ""),
+                    "source_hash": str(rel_props.get("source_hash") or ""),
+                    "source_page": int(rel_props.get("source_page") or 0),
+                    "source_chunk_id": str(rel_props.get("source_chunk_index") or ""),
                 }
             )
         return rows
@@ -739,6 +772,11 @@ class KgMilvusStore:
                         "target_label": item["target_label"],
                         "text": item["text"],
                         "timestamp": item["timestamp"],
+                        "origin_guideline_id": item["origin_guideline_id"],
+                        "origin_document_id": item["origin_document_id"],
+                        "source_hash": item["source_hash"],
+                        "source_page": item["source_page"],
+                        "source_chunk_id": item["source_chunk_id"],
                         "embedding": (
                             vec.tolist() if hasattr(vec, "tolist") else list(vec)
                         ),
@@ -834,6 +872,10 @@ class KgMilvusStore:
                 rel_inserted = await asyncio.to_thread(
                     self._upsert_rows, rel_rows, batch_size
                 )
+            await asyncio.to_thread(
+                self.client.flush,
+                collection_name=self.collection_name,
+            )
 
             return {
                 "collection_name": self.collection_name,
@@ -1054,6 +1096,11 @@ class KgMilvusStore:
                 "target_label",
                 "text",
                 "timestamp",
+                "origin_guideline_id",
+                "origin_document_id",
+                "source_hash",
+                "source_page",
+                "source_chunk_id",
             ],
         }
         search_params = {
@@ -1111,6 +1158,11 @@ class KgMilvusStore:
                     "target_label": row.get("target_label"),
                     "text": row.get("text"),
                     "timestamp": row.get("timestamp"),
+                    "origin_guideline_id": row.get("origin_guideline_id"),
+                    "origin_document_id": row.get("origin_document_id"),
+                    "source_hash": row.get("source_hash"),
+                    "source_page": row.get("source_page"),
+                    "source_chunk_id": row.get("source_chunk_id"),
                     "vector_score": self._to_score(
                         hit.get("distance") if isinstance(hit, dict) else 0.0
                     ),
@@ -1169,6 +1221,11 @@ class KgMilvusStore:
                 "target_label",
                 "text",
                 "timestamp",
+                "origin_guideline_id",
+                "origin_document_id",
+                "source_hash",
+                "source_page",
+                "source_chunk_id",
             ],
             limit=max(1, min(limit, 200)),
         )
@@ -1908,6 +1965,11 @@ class KgMilvusStore:
                 "lexical_score": round(self._to_score(row.get("lexical_score")), 6),
                 "text": row.get("text"),
                 "timestamp": row.get("timestamp"),
+                "origin_guideline_id": row.get("origin_guideline_id"),
+                "origin_document_id": row.get("origin_document_id"),
+                "source_hash": row.get("source_hash"),
+                "source_page": row.get("source_page"),
+                "source_chunk_id": row.get("source_chunk_id"),
             }
 
             if item_type == "entity" and len(entities) < safe_top_k:
@@ -1930,6 +1992,11 @@ class KgMilvusStore:
                 "lexical_score": round(self._to_score(row.get("lexical_score")), 6),
                 "text": row.get("text"),
                 "timestamp": row.get("timestamp"),
+                "origin_guideline_id": row.get("origin_guideline_id"),
+                "origin_document_id": row.get("origin_document_id"),
+                "source_hash": row.get("source_hash"),
+                "source_page": row.get("source_page"),
+                "source_chunk_id": row.get("source_chunk_id"),
                 "source_name": row.get("source_name"),
                 "source_label": row.get("source_label"),
                 "relation_type": row.get("relation_type"),

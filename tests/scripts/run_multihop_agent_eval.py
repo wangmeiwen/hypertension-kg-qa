@@ -3,12 +3,27 @@
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.evaluation.agent_metrics import (  # noqa: E402
+    evaluate_agent_case,
+    summarize_agent_results,
+)
+from app.evaluation.agent_canary import load_agent_canary  # noqa: E402
+from app.evaluation.agent_replay import (  # noqa: E402
+    AgentReplayDataset,
+    AgentReplayManifest,
+    AgentReplayRecord,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -18,99 +33,38 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--max-turns", type=int, default=4)
     parser.add_argument("--min-passed", type=int, default=4)
+    parser.add_argument("--snapshot-manifest", type=Path)
+    parser.add_argument("--snapshot-output", type=Path)
     return parser.parse_args()
-
-
-def _relationship_edges(
-    observations: list[dict[str, Any]],
-) -> tuple[set[tuple[str, str]], int]:
-    edges: set[tuple[str, str]] = set()
-    max_graph_hop = 0
-    for observation in observations:
-        evidence = observation.get("evidence")
-        evidence_rows = evidence if isinstance(evidence, list) else []
-        for item in evidence_rows:
-            if not isinstance(item, dict):
-                continue
-            provenance = item.get("provenance")
-            provenance_data = provenance if isinstance(provenance, dict) else {}
-            raw = provenance_data.get("raw")
-            raw_data = raw if isinstance(raw, dict) else {}
-            source = str(raw_data.get("source_name") or "").strip()
-            target = str(raw_data.get("target_name") or "").strip()
-            if source and target:
-                edges.add(tuple(sorted((source, target))))
-            hop_value = raw_data.get("graph_hop")
-            if isinstance(hop_value, int):
-                max_graph_hop = max(max_graph_hop, hop_value)
-    return edges, max_graph_hop
-
-
-def _has_two_edge_path(edges: set[tuple[str, str]]) -> bool:
-    degrees: dict[str, int] = {}
-    for source, target in edges:
-        degrees[source] = degrees.get(source, 0) + 1
-        degrees[target] = degrees.get(target, 0) + 1
-    return any(value >= 2 for value in degrees.values())
-
-
-def _evaluate_case(case: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
-    answer = str(response.get("answer") or "")
-    expected = case.get("expected_terms")
-    expected_terms = expected if isinstance(expected, list) else []
-    matched_terms = [str(term) for term in expected_terms if str(term) in answer]
-    groups = case.get("expected_term_groups")
-    expected_groups = groups if isinstance(groups, list) else []
-    matched_groups = [
-        [str(term) for term in group if str(term) in answer]
-        for group in expected_groups
-        if isinstance(group, list)
-    ]
-    observations = response.get("tool_observations")
-    observation_rows = observations if isinstance(observations, list) else []
-    edges, max_graph_hop = _relationship_edges(observation_rows)
-    required_matches = int(case.get("min_expected_matches") or len(expected_terms))
-    required_groups = int(case.get("min_expected_groups") or len(expected_groups))
-    requires_multihop = bool(case.get("requires_multihop", True))
-    has_multihop_evidence = max_graph_hop >= 2 or _has_two_edge_path(edges)
-    answer_terms_passed = (
-        sum(1 for group in matched_groups if group) >= required_groups
-        if expected_groups
-        else len(matched_terms) >= required_matches
-    )
-    passed = (
-        bool(response.get("ok"))
-        and answer_terms_passed
-        and (has_multihop_evidence if requires_multihop else True)
-    )
-    return {
-        "id": case.get("id"),
-        "question": case.get("question"),
-        "passed": passed,
-        "matched_terms": matched_terms,
-        "required_matches": required_matches,
-        "matched_groups": matched_groups,
-        "required_groups": required_groups,
-        "relationship_edges": [list(edge) for edge in sorted(edges)],
-        "max_graph_hop": max_graph_hop,
-        "has_multihop_evidence": has_multihop_evidence,
-        "answer": answer,
-        "confidence": response.get("confidence"),
-        "trace_id": response.get("trace_id"),
-        "tool_observations": observation_rows,
-        "error": response.get("error"),
-    }
 
 
 def main() -> None:
     args = _parse_args()
-    project_root = Path(__file__).resolve().parents[2]
-    load_dotenv(project_root / ".env", override=True)
-    questions = json.loads(args.questions.read_text(encoding="utf-8"))
-    if not isinstance(questions, list):
-        raise ValueError("问题集必须是 JSON 数组")
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
+    raw_questions = json.loads(args.questions.read_text(encoding="utf-8"))
+    canary = None
+    if isinstance(raw_questions, dict):
+        canary = load_agent_canary(args.questions)
+        questions = canary.evaluation_cases()
+    elif isinstance(raw_questions, list):
+        questions = raw_questions
+    else:
+        raise ValueError("问题集必须是 canary 对象或 JSON 数组")
+
+    manifest = None
+    if args.snapshot_manifest is not None:
+        manifest = AgentReplayManifest.model_validate(
+            json.loads(args.snapshot_manifest.read_text(encoding="utf-8"))
+        )
+        if manifest.replay_kind != "frozen_environment":
+            raise ValueError("live_replay_requires_frozen_environment_manifest")
+        if canary is None or manifest.canary_dataset_id != canary.dataset_id:
+            raise ValueError("live_replay_canary_dataset_mismatch")
+    if args.snapshot_output is not None and manifest is None:
+        raise ValueError("snapshot_output_requires_manifest")
 
     results = []
+    replay_records: list[AgentReplayRecord] = []
     with httpx.Client(base_url=args.base_url, timeout=1800) as client:
         for case in questions:
             if not isinstance(case, dict):
@@ -126,24 +80,41 @@ def main() -> None:
                 },
             )
             response.raise_for_status()
-            results.append(_evaluate_case(case, response.json()))
+            response_payload = response.json()
+            results.append(evaluate_agent_case(case, response_payload))
+            replay_records.append(
+                AgentReplayRecord(
+                    case_id=str(case["id"]),
+                    response=response_payload,
+                )
+            )
 
-    report = {
-        "total": len(results),
-        "passed": sum(1 for item in results if item["passed"]),
-        "all_passed": bool(results) and all(item["passed"] for item in results),
-        "results": results,
-    }
+    report = summarize_agent_results(results)
     report["acceptance_passed"] = (
         bool(results)
         and 1 <= args.min_passed <= len(results)
         and report["passed"] >= args.min_passed
+    )
+    report["evaluation_layer"] = (
+        "live_frozen_environment" if manifest is not None else "live_unfrozen"
+    )
+    report["domain_validation_complete"] = bool(
+        manifest is not None
+        and canary is not None
+        and canary.review_status == "domain_reviewed"
     )
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     print(rendered)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
+    if args.snapshot_output is not None and manifest is not None:
+        snapshot = AgentReplayDataset(manifest=manifest, records=replay_records)
+        args.snapshot_output.parent.mkdir(parents=True, exist_ok=True)
+        args.snapshot_output.write_text(
+            json.dumps(snapshot.model_dump(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     if not report["acceptance_passed"]:
         raise SystemExit(1)
 

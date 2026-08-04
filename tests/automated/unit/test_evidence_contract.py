@@ -8,8 +8,11 @@ from pydantic import ValidationError
 import pytest
 
 from app.a2a.evidence import build_kg_evidence, build_rag_evidence
-from app.a2a.models import Evidence, SubAgentResult
+from app.a2a.evidence_fusion import evidence_identity
+from app.a2a.medical_risk import MedicalRiskAssessment
+from app.a2a.models import ClaimEvidenceAssessment, Evidence, SubAgentResult
 from app.a2a.orchestrator.controller import UnifiedOrchestratorController
+from app.a2a.question_planner import build_question_plan
 from app.a2a.subagents.kg.nodes import node_normalize_results as normalize_kg_results
 from app.a2a.subagents.rag.nodes import (
     node_normalize_results as normalize_rag_results,
@@ -22,11 +25,18 @@ from app.mcp.tools import (
 from app.rag_core.vector_store import VectorStore
 
 EVIDENCE_FIELDS = {
+    "schema_version",
     "source_type",
     "source_id",
     "document_id",
     "chunk_id",
     "page",
+    "origin_guideline_id",
+    "origin_document_id",
+    "source_hash",
+    "source_page",
+    "source_chunk_id",
+    "origin_status",
     "section",
     "content",
     "score",
@@ -41,6 +51,7 @@ def test_rag_hit_is_normalized_to_shared_evidence() -> None:
             "id": "hit-1",
             "source": "guideline.pdf",
             "document_id": "doc-1",
+            "source_hash": "a" * 64,
             "chunk_id": "chunk-1",
             "page_num": 12,
             "parent_index": 3,
@@ -55,10 +66,29 @@ def test_rag_hit_is_normalized_to_shared_evidence() -> None:
     assert evidence["source_type"] == "document"
     assert evidence["source_id"] == "guideline.pdf"
     assert evidence["document_id"] == "doc-1"
+    assert evidence["origin_document_id"] == "doc-1"
+    assert evidence["source_hash"] == "a" * 64
+    assert evidence["origin_status"] == "known"
     assert evidence["chunk_id"] == "chunk-1"
     assert evidence["page"] == 12
     assert evidence["section"] == "3/1"
     assert evidence["retrieval_method"] == "dense_rerank"
+
+
+def test_rag_source_filename_is_publication_identity_for_legacy_collection() -> None:
+    evidence = Evidence.model_validate(
+        build_rag_evidence(
+            {
+                "source": "中国高血压防治指南2024.pdf",
+                "chunk_id": "chunk-1",
+                "page_num": 20,
+                "text": "指南原文",
+            }
+        )
+    )
+
+    assert evidence.origin_document_id == "中国高血压防治指南2024.pdf"
+    assert evidence.origin_status == "known"
 
 
 def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
@@ -68,6 +98,8 @@ def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
             "name": "高血压",
             "labels": ["Disease"],
             "score": "0.88",
+            "source_hash": "b" * 64,
+            "source_chunk_index": 3,
         },
         tool_name="kg_query",
         evidence_kind="entity",
@@ -78,8 +110,69 @@ def test_kg_record_is_normalized_without_losing_raw_provenance() -> None:
     assert evidence["source_id"] == "node-1"
     assert evidence["content"] == "高血压"
     assert evidence["score"] == 0.88
+    assert evidence["source_hash"] == "b" * 64
+    assert evidence["source_chunk_id"] == "3"
     assert evidence["provenance"]["kind"] == "entity"
     assert evidence["provenance"]["raw"]["labels"] == ["Disease"]
+
+
+def test_kg_structured_path_returns_path_evidence() -> None:
+    class Neo4jClientStub:
+        async def run_cypher(
+            self, cypher: str, params: dict[str, object]
+        ) -> list[dict[str, object]]:
+            assert "MATCH p=(start)-[*2..2]->(end)" in cypher
+            assert params == {
+                "path_start": "高血压",
+                "path_end": "家庭",
+                "limit": 5,
+            }
+            return [
+                {
+                    "path": [
+                        {
+                            "source_name": "高血压",
+                            "relation_type": "HAS_THRESHOLD",
+                            "target_name": "高血压家庭诊断阈值",
+                        },
+                        {
+                            "source_name": "高血压家庭诊断阈值",
+                            "relation_type": "MEASURED_IN_CONTEXT",
+                            "target_name": "家庭",
+                        },
+                    ],
+                    "hops": 2,
+                    "origin_guideline_ids": [""],
+                    "origin_document_ids": ["中国高血压防治指南2024.pdf"],
+                    "source_hashes": ["a" * 64],
+                    "source_pages": [5, 5],
+                    "source_chunk_ids": ["2", "2"],
+                }
+            ]
+
+    tool = object.__new__(KnowledgeGraphTool)
+    tool.client = Neo4jClientStub()
+    tool.forbidden = []
+
+    result = asyncio.run(
+        tool.query(
+            {
+                "path_start": "高血压",
+                "path_end": "家庭",
+                "min_hops": 2,
+                "max_hops": 2,
+                "limit": 5,
+            }
+        )
+    )
+
+    assert result["mode"] == "structured_path"
+    assert len(result["evidence"]) == 1
+    evidence = result["evidence"][0]
+    assert evidence["provenance"]["kind"] == "path"
+    assert len(evidence["provenance"]["raw"]["path"]) == 2
+    assert evidence["origin_document_id"] == "中国高血压防治指南2024.pdf"
+    assert "高血压 -[HAS_THRESHOLD]-> 高血压家庭诊断阈值" in evidence["content"]
 
 
 def test_subagent_result_enforces_evidence_model() -> None:
@@ -385,6 +478,10 @@ def test_kg_entity_relation_tool_returns_shared_evidence_contract() -> None:
 
 def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
     controller = object.__new__(UnifiedOrchestratorController)
+    plan = build_question_plan("如何监测血压？", MedicalRiskAssessment())
+    planned_task = next(
+        item for item in plan.retrieval_tasks if item.target_agent == "rag"
+    )
     evidence = build_rag_evidence(
         {
             "source": "guide.pdf",
@@ -412,29 +509,56 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
 
     observation = controller._build_subagent_observation(
         subagent_result,
-        {"action": "call_rag"},
+        {
+            "action": "call_rag",
+            "task_id": planned_task.task_id,
+            "must_cover_id": planned_task.must_cover_id,
+        },
+    )
+    normalized_evidence = Evidence.model_validate(evidence)
+    plan.must_cover[0].support_status = "supported"
+    plan.must_cover[0].status = "covered"
+    plan.claim_evidence_assessments.append(
+        ClaimEvidenceAssessment(
+            task_id=planned_task.task_id,
+            must_cover_id=planned_task.must_cover_id,
+            evidence_id=evidence_identity(normalized_evidence),
+            support_status="supported",
+            support_excerpt=normalized_evidence.content,
+        )
+    )
+    answer_context = controller._build_answer_generation_context(
+        question_plan=plan,
+        tool_observations=[observation],
+        conflict_rows=[],
     )
     assert observation["evidence"] == [evidence]
     evidence_summary = controller._build_evidence_summary([observation])
     assert evidence_summary["evidence_count"] == 1
-    assert evidence_summary["citations"] == ["[guide.pdf p12]"]
+    assert evidence_summary["citations"] == ["[guide.pdf p12 chunk:chunk-1]"]
     prompt = controller._build_final_answer_user_prompt(
         question="如何监测血压？",
-        qa_memory_text="当前暂无问答对",
-        retrieval_index_text="当前暂无历史检索问题",
-        tool_observations=[observation],
-        draft_answer="",
+        answer_context=answer_context,
     )
-    assert "[guide.pdf p12]" in prompt
+    assert "[guide.pdf p12 chunk:chunk-1]" in prompt
     assert "高血压患者应规律监测血压" in prompt
     assert "不应成为终答证据来源" not in prompt
 
     compact = controller._compact_tool_observations_for_compression([observation])
     assert compact[0]["evidence"] == [evidence]
+    assert compact[0]["task_id"] == planned_task.task_id
+    assert compact[0]["must_cover_id"] == planned_task.must_cover_id
     assert "query_records" not in compact[0]
+    normalized_compact = controller._normalize_compressed_tool_observations(compact)
+    assert normalized_compact[0]["task_id"] == planned_task.task_id
+    assert normalized_compact[0]["must_cover_id"] == planned_task.must_cover_id
 
     history_observation = controller._build_history_observation(
-        {"history_id": "h-1-2"},
+        {
+            "history_id": "h-1-2",
+            "task_id": "task-history-1",
+            "must_cover_id": "mc-1",
+        },
         {
             "ok": True,
             "result": {
@@ -446,6 +570,8 @@ def test_orchestrator_history_and_final_prompt_consume_evidence() -> None:
         },
     )
     assert history_observation["evidence"] == [evidence]
+    assert history_observation["task_id"] == "task-history-1"
+    assert history_observation["must_cover_id"] == "mc-1"
     assert "query_records" not in history_observation
 
 
@@ -453,10 +579,12 @@ def test_orchestrator_history_action_is_reachable() -> None:
     evidence = build_rag_evidence(
         {
             "source": "guide.pdf",
+            "document_id": "guide-document",
             "text": "历史证据",
             "retrieval_method": "dense",
         }
     )
+    plan = build_question_plan("复用历史问题", MedicalRiskAssessment())
 
     class GatewayStub:
         def __init__(self) -> None:
@@ -475,6 +603,18 @@ def test_orchestrator_history_action_is_reachable() -> None:
                     "history_id": "h-1-2",
                     "user_question": "历史问题",
                     "evidence": [evidence],
+                    "claim_assessments": [
+                        {
+                            "task_id": plan.retrieval_tasks[0].task_id,
+                            "must_cover_id": plan.must_cover[0].item_id,
+                            "evidence_id": evidence_identity(
+                                Evidence.model_validate(evidence)
+                            ),
+                            "support_status": "supported",
+                            "support_excerpt": "历史证据",
+                            "verifier_version": "claim_support.semantic.v1",
+                        }
+                    ],
                 },
             }
 
@@ -483,6 +623,8 @@ def test_orchestrator_history_action_is_reachable() -> None:
             (
                 {
                     "action": "call_history_read",
+                    "task_id": plan.retrieval_tasks[0].task_id,
+                    "must_cover_id": plan.must_cover[0].item_id,
                     "history_id": "h-1-2",
                     "reason": "复用历史证据",
                 },
@@ -510,7 +652,7 @@ def test_orchestrator_history_action_is_reachable() -> None:
         observations = kwargs["tool_observations"]
         assert isinstance(observations, list)
         assert observations[0]["evidence"] == [evidence]
-        return "历史证据支持该回答。", {"total_tokens": 1}
+        return "历史证据支持该回答。[guide.pdf]", {"total_tokens": 1}
 
     gateway = GatewayStub()
     controller = object.__new__(UnifiedOrchestratorController)
@@ -534,7 +676,10 @@ def test_orchestrator_history_action_is_reachable() -> None:
         )
     )
 
-    assert result["output"] == "历史证据支持该回答。"
+    assert result["output"] == "历史证据支持该回答。[guide.pdf]"
+    assert result["answer_validation"]["valid"] is True
+    assert result["confidence"] == "medium"
+    assert result["confidence_breakdown"]["publication_diversity_rate"] == 0.5
     assert result["evidence_summary"]["evidence_count"] == 1
     assert gateway.calls == [
         (

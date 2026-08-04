@@ -8,7 +8,7 @@ from typing import Any
 from app.a2a.models import SubAgentResult, SubTask
 
 
-class SubAgentClientFactory:
+class SubAgentClient:
     """主代理子代理客户端。"""
 
     def __init__(self, graph_subagent: Any, rag_subagent: Any):
@@ -57,6 +57,10 @@ class SubAgentClientFactory:
         tool_results = tool_results_obj if isinstance(tool_results_obj, list) else []
         evidence_obj = first_item.get("evidence")
         evidence = evidence_obj if isinstance(evidence_obj, list) else []
+        claim_assessments_obj = first_item.get("claim_assessments")
+        claim_assessments = (
+            claim_assessments_obj if isinstance(claim_assessments_obj, list) else []
+        )
 
         signal = str(first_item.get("signal") or "").strip()
         coverage_obj = first_item.get("coverage")
@@ -104,6 +108,8 @@ class SubAgentClientFactory:
                     queries_used.append(query)
 
         return SubAgentResult(
+            task_id=task.task_id,
+            must_cover_id=task.must_cover_id,
             subtask_id=task.subtask_id,
             target_agent=task.target_agent,
             question=task.question,
@@ -112,6 +118,7 @@ class SubAgentClientFactory:
             query_records=query_records,
             tool_results=tool_results,
             evidence=evidence,
+            claim_assessments=claim_assessments,
             signal=signal,
             coverage=coverage,
             missing_points=[str(item) for item in missing_points],
@@ -144,6 +151,8 @@ class SubAgentClientFactory:
             子代理标准化执行结果。
         """
         request = {
+            "task_id": task.task_id,
+            "must_cover_id": task.must_cover_id,
             "subquery_id": task.subtask_id,
             "subquery": task.question,
             "tool_name": task.tool_name,

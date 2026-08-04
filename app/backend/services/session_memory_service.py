@@ -199,11 +199,17 @@ class SessionMemoryService:
         if not content:
             return None
         return Evidence(
+            schema_version="evidence.v2",
             source_type=self._sanitize_text(evidence.source_type, 32),
             source_id=self._sanitize_text(evidence.source_id, 160),
             document_id=self._sanitize_text(evidence.document_id, 160),
             chunk_id=self._sanitize_text(evidence.chunk_id, 160),
             page=evidence.page,
+            origin_guideline_id=self._sanitize_text(evidence.origin_guideline_id, 160),
+            origin_document_id=self._sanitize_text(evidence.origin_document_id, 160),
+            source_hash=self._sanitize_text(evidence.source_hash, 160),
+            source_page=evidence.source_page,
+            source_chunk_id=self._sanitize_text(evidence.source_chunk_id, 160),
             section=self._sanitize_text(evidence.section, 160),
             content=content,
             score=evidence.score,

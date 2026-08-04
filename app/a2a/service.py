@@ -244,7 +244,13 @@ class A2AService:
         """
         output = str(result.get("output") or "")
         output_type = str(result.get("output_type") or "")
-        confidence = float(result.get("confidence") or 0.0)
+        confidence = str(result.get("confidence") or "low")
+        confidence_breakdown_obj = result.get("confidence_breakdown")
+        confidence_breakdown = (
+            confidence_breakdown_obj
+            if isinstance(confidence_breakdown_obj, dict)
+            else {}
+        )
 
         tool_observations_obj = result.get("tool_observations")
         tool_observations = (
@@ -256,6 +262,12 @@ class A2AService:
         evidence_summary_obj = result.get("evidence_summary")
         evidence_summary = (
             evidence_summary_obj if isinstance(evidence_summary_obj, dict) else {}
+        )
+        question_plan_obj = result.get("question_plan")
+        question_plan = question_plan_obj if isinstance(question_plan_obj, dict) else {}
+        evidence_bundle_obj = result.get("evidence_bundle")
+        evidence_bundle = (
+            evidence_bundle_obj if isinstance(evidence_bundle_obj, dict) else {}
         )
         processing_steps_obj = result.get("processing_steps")
         processing_steps = (
@@ -270,6 +282,7 @@ class A2AService:
                 "metadata": {
                     "output_type": output_type,
                     "confidence": confidence,
+                    "confidence_breakdown": confidence_breakdown,
                 },
             },
             {
@@ -294,6 +307,18 @@ class A2AService:
                 "artifactId": f"art-{uuid.uuid4().hex}",
                 "name": "evidence_summary",
                 "parts": [{"kind": "data", "data": evidence_summary}],
+                "metadata": {},
+            },
+            {
+                "artifactId": f"art-{uuid.uuid4().hex}",
+                "name": "question_plan",
+                "parts": [{"kind": "data", "data": question_plan}],
+                "metadata": {},
+            },
+            {
+                "artifactId": f"art-{uuid.uuid4().hex}",
+                "name": "evidence_bundle",
+                "parts": [{"kind": "data", "data": evidence_bundle}],
                 "metadata": {},
             },
             {
@@ -431,7 +456,13 @@ class A2AService:
             artifacts = self._build_artifacts(parsed_result, progress_events)
             output = str(parsed_result.get("output") or "")
             output_type = str(parsed_result.get("output_type") or "")
-            confidence = float(parsed_result.get("confidence") or 0.0)
+            confidence = str(parsed_result.get("confidence") or "low")
+            confidence_breakdown_obj = parsed_result.get("confidence_breakdown")
+            confidence_breakdown = (
+                confidence_breakdown_obj
+                if isinstance(confidence_breakdown_obj, dict)
+                else {}
+            )
 
             async with self._lock:
                 task = self._tasks.get(task_id)
@@ -446,6 +477,7 @@ class A2AService:
                             "output": output,
                             "output_type": output_type,
                             "confidence": confidence,
+                            "confidence_breakdown": confidence_breakdown,
                             "trace_id": task_trace_id,
                             "duration_ms": telemetry["duration_ms"],
                         },
@@ -462,6 +494,7 @@ class A2AService:
                     "metadata": {
                         "output_type": output_type,
                         "confidence": confidence,
+                        "confidence_breakdown": confidence_breakdown,
                         "trace_id": task_trace_id,
                         "duration_ms": telemetry["duration_ms"],
                     },

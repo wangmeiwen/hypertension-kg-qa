@@ -42,6 +42,13 @@ class RagSubAgent:
         subquery = str(req.get("subquery") or "").strip()
         arguments_obj = req.get("arguments")
         arguments = arguments_obj if isinstance(arguments_obj, dict) else {}
+        query_terms_obj = req.get("query_terms")
+        query_terms = (
+            [str(value or "").strip() for value in query_terms_obj]
+            if isinstance(query_terms_obj, list)
+            else []
+        )
+        query_terms = [value for value in query_terms if value]
         constraints_obj = req.get("constraints")
         constraints = (
             constraints_obj
@@ -54,6 +61,7 @@ class RagSubAgent:
             "subquery": subquery,
             "tool_name": "rag_search",
             "arguments": arguments,
+            "query_terms": query_terms,
             "constraints": constraints,
         }
 
@@ -63,6 +71,7 @@ class RagSubAgent:
                     "subquery_id": subquery_id,
                     "subquery": subquery,
                     "arguments": arguments,
+                    "query_terms": query_terms,
                     "constraints": constraints,
                 }
             )
@@ -94,6 +103,11 @@ class RagSubAgent:
                         else []
                     ),
                     "evidence": evidence,
+                    "claim_assessments": (
+                        result.get("claim_assessments")
+                        if isinstance(result.get("claim_assessments"), list)
+                        else []
+                    ),
                     "signal": str(result.get("signal") or "none"),
                     "coverage": (
                         result.get("coverage")

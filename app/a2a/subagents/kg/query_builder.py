@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.a2a.relation_claims import relation_endpoints, relation_hop_bounds
+
 from app.core.config import Config
 
 
@@ -100,6 +102,17 @@ def build_kg_query_payload(
         "list_all_nodes": list_all_nodes,
         "limit": limit,
     }
+    endpoints = relation_endpoints(q)
+    hop_bounds = relation_hop_bounds(q)
+    if len(endpoints) == 2 and hop_bounds is not None:
+        payload.update(
+            {
+                "path_start": endpoints[0],
+                "path_end": endpoints[1],
+                "min_hops": hop_bounds[0],
+                "max_hops": hop_bounds[1],
+            }
+        )
     if cypher:
         payload["cypher"] = cypher
     return payload
@@ -166,8 +179,12 @@ def validate_generated_payload(
         raise ValueError(f"unsupported_kg_tool:{safe_tool}")
     data = payload if isinstance(payload, dict) else {}
     if safe_tool == "kg_query":
-        if not any(k in data for k in ("keyword", "cypher", "list_all_nodes")):
+        if not any(
+            k in data for k in ("keyword", "cypher", "list_all_nodes", "path_start")
+        ):
             raise ValueError("kg_query_requires_keyword_or_cypher")
+        if bool(data.get("path_start")) != bool(data.get("path_end")):
+            raise ValueError("kg_query_path_requires_both_endpoints")
         return data
     if not str(data.get("query") or "").strip():
         raise ValueError("kg_entity_relation_search_requires_query")

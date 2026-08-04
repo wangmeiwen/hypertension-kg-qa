@@ -104,7 +104,7 @@ def document_milvus_schema(dense_dim: int) -> MilvusSchemaContract:
 
 KG_MILVUS_SCHEMA = MilvusSchemaContract(
     component="knowledge_graph_retrieval",
-    version=1,
+    version=2,
     auto_id=True,
     enable_dynamic_field=False,
     fields=(
@@ -120,6 +120,19 @@ KG_MILVUS_SCHEMA = MilvusSchemaContract(
         _field("target_label", DataType.VARCHAR, params=(("max_length", 128),)),
         _field("text", DataType.VARCHAR, params=(("max_length", 65535),)),
         _field("timestamp", DataType.VARCHAR, params=(("max_length", 64),)),
+        _field(
+            "origin_guideline_id",
+            DataType.VARCHAR,
+            params=(("max_length", 256),),
+        ),
+        _field(
+            "origin_document_id",
+            DataType.VARCHAR,
+            params=(("max_length", 512),),
+        ),
+        _field("source_hash", DataType.VARCHAR, params=(("max_length", 128),)),
+        _field("source_page", DataType.INT64),
+        _field("source_chunk_id", DataType.VARCHAR, params=(("max_length", 128),)),
         _field("embedding", DataType.FLOAT_VECTOR, params=(("dim", 1024),)),
     ),
 )
