@@ -123,7 +123,7 @@ pygments==2.20.0
 setuptools==83.0.0
 soupsieve==2.8.4
 tornado==6.5.7
-urllib3==2.7.0
+urllib3==2.8.0
 
 # ========== Development / Testing ==========
 pytest==9.0.3
