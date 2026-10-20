@@ -47,7 +47,7 @@ faiss-cpu==1.13.2
 onnxruntime==1.24.3
 
 # ========== Document Processing ==========
-docling==2.94.0
+docling==2.132.0
 docling-core==2.88.0
 docling-ibm-models==3.13.3
 docling-parse==5.5.0
