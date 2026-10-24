@@ -110,7 +110,7 @@ tabulate==0.10.0
 colorlog==6.10.1
 termcolor==3.3.0
 packaging==25.0
-filelock==3.25.0
+filelock==4.2.1
 fsspec==2026.2.0
 pyjwt==2.13.0
 click==8.3.3
